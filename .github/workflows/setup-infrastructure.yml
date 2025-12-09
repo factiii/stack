@@ -1,37 +1,21 @@
 name: Setup Infrastructure
 
+# This workflow requires a GitHub Environment variable named INFRASTRUCTURE_CONFIG
+# Setup: Settings → Secrets and variables → Actions → Variables → New variable
+# Name: INFRASTRUCTURE_CONFIG
+# Value: Paste the entire contents of infrastructure-config.yml
+
 on:
   workflow_dispatch:
     inputs:
-      config_source:
-        description: 'Config source'
-        required: true
-        type: choice
-        options:
-          - file
-          - github-env
       server_filter:
-        description: 'Server to setup (leave empty for all)'
+        description: 'Server to setup (leave empty for all servers)'
         required: false
         type: string
 
 jobs:
   setup:
     runs-on: ubuntu-latest
-    env:
-      # Pass all potential SSH keys
-      MAC_MINI_SSH: ${{ secrets.MAC_MINI_SSH }}
-      EC2_SSH: ${{ secrets.EC2_SSH }}
-      SERVER2_SSH: ${{ secrets.SERVER2_SSH }}
-      # Pass all potential env vars
-      FACTIII_STAGING_ENVS: ${{ secrets.FACTIII_STAGING_ENVS }}
-      FACTIII_PROD_ENVS: ${{ secrets.FACTIII_PROD_ENVS }}
-      CHOPSHOP_STAGING_ENVS: ${{ secrets.CHOPSHOP_STAGING_ENVS }}
-      CHOPSHOP_PROD_ENVS: ${{ secrets.CHOPSHOP_PROD_ENVS }}
-      LINK3D_STAGING_ENVS: ${{ secrets.LINK3D_STAGING_ENVS }}
-      LINK3D_PROD_ENVS: ${{ secrets.LINK3D_PROD_ENVS }}
-      TAPTRACK_STAGING_ENVS: ${{ secrets.TAPTRACK_STAGING_ENVS }}
-      TAPTRACK_PROD_ENVS: ${{ secrets.TAPTRACK_PROD_ENVS }}
     steps:
       - name: Checkout infrastructure repo
         uses: actions/checkout@v4
@@ -41,31 +25,27 @@ jobs:
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      - name: Load infrastructure config
+      - name: Load infrastructure config from GitHub Environment
         id: config
         run: |
-          CONFIG_SOURCE="${{ github.event.inputs.config_source }}"
-          
-          if [ "$CONFIG_SOURCE" = "github-env" ]; then
-            # Read from GitHub Environment variable
-            if [ -n "${{ vars.INFRASTRUCTURE_CONFIG }}" ]; then
-              echo "${{ vars.INFRASTRUCTURE_CONFIG }}" > infrastructure-config.yml
-              echo "✅ Loaded config from GitHub Environment variable"
-            else
-              echo "Error: INFRASTRUCTURE_CONFIG not found in environment variables" >&2
-              exit 1
-            fi
+          # Read from GitHub Environment variable
+          if [ -n "${{ vars.INFRASTRUCTURE_CONFIG }}" ]; then
+            echo "${{ vars.INFRASTRUCTURE_CONFIG }}" > infrastructure-config.yml
+            echo "✅ Loaded config from GitHub Environment variable (INFRASTRUCTURE_CONFIG)"
           else
-            # Use file from repo
-            if [ -f "infrastructure-config.yml" ]; then
-              echo "✅ Using config from file"
-            else
-              echo "Error: infrastructure-config.yml not found" >&2
-              exit 1
-            fi
+            echo "❌ Error: INFRASTRUCTURE_CONFIG not found in GitHub Environment variables" >&2
+            echo "" >&2
+            echo "📋 Setup Instructions:" >&2
+            echo "1. Go to: Settings → Environments → (create or select environment)" >&2
+            echo "2. Add a variable named: INFRASTRUCTURE_CONFIG" >&2
+            echo "3. Paste the contents of infrastructure-config.yml as the value" >&2
+            echo "4. Or use: Settings → Secrets and variables → Actions → Variables" >&2
+            echo "   (Variables are available to all workflows)" >&2
+            exit 1
           fi
 
-      - name: Parse and validate config
+      - name: Parse config and determine required secrets
+        id: parse_config
         run: |
           source ./scripts/parse-infrastructure-config.sh
           
@@ -76,6 +56,57 @@ jobs:
           echo ""
           echo "Servers and repos:"
           yq eval '.servers | to_entries | .[] | "\(.key): \(.value.repos | length) repos"' infrastructure-config.yml
+          
+          # Collect all unique repo/env combinations
+          echo ""
+          echo "📦 Determining required secrets..."
+          
+          # Get all servers
+          SERVERS=$(yq eval '.servers | keys | .[]' infrastructure-config.yml)
+          
+          # Collect SSH keys needed
+          SSH_KEYS=""
+          for server in $SERVERS; do
+            SSH_SECRET=$(get_ssh_secret "$server")
+            if [ -n "$SSH_SECRET" ]; then
+              SSH_KEYS="${SSH_KEYS}${SSH_SECRET} "
+            fi
+          done
+          echo "SSH_KEYS=${SSH_KEYS}" >> $GITHUB_OUTPUT
+          
+          # Collect env var secrets needed
+          ENV_SECRETS=""
+          for server in $SERVERS; do
+            REPOS=$(yq eval ".servers.$server.repos[] | \"\(.name)|\(.environment)\"" infrastructure-config.yml)
+            while IFS='|' read -r repo_name repo_env; do
+              [ -z "$repo_name" ] && continue
+              ENV_SECRET_NAME="$(echo $repo_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')_$(echo $repo_env | tr '[:lower:]' '[:upper:]')_ENVS"
+              # Only add if not already in list
+              if ! echo "$ENV_SECRETS" | grep -q "$ENV_SECRET_NAME"; then
+                ENV_SECRETS="${ENV_SECRETS}${ENV_SECRET_NAME} "
+              fi
+            done <<< "$REPOS"
+          done
+          echo "ENV_SECRETS=${ENV_SECRETS}" >> $GITHUB_OUTPUT
+          
+          echo "Required SSH keys: ${SSH_KEYS}"
+          echo "Required env secrets: ${ENV_SECRETS}"
+
+      - name: Setup each server
+        env:
+          # Pass all potential SSH keys (add new ones as needed)
+          MAC_MINI_SSH: ${{ secrets.MAC_MINI_SSH }}
+          EC2_SSH: ${{ secrets.EC2_SSH }}
+          SERVER2_SSH: ${{ secrets.SERVER2_SSH }}
+          # Pass all potential env vars (add new repo/env combinations as needed)
+          FACTIII_STAGING_ENVS: ${{ secrets.FACTIII_STAGING_ENVS }}
+          FACTIII_PROD_ENVS: ${{ secrets.FACTIII_PROD_ENVS }}
+          CHOPSHOP_STAGING_ENVS: ${{ secrets.CHOPSHOP_STAGING_ENVS }}
+          CHOPSHOP_PROD_ENVS: ${{ secrets.CHOPSHOP_PROD_ENVS }}
+          LINK3D_STAGING_ENVS: ${{ secrets.LINK3D_STAGING_ENVS }}
+          LINK3D_PROD_ENVS: ${{ secrets.LINK3D_PROD_ENVS }}
+          TAPTRACK_STAGING_ENVS: ${{ secrets.TAPTRACK_STAGING_ENVS }}
+          TAPTRACK_PROD_ENVS: ${{ secrets.TAPTRACK_PROD_ENVS }}
 
       - name: Setup each server
         run: |
@@ -102,11 +133,16 @@ jobs:
             
             echo "📡 Connecting to $SSH_USER@$SSH_HOST using key from $SSH_SECRET_NAME..."
             
-            # Get the SSH key from environment variable
+            # Get SSH key dynamically using indirect variable expansion
+            # Secrets are passed as environment variables, so we can access them via ${!VAR_NAME}
             SSH_KEY="${!SSH_SECRET_NAME}"
             
             if [ -z "$SSH_KEY" ]; then
-              echo "❌ Error: SSH key $SSH_SECRET_NAME not found in secrets"
+              echo "❌ Error: SSH key $SSH_SECRET_NAME not found"
+              echo "   Make sure:"
+              echo "   1. The secret exists: Settings → Secrets and variables → Actions → Secrets"
+              echo "   2. The secret name matches what's in infrastructure-config.yml"
+              echo "   3. Add it to the 'env:' section of the 'Setup each server' step if it's new"
               continue
             fi
             
@@ -182,9 +218,21 @@ jobs:
               
               echo "  📦 Setting up $repo_name ($repo_env)..."
               
-              # Get env var secret name
+              # Get env var secret name (format: REPO_NAME_ENV_ENVS)
               ENV_SECRET_NAME="$(echo $repo_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')_$(echo $repo_env | tr '[:lower:]' '[:upper:]')_ENVS"
+              
+              # Access secret dynamically using indirect variable expansion
+              # Secrets are passed as environment variables in the step's env: section
               ENV_CONTENT="${!ENV_SECRET_NAME}"
+              
+              if [ -z "$ENV_CONTENT" ]; then
+                echo "❌ Error: Environment secret $ENV_SECRET_NAME not found"
+                echo "   Make sure:"
+                echo "   1. The secret exists: Settings → Secrets and variables → Actions → Secrets"
+                echo "   2. Format: <REPO_NAME>_<ENV>_ENVS (e.g., MYREPO_STAGING_ENVS)"
+                echo "   3. Add it to the 'env:' section of the 'Setup each server' step if it's new"
+                continue
+              fi
               
               REPO_GIT_URL="https://github.com/$REPO_OWNER/${repo_name}.git"
               
