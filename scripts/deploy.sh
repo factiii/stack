@@ -1,17 +1,48 @@
 #!/bin/bash
 
 # Deployment script for infrastructure repos
-# Usage: ./scripts/deploy.sh <repo-name> <environment>
+# Usage: ./scripts/deploy.sh <repo-name> [environment]
 # Example: ./scripts/deploy.sh chop-shop prod
+# If environment is not specified, uses INFRA_ENV from infra.conf
 
 set -e
+
+INFRASTRUCTURE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+INFRA_CONF="${INFRASTRUCTURE_ROOT}/infra.conf"
+CONFIG_FILE="${INFRASTRUCTURE_ROOT}/infrastructure-config.yml"
 
 REPO_NAME=$1
 ENVIRONMENT=$2
 
-if [ -z "$REPO_NAME" ] || [ -z "$ENVIRONMENT" ]; then
-    echo "Usage: $0 <repo-name> <environment>"
+# If environment not provided, try to determine from infrastructure config or infra.conf
+if [ -z "$ENVIRONMENT" ]; then
+    # Try infrastructure-config.yml first (new approach)
+    if [ -f "$CONFIG_FILE" ] && command -v yq &> /dev/null; then
+        # Try to get environment from config (would need server context)
+        # For now, fall back to infra.conf
+        if [ -f "$INFRA_CONF" ]; then
+            source "$INFRA_CONF"
+            ENVIRONMENT="$INFRA_ENV"
+            echo "📋 Using environment from infra.conf: ${ENVIRONMENT}"
+        fi
+    elif [ -f "$INFRA_CONF" ]; then
+        source "$INFRA_CONF"
+        ENVIRONMENT="$INFRA_ENV"
+        echo "📋 Using environment from infra.conf: ${ENVIRONMENT}"
+    fi
+fi
+
+if [ -z "$REPO_NAME" ]; then
+    echo "Usage: $0 <repo-name> [environment]"
     echo "Example: $0 chop-shop prod"
+    echo ""
+    echo "If environment is omitted, uses INFRA_ENV from infra.conf"
+    exit 1
+fi
+
+if [ -z "$ENVIRONMENT" ]; then
+    echo "Error: No environment specified and infra.conf not found"
+    echo "Either specify environment or create infra.conf with INFRA_ENV=staging|prod"
     exit 1
 fi
 
@@ -27,7 +58,7 @@ echo "🚀 Deploying ${SERVICE_NAME}..."
 
 # Step 1: Pull infrastructure repo
 echo "📥 Pulling infrastructure repo..."
-cd "$(dirname "$0")/.."
+cd "$INFRASTRUCTURE_ROOT"
 git pull origin main || echo "Warning: Could not pull infrastructure repo"
 
 # Step 2: Pull project repo
@@ -42,7 +73,7 @@ cd "$REPO_PATH"
 git pull origin main || git pull origin master || echo "Warning: Could not pull repo"
 
 # Step 3: Return to infrastructure root
-cd "$(dirname "$0")/.."
+cd "$INFRASTRUCTURE_ROOT"
 
 # Step 4: Build and deploy via docker compose
 echo "🔨 Building ${SERVICE_NAME}..."

@@ -40,7 +40,31 @@ if [ -d "$REPO_PATH" ]; then
 fi
 
 echo "📥 Cloning ${REPO_NAME} from ${GIT_URL}..."
-git clone "$GIT_URL" "$REPO_PATH"
+
+# Try to clone, handle authentication errors gracefully
+set +e
+git clone "$GIT_URL" "$REPO_PATH" 2>&1
+CLONE_EXIT_CODE=$?
+set -e
+
+if [ $CLONE_EXIT_CODE -ne 0 ]; then
+    echo ""
+    echo "❌ Failed to clone repository. Authentication error detected."
+    echo ""
+    echo "💡 GitHub no longer supports password authentication. Use one of these options:"
+    echo ""
+    echo "   Option 1: Use SSH (recommended if you have SSH keys set up):"
+    SSH_URL="git@github.com:$(echo "$GIT_URL" | sed 's|https://github.com/||' | sed 's|\.git$||').git"
+    echo "     ./scripts/setup-repo.sh ${REPO_NAME} ${SSH_URL}"
+    echo ""
+    echo "   Option 2: Use a Personal Access Token:"
+    echo "     - Create a token at: https://github.com/settings/tokens"
+    echo "     - Use it as the password when prompted"
+    REPO_PATH_PART="$(echo "$GIT_URL" | sed 's|https://github.com/||')"
+    echo "     - Or use: git clone https://<token>@github.com/${REPO_PATH_PART}"
+    echo ""
+    exit 1
+fi
 
 # Check if Dockerfile exists
 DOCKERFILE_PATH="${REPO_PATH}/apps/server/Dockerfile"

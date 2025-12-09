@@ -1,0 +1,44 @@
+# Infrastructure Configuration
+# Maps servers to repos and environments
+# Can also be stored in GitHub Environment variable INFRASTRUCTURE_CONFIG
+
+servers:
+  mac_mini:
+    ssh_key_secret: MAC_MINI_SSH
+    host: mac-mini.local  # Update with actual hostname/IP
+    user: jon  # Update with actual username
+    repos:
+      - name: factiii
+        environment: staging
+        domain_override: null  # Uses default: staging-factiii.greasemoto.com
+      - name: chop-shop
+        environment: staging
+        domain_override: staging-api.greasemoto.com  # Special case - uses api subdomain
+      - name: link3d
+        environment: staging
+        domain_override: null
+      - name: tap-track
+        environment: staging
+        domain_override: null
+        
+  ec2:
+    ssh_key_secret: EC2_SSH
+    host: ec2-xxx.amazonaws.com  # Update with actual EC2 hostname/IP
+    user: ec2-user  # Update with actual username (ec2-user, ubuntu, etc.)
+    repos:
+      - name: factiii
+        environment: prod
+        domain_override: null
+      - name: chop-shop
+        environment: prod
+        domain_override: api.greasemoto.com
+      - name: link3d
+        environment: prod
+        domain_override: null
+      - name: tap-track
+        environment: prod
+        domain_override: null
+
+# Global configuration
+base_domain: greasemoto.com
+ssl_email: admin@greasemoto.com

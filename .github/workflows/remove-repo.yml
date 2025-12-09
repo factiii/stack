@@ -1,0 +1,167 @@
+name: Remove Repo from Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_name:
+        description: 'Repository name'
+        required: true
+        type: string
+      server_name:
+        description: 'Server name'
+        required: true
+        type: string
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - prod
+      remove_repo_files:
+        description: 'Remove repo files from server?'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  remove-repo:
+    runs-on: ubuntu-latest
+    env:
+      MAC_MINI_SSH: ${{ secrets.MAC_MINI_SSH }}
+      EC2_SSH: ${{ secrets.EC2_SSH }}
+      SERVER2_SSH: ${{ secrets.SERVER2_SSH }}
+    steps:
+      - name: Checkout infrastructure repo
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Remove repo from config
+        run: |
+          REPO_NAME="${{ github.event.inputs.repo_name }}"
+          SERVER="${{ github.event.inputs.server_name }}"
+          ENV="${{ github.event.inputs.environment }}"
+          
+          # Check if repo exists in config
+          EXISTING=$(yq eval ".servers.$SERVER.repos[] | select(.name == \"$REPO_NAME\" and .environment == \"$ENV\")" infrastructure-config.yml)
+          
+          if [ -z "$EXISTING" ]; then
+            echo "⚠️ Repo $REPO_NAME ($ENV) not found on $SERVER"
+            echo "Current repos on $SERVER:"
+            yq eval ".servers.$SERVER.repos[].name" infrastructure-config.yml
+          else
+            # Remove repo from config using yq
+            yq eval "del(.servers.$SERVER.repos[] | select(.name == \"$REPO_NAME\" and .environment == \"$ENV\"))" -i infrastructure-config.yml
+            echo "✅ Removed $REPO_NAME ($ENV) from $SERVER config"
+          fi
+
+      - name: Remove from server
+        run: |
+          source ./scripts/parse-infrastructure-config.sh
+          
+          SERVER="${{ github.event.inputs.server_name }}"
+          REPO_NAME="${{ github.event.inputs.repo_name }}"
+          ENV="${{ github.event.inputs.environment }}"
+          REMOVE_FILES="${{ github.event.inputs.remove_repo_files }}"
+          
+          SSH_SECRET_NAME=$(get_ssh_secret "$SERVER")
+          SSH_HOST=$(get_ssh_host "$SERVER")
+          SSH_USER=$(get_ssh_user "$SERVER")
+          
+          SERVICE_NAME="$REPO_NAME-$ENV"
+          
+          echo "📡 Connecting to $SSH_USER@$SSH_HOST..."
+          
+          # Get the SSH key from environment variable
+          SSH_KEY="${!SSH_SECRET_NAME}"
+          
+          if [ -z "$SSH_KEY" ]; then
+            echo "❌ Error: SSH key $SSH_SECRET_NAME not found in secrets"
+            echo "Skipping server cleanup - please manually remove the service"
+            exit 0
+          fi
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          # Remove from server
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" bash -s << EOF
+            set -e
+            
+            # Find infrastructure directory
+            INFRA_DIR=""
+            for dir in ~/infrastructure /opt/infrastructure /var/infrastructure; do
+              if [ -d "\$dir" ]; then
+                INFRA_DIR="\$dir"
+                break
+              fi
+            done
+            
+            if [ -z "\$INFRA_DIR" ]; then
+              echo "⚠️ Infrastructure directory not found"
+              exit 0
+            fi
+            
+            cd "\$INFRA_DIR"
+            
+            SERVICE_NAME="$REPO_NAME-$ENV"
+            
+            # Stop and remove Docker container
+            echo "🛑 Stopping service \$SERVICE_NAME..."
+            docker-compose stop \$SERVICE_NAME 2>/dev/null || echo "Service not running"
+            docker-compose rm -f \$SERVICE_NAME 2>/dev/null || echo "Service not found"
+            
+            # Remove env file
+            if [ -f "secrets/${REPO_NAME}-${ENV}.env" ]; then
+              echo "🗑️ Removing env file..."
+              rm -f "secrets/${REPO_NAME}-${ENV}.env"
+            fi
+            
+            # Optionally remove repo files
+            if [ "$REMOVE_FILES" = "true" ]; then
+              # Check if repo is used by other environments
+              OTHER_ENVS=\$(grep -l "$REPO_NAME" secrets/*.env 2>/dev/null | wc -l)
+              
+              if [ "\$OTHER_ENVS" -eq 0 ]; then
+                echo "🗑️ Removing repo files..."
+                rm -rf "repos/$REPO_NAME"
+              else
+                echo "⚠️ Repo still used by other environments, keeping files"
+              fi
+            fi
+            
+            # Regenerate nginx config
+            if [ -f "./scripts/generate-nginx-config.sh" ] && command -v yq &> /dev/null; then
+              echo "📝 Regenerating nginx config..."
+              ./scripts/generate-nginx-config.sh || echo "Could not regenerate nginx config"
+              
+              # Reload nginx
+              docker-compose exec nginx nginx -s reload 2>/dev/null || echo "Could not reload nginx"
+            fi
+            
+            echo "✅ Removed $SERVICE_NAME from server"
+          EOF
+          
+          # Cleanup SSH key
+          rm -f ~/.ssh/deploy_key
+
+      - name: Commit config changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add infrastructure-config.yml
+          git diff --staged --quiet || git commit -m "Remove ${{ github.event.inputs.repo_name }} from ${{ github.event.inputs.server_name }} (${{ github.event.inputs.environment }})"
+          git push || echo "Push failed or no changes"
+          
+          echo ""
+          echo "✅ Repo removal complete"
+          echo ""
+          echo "📋 Manual steps may be required:"
+          echo "1. Remove the service from docker-compose.yml"
+          echo "2. Remove the GitHub Secret: $(echo ${{ github.event.inputs.repo_name }} | tr '[:lower:]' '[:upper:]' | tr '-' '_')_$(echo ${{ github.event.inputs.environment }} | tr '[:lower:]' '[:upper:]')_ENVS"

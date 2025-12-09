@@ -1,0 +1,260 @@
+name: Setup Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      config_source:
+        description: 'Config source'
+        required: true
+        type: choice
+        options:
+          - file
+          - github-env
+      server_filter:
+        description: 'Server to setup (leave empty for all)'
+        required: false
+        type: string
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    env:
+      # Pass all potential SSH keys
+      MAC_MINI_SSH: ${{ secrets.MAC_MINI_SSH }}
+      EC2_SSH: ${{ secrets.EC2_SSH }}
+      SERVER2_SSH: ${{ secrets.SERVER2_SSH }}
+      # Pass all potential env vars
+      FACTIII_STAGING_ENVS: ${{ secrets.FACTIII_STAGING_ENVS }}
+      FACTIII_PROD_ENVS: ${{ secrets.FACTIII_PROD_ENVS }}
+      CHOPSHOP_STAGING_ENVS: ${{ secrets.CHOPSHOP_STAGING_ENVS }}
+      CHOPSHOP_PROD_ENVS: ${{ secrets.CHOPSHOP_PROD_ENVS }}
+      LINK3D_STAGING_ENVS: ${{ secrets.LINK3D_STAGING_ENVS }}
+      LINK3D_PROD_ENVS: ${{ secrets.LINK3D_PROD_ENVS }}
+      TAPTRACK_STAGING_ENVS: ${{ secrets.TAPTRACK_STAGING_ENVS }}
+      TAPTRACK_PROD_ENVS: ${{ secrets.TAPTRACK_PROD_ENVS }}
+    steps:
+      - name: Checkout infrastructure repo
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Load infrastructure config
+        id: config
+        run: |
+          CONFIG_SOURCE="${{ github.event.inputs.config_source }}"
+          
+          if [ "$CONFIG_SOURCE" = "github-env" ]; then
+            # Read from GitHub Environment variable
+            if [ -n "${{ vars.INFRASTRUCTURE_CONFIG }}" ]; then
+              echo "${{ vars.INFRASTRUCTURE_CONFIG }}" > infrastructure-config.yml
+              echo "✅ Loaded config from GitHub Environment variable"
+            else
+              echo "Error: INFRASTRUCTURE_CONFIG not found in environment variables" >&2
+              exit 1
+            fi
+          else
+            # Use file from repo
+            if [ -f "infrastructure-config.yml" ]; then
+              echo "✅ Using config from file"
+            else
+              echo "Error: infrastructure-config.yml not found" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Parse and validate config
+        run: |
+          source ./scripts/parse-infrastructure-config.sh
+          
+          echo "📋 Infrastructure Configuration:"
+          echo "Base Domain: $(get_base_domain)"
+          echo "SSL Email: $(get_ssl_email)"
+          
+          echo ""
+          echo "Servers and repos:"
+          yq eval '.servers | to_entries | .[] | "\(.key): \(.value.repos | length) repos"' infrastructure-config.yml
+
+      - name: Setup each server
+        run: |
+          source ./scripts/parse-infrastructure-config.sh
+          
+          SERVER_FILTER="${{ github.event.inputs.server_filter }}"
+          
+          # Get list of servers
+          if [ -n "$SERVER_FILTER" ]; then
+            SERVERS="$SERVER_FILTER"
+          else
+            SERVERS=$(yq eval '.servers | keys | .[]' infrastructure-config.yml)
+          fi
+          
+          for server in $SERVERS; do
+            echo ""
+            echo "========================================"
+            echo "🔧 Setting up $server..."
+            echo "========================================"
+            
+            SSH_SECRET_NAME=$(get_ssh_secret "$server")
+            SSH_HOST=$(get_ssh_host "$server")
+            SSH_USER=$(get_ssh_user "$server")
+            
+            echo "📡 Connecting to $SSH_USER@$SSH_HOST using key from $SSH_SECRET_NAME..."
+            
+            # Get the SSH key from environment variable
+            SSH_KEY="${!SSH_SECRET_NAME}"
+            
+            if [ -z "$SSH_KEY" ]; then
+              echo "❌ Error: SSH key $SSH_SECRET_NAME not found in secrets"
+              continue
+            fi
+            
+            # Setup SSH key
+            mkdir -p ~/.ssh
+            echo "$SSH_KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            
+            # Get repos for this server
+            REPOS=$(yq eval ".servers.$server.repos[] | \"\(.name)|\(.environment)\"" infrastructure-config.yml)
+            
+            # Get repo owner for git URLs
+            REPO_OWNER="${{ github.repository_owner }}"
+            
+            # Deploy via SSH - initial setup
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" bash -s << 'SETUP_EOF'
+              set -e
+              
+              echo "📦 Installing dependencies..."
+              
+              # Check for Docker
+              if ! command -v docker &> /dev/null; then
+                echo "⚠️ Docker not found. Please install Docker first."
+              else
+                echo "✅ Docker found"
+              fi
+              
+              # Check for Docker Compose
+              if ! command -v docker-compose &> /dev/null; then
+                echo "⚠️ Docker Compose not found. Please install Docker Compose first."
+              else
+                echo "✅ Docker Compose found"
+              fi
+              
+              # Find or create infrastructure directory
+              INFRA_DIR=""
+              for dir in ~/infrastructure /opt/infrastructure /var/infrastructure; do
+                if [ -d "$dir" ]; then
+                  INFRA_DIR="$dir"
+                  break
+                fi
+              done
+              
+              if [ -z "$INFRA_DIR" ]; then
+                INFRA_DIR=~/infrastructure
+                echo "Creating infrastructure directory at $INFRA_DIR"
+                mkdir -p "$INFRA_DIR"
+              fi
+              
+              cd "$INFRA_DIR"
+              
+              # Clone or update infrastructure repo
+              if [ -d ".git" ]; then
+                echo "📥 Pulling latest infrastructure..."
+                git pull origin main || true
+              else
+                echo "📥 Cloning infrastructure repo..."
+                cd ..
+                rm -rf "$INFRA_DIR"
+                git clone https://github.com/REPO_OWNER/infrastructure.git "$INFRA_DIR" || echo "⚠️ Could not clone infrastructure repo"
+                cd "$INFRA_DIR"
+              fi
+              
+              # Create directories
+              mkdir -p repos secrets
+              
+              echo "✅ Infrastructure directory ready at $INFRA_DIR"
+            SETUP_EOF
+            
+            # Now setup each repo for this server
+            while IFS='|' read -r repo_name repo_env; do
+              [ -z "$repo_name" ] && continue
+              
+              echo "  📦 Setting up $repo_name ($repo_env)..."
+              
+              # Get env var secret name
+              ENV_SECRET_NAME="$(echo $repo_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')_$(echo $repo_env | tr '[:lower:]' '[:upper:]')_ENVS"
+              ENV_CONTENT="${!ENV_SECRET_NAME}"
+              
+              REPO_GIT_URL="https://github.com/$REPO_OWNER/${repo_name}.git"
+              
+              ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" bash -s << EOF
+                set -e
+                
+                INFRA_DIR=""
+                for dir in ~/infrastructure /opt/infrastructure /var/infrastructure; do
+                  if [ -d "\$dir" ]; then
+                    INFRA_DIR="\$dir"
+                    break
+                  fi
+                done
+                
+                cd "\$INFRA_DIR"
+                
+                # Clone repo if not exists
+                if [ ! -d "repos/$repo_name" ]; then
+                  echo "    📥 Cloning $repo_name..."
+                  git clone "$REPO_GIT_URL" "repos/$repo_name" || echo "    ⚠️ Could not clone $repo_name"
+                else
+                  echo "    📥 Updating $repo_name..."
+                  cd "repos/$repo_name"
+                  git pull origin main || git pull origin master || true
+                  cd ../..
+                fi
+                
+                # Write env file
+                mkdir -p secrets
+                printf '%s\n' "$ENV_CONTENT" > "secrets/${repo_name}-${repo_env}.env"
+                
+                echo "    ✅ $repo_name ($repo_env) ready"
+              EOF
+            done <<< "$REPOS"
+            
+            # Run final setup commands
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" bash -s << 'FINAL_EOF'
+              set -e
+              
+              INFRA_DIR=""
+              for dir in ~/infrastructure /opt/infrastructure /var/infrastructure; do
+                if [ -d "$dir" ]; then
+                  INFRA_DIR="$dir"
+                  break
+                fi
+              done
+              
+              cd "$INFRA_DIR"
+              
+              # Generate nginx config if script exists
+              if [ -f "./scripts/generate-nginx-config.sh" ]; then
+                echo "📝 Generating nginx config..."
+                chmod +x ./scripts/generate-nginx-config.sh
+                ./scripts/generate-nginx-config.sh || echo "⚠️ Could not generate nginx config (yq may not be installed)"
+              fi
+              
+              # Start services
+              echo "🐳 Starting Docker services..."
+              docker-compose up -d || echo "⚠️ Docker Compose failed - check configuration"
+              
+              echo "✅ Setup complete for this server!"
+            FINAL_EOF
+            
+            # Cleanup SSH key
+            rm -f ~/.ssh/deploy_key
+            
+            echo "✅ Server $server setup complete"
+          done
+          
+          echo ""
+          echo "========================================"
+          echo "✅ All servers setup complete!"
+          echo "========================================"

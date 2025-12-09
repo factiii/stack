@@ -4,6 +4,9 @@ repos/*
 secrets/*
 !secrets/.gitignore
 
+# GitHub Actions runner (contains binaries and config)
+actions-runner/
+
 # Standard ignores
 .DS_Store
 *.swp
@@ -22,3 +25,5 @@ secrets/*
 *.bak
 *.backup
 
+# Machine-specific infrastructure config (staging vs prod)
+infra.conf

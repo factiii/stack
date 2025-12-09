@@ -1,61 +1,98 @@
 # Infrastructure Repository
 
-Centralized infrastructure management for multiple repositories on Mac Mini.
+Centralized infrastructure management for multiple repositories across multiple servers (Mac Mini, EC2, etc.). All configuration lives in this repo - one-button deploy sets up everything automatically.
 
 ## Structure Overview
 
 ```
 infrastructure/
-├── repos/              # Cloned repositories (gitignored)
-├── secrets/            # Environment files (gitignored)
-├── scripts/            # Deployment and utility scripts
+├── infrastructure-config.yml  # Central config mapping servers to repos
+├── infra.conf                # Environment config (staging/prod) - legacy/optional
+├── repos/                    # Cloned repositories (gitignored)
+├── secrets/                  # Environment files (gitignored)
+├── actions-runner/           # GitHub Actions self-hosted runner (gitignored)
+├── scripts/                  # Deployment and utility scripts
 │   ├── deploy.sh
+│   ├── validate-infra.sh
+│   ├── parse-infrastructure-config.sh
+│   ├── generate-nginx-config.sh
+│   ├── generate-certbot-domains.sh
+│   ├── write-env-file.sh
+│   ├── setup-infrastructure.sh
 │   ├── backup-all-dbs.sh
 │   └── setup-repo.sh
-├── nginx/              # Nginx configuration
+├── .github/workflows/        # GitHub Actions workflows
+│   ├── setup-infrastructure.yml
+│   ├── deploy-infrastructure.yml
+│   ├── deploy-on-repo-update.yml
+│   ├── add-repo.yml
+│   └── remove-repo.yml
+├── nginx/                    # Nginx configuration
 │   └── nginx.conf
-├── docker-compose.yml  # Centralized Docker Compose configuration
+├── docker-compose.yml        # Centralized Docker Compose configuration
 └── README.md
 ```
 
-## Quick Start Guide
+## Quick Start
 
-### Prerequisites
+**New to infrastructure?** Start here:
+- **[QUICK_START.md](QUICK_START.md)** - **NEW:** Centralized deployment guide (one-button deploy)
+- **[INITIAL_SETUP.md](INITIAL_SETUP.md)** - Complete setup guide (git clone, docker, nginx, GitHub runner)
+- **[REPO_SETUP.md](REPO_SETUP.md)** - What each repo needs to work with infrastructure
 
-- Docker and Docker Compose installed
-- Git configured
-- PostgreSQL client tools (for backups)
-- Access to all repository Git URLs
+**Prerequisites:** Docker, Docker Compose, Git, PostgreSQL client tools. See [INITIAL_SETUP.md](INITIAL_SETUP.md) for full setup instructions.
 
-### Initial Setup
+## Centralized Architecture (Recommended)
 
-1. **Clone this infrastructure repository:**
-   ```bash
-   git clone <infrastructure-repo-url> infrastructure
-   cd infrastructure
-   ```
+**All configuration lives in the infrastructure repo:**
+- `infrastructure-config.yml` - Maps servers to repos and environments
+- GitHub Secrets - SSH keys and environment variables for all repos
+- GitHub Actions Workflows - One-button deploy and auto-deployment
 
-2. **Set up repositories:**
-   ```bash
-   ./scripts/setup-repo.sh chop-shop <git-url>
-   ./scripts/setup-repo.sh factiii <git-url>
-   ./scripts/setup-repo.sh link3d <git-url>
-   ./scripts/setup-repo.sh tap-track <git-url>
-   ```
+**Key Benefits:**
+- Single source of truth for all configuration
+- Multi-server support (Mac Mini, EC2, etc.)
+- Auto-deployment when repos push to main/production
+- No per-repo configuration needed
 
-3. **Configure environment variables:**
-   - Edit `.env` files in `secrets/` directory for each service
-   - Set database credentials, API keys, etc.
+See **[QUICK_START.md](QUICK_START.md)** for complete setup and usage guide.
 
-4. **Set up SSL certificates:**
-   ```bash
-   docker-compose up certbot
-   ```
+## Configuration
 
-5. **Start all services:**
-   ```bash
-   docker-compose up -d
-   ```
+### Centralized Configuration (Recommended)
+
+**Primary config:** `infrastructure-config.yml` maps servers to repos:
+
+```yaml
+servers:
+  mac_mini:
+    ssh_key_secret: MAC_MINI_SSH
+    host: mac-mini.local
+    user: jon
+    repos:
+      - name: factiii
+        environment: staging
+```
+
+**GitHub Secrets:** All SSH keys and environment variables stored in infrastructure repo:
+- SSH keys: `MAC_MINI_SSH`, `EC2_SSH`, etc.
+- Environment variables: `FACTIII_STAGING_ENVS`, `FACTIII_PROD_ENVS`, etc.
+
+See **[QUICK_START.md](QUICK_START.md)** for complete configuration guide.
+
+### Legacy Configuration (Optional)
+
+For backward compatibility, you can still use `infra.conf`:
+
+```bash
+# Infrastructure Configuration
+INFRA_ENV=staging  # or "prod"
+```
+
+**Validate your setup:**
+```bash
+./scripts/validate-infra.sh
+```
 
 ## Script Usage
 
@@ -65,13 +102,16 @@ Deploys a specific repository service.
 
 **Usage:**
 ```bash
-./scripts/deploy.sh <repo-name> <environment>
+./scripts/deploy.sh <repo-name> [environment]
 ```
+
+If environment is omitted, uses `INFRA_ENV` from `infra.conf`.
 
 **Examples:**
 ```bash
-./scripts/deploy.sh chop-shop prod
-./scripts/deploy.sh factiii staging
+./scripts/deploy.sh chop-shop          # Uses environment from infra.conf
+./scripts/deploy.sh chop-shop prod     # Explicitly deploy to prod
+./scripts/deploy.sh factiii staging    # Explicitly deploy to staging
 ```
 
 **What it does:**
@@ -131,6 +171,46 @@ Helper script to add new repositories to the infrastructure.
 2. Creates example `.env` files in `secrets/`
 3. Provides next steps for configuration
 
+### validate-infra.sh
+
+Validates infrastructure configuration and reports missing items.
+
+**Usage:**
+```bash
+./scripts/validate-infra.sh [--env staging|prod]
+```
+
+If `--env` is omitted, uses `INFRA_ENV` from `infra.conf`.
+
+**What it checks:**
+- Repos cloned in `repos/`
+- Dockerfiles exist
+- Deploy workflows exist
+- Environment files in `secrets/`
+- Docker Compose services defined
+- Nginx server blocks configured
+- GitHub Actions runner status
+- SSL certificate configuration
+
+**Example output:**
+```
+Infrastructure Validation (staging)
+========================================
+
+[chop-shop]
+  ✓ Repo cloned at repos/chop-shop/
+  ✓ Dockerfile exists
+  ✓ Deploy workflow exists
+  ✓ Env file: secrets/chop-shop-staging.env
+  ✓ Docker Compose service: chop-shop-staging
+  ✓ Nginx configured for staging-api.greasemoto.com
+
+Runner Status
+  ✓ GitHub Actions runner is running
+
+Summary: 24/24 checks passed
+```
+
 ## Docker Compose Services
 
 ### Application Services
@@ -177,33 +257,7 @@ The nginx reverse proxy handles:
 
 ## GitHub Actions Setup
 
-### Workflow Example
-
-Create `.github/workflows/deploy.yml`:
-
-```yaml
-name: Deploy
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy:
-    runs-on: self-hosted
-    steps:
-      - name: Deploy to Production
-        run: |
-          cd /path/to/infrastructure
-          ./scripts/deploy.sh ${{ github.event.repository.name }} prod
-```
-
-### Self-Hosted Runner Setup
-
-1. Install GitHub Actions runner on Mac Mini
-2. Configure runner to have access to infrastructure directory
-3. Ensure Docker and Docker Compose are available to runner
-4. Set up SSH keys or deploy tokens for repository access
+See **[INITIAL_SETUP.md](INITIAL_SETUP.md)** for self-hosted runner setup and **[REPO_SETUP.md](REPO_SETUP.md)** for workflow requirements and examples.
 
 ## Troubleshooting
 
@@ -272,68 +326,11 @@ jobs:
 
 ## Adding New Repositories
 
-1. **Run setup script:**
-   ```bash
-   ./scripts/setup-repo.sh <repo-name> <git-url>
-   ```
-
-2. **Edit environment files:**
-   - `secrets/<repo-name>-prod.env`
-   - `secrets/<repo-name>-staging.env`
-
-3. **Add services to `docker-compose.yml`:**
-   ```yaml
-   <repo-name>-prod:
-     build:
-       context: ./repos/<repo-name>
-       dockerfile: apps/server/Dockerfile
-     container_name: <repo-name>-prod
-     environment:
-       - NODE_ENV=production
-     env_file:
-       - ./secrets/<repo-name>-prod.env
-     networks:
-       - infrastructure_network
-     restart: unless-stopped
-     healthcheck:
-       test: ["CMD", "curl", "-f", "http://localhost:<port>/health"]
-       interval: 30s
-       timeout: 10s
-       retries: 3
-       start_period: 40s
-
-   <repo-name>-staging:
-     build:
-       context: ./repos/<repo-name>
-       dockerfile: apps/server/Dockerfile
-     container_name: <repo-name>-staging
-     environment:
-       - NODE_ENV=staging
-     env_file:
-       - ./secrets/<repo-name>-staging.env
-     networks:
-       - infrastructure_network
-     restart: unless-stopped
-     depends_on:
-       postgres-staging:
-         condition: service_healthy
-     healthcheck:
-       test: ["CMD", "curl", "-f", "http://localhost:<port>/health"]
-       interval: 30s
-       timeout: 10s
-       retries: 3
-       start_period: 40s
-   ```
-
-4. **Add nginx server blocks** in `nginx/nginx.conf` for domain routing
-
-5. **Update certbot command** in `docker-compose.yml` to include new domains
-
-6. **Deploy:**
-   ```bash
-   ./scripts/deploy.sh <repo-name> prod
-   ./scripts/deploy.sh <repo-name> staging
-   ```
+See **[REPO_SETUP.md](REPO_SETUP.md)** for complete requirements, including:
+- Required repo structure (Dockerfile, .env.example, workflow)
+- Docker Compose configuration
+- Nginx setup
+- GitHub Secrets and workflow setup
 
 ## Maintenance
 
