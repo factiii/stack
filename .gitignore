@@ -1,0 +1,24 @@
+# Repos and secrets - ignore contents but keep directories
+repos/*
+!repos/.gitignore
+secrets/*
+!secrets/.gitignore
+
+# Standard ignores
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.log
+.env.local
+.env.*.local
+
+# Docker
+.dockerignore
+
+# Backup files
+*.bak
+*.backup
+
