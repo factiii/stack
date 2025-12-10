@@ -116,10 +116,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install infrastructure package
-        run: npm install @yourorg/infrastructure
+        run: npm install @factiii/core
 
       - name: Validate infrastructure config
-        run: npx infra validate
+        run: npx core validate
 
       - name: Deploy to staging server
         env:
@@ -148,11 +148,11 @@ jobs:
           
           # Copy scripts and generators to server
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            node_modules/@yourorg/infrastructure/src/scripts/check-config.sh \
+            node_modules/@factiii/core/src/scripts/check-config.sh \
             "$SSH_USER@$SSH_HOST:~/infrastructure/scripts/"
           
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            node_modules/@yourorg/infrastructure/src/scripts/deploy.sh \
+            node_modules/@factiii/core/src/scripts/deploy.sh \
             "$SSH_USER@$SSH_HOST:~/infrastructure/scripts/"
           
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
@@ -160,7 +160,7 @@ jobs:
             "mkdir -p ~/infrastructure/scripts/generators"
           
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            -r node_modules/@yourorg/infrastructure/src/generators/* \
+            -r node_modules/@factiii/core/src/generators/* \
             "$SSH_USER@$SSH_HOST:~/infrastructure/scripts/generators/"
           
           # Run deployment script

@@ -44,7 +44,7 @@ function init(options = {}) {
   console.log(`\n📝 Next steps:`);
   console.log(`   1. Edit infrastructure.yml with your domains and settings`);
   console.log(`   2. Add GitHub secrets: STAGING_SSH, PROD_SSH, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION`);
-  console.log(`   3. Run: infra generate-workflows`);
+  console.log(`   3. Run: npx core generate-workflows`);
 }
 
 module.exports = init;

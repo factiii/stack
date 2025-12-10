@@ -3,7 +3,7 @@
 # ============================================================================
 #
 # ⚠️ NOTE: This example is for the LEGACY centralized approach.
-# For new repositories, use the decentralized approach with `npx infra generate-workflows`
+# For new repositories, use the decentralized approach with `npx core generate-workflows`
 # See README.md for the recommended approach.
 #
 # Copy this file to your repo as .github/workflows/deploy.yml

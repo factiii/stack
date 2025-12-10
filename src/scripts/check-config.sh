@@ -97,8 +97,8 @@ else
     
     # Try to find package in node_modules
     PACKAGE_GENERATORS=""
-    if [ -d "${INFRA_DIR}/node_modules/@yourorg/infrastructure" ]; then
-        PACKAGE_GENERATORS="${INFRA_DIR}/node_modules/@yourorg/infrastructure/src/generators"
+    if [ -d "${INFRA_DIR}/node_modules/@factiii/core" ]; then
+        PACKAGE_GENERATORS="${INFRA_DIR}/node_modules/@factiii/core/src/generators"
     elif [ -d "${INFRA_DIR}/node_modules/infrastructure" ]; then
         PACKAGE_GENERATORS="${INFRA_DIR}/node_modules/infrastructure/src/generators"
     fi

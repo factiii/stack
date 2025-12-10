@@ -1,10 +1,10 @@
 {
-  "name": "@yourorg/infrastructure",
+  "name": "@factiii/core",
   "version": "1.0.0",
   "description": "Infrastructure management package for deploying services to servers",
   "main": "src/index.js",
   "bin": {
-    "infra": "./bin/infra"
+    "core": "./bin/core"
   },
   "scripts": {
     "test": "jest",

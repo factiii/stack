@@ -5,7 +5,7 @@
 # ============================================================================
 # This script is part of the legacy centralized infrastructure-config.yml
 # approach. For new repositories, use the decentralized approach with
-# the npm package CLI commands (npx infra check-config, etc.)
+# the npm package CLI commands (npx core check-config, etc.)
 # ============================================================================
 #
 # Generate certbot domain list from infrastructure-config.yml

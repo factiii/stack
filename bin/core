@@ -12,7 +12,7 @@ const remove = require('../src/cli/remove');
 const generateWorkflows = require('../src/cli/generate-workflows');
 
 program
-  .name('infra')
+  .name('core')
   .description('Infrastructure management CLI')
   .version('1.0.0');
 

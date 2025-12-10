@@ -13,7 +13,7 @@ Quick setup guide for getting infrastructure running.
 
 Each repository manages its own infrastructure configuration:
 1. Each repo has its own `infrastructure.yml` config file
-2. Use `npx infra` CLI commands to manage deployments
+2. Use `npx core` CLI commands to manage deployments
 3. Servers automatically collect and merge configs from all repos
 
 See **[QUICK_START.md](QUICK_START.md)** for complete instructions.
@@ -195,7 +195,7 @@ jobs:
 **Manual Staging Test:**
 ```bash
 # Using the CLI (recommended)
-npx infra deploy --environment staging
+npx core deploy --environment staging
 
 # Or manually SSH to server and run docker compose commands
 ```

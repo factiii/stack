@@ -35,7 +35,7 @@ An npm package for managing infrastructure deployments across multiple repositor
 ### As an npm Package (Recommended)
 
 ```bash
-npm install @yourorg/infrastructure
+npm install @factiii/core
 ```
 
 ### Local Development
@@ -54,7 +54,7 @@ npm link  # For local development
 In your repository root:
 
 ```bash
-npx infra init
+npx core init
 ```
 
 This creates an `infrastructure.yml` file. Edit it with your domains and settings:
@@ -77,13 +77,13 @@ ecr_repository: apps
 ### 2. Validate Configuration
 
 ```bash
-npx infra validate
+npx core validate
 ```
 
 ### 3. Generate GitHub Workflows
 
 ```bash
-npx infra generate-workflows
+npx core generate-workflows
 ```
 
 This creates:
@@ -113,49 +113,49 @@ Push to `main` branch to trigger staging deployment, or manually run the workflo
 
 ## CLI Commands
 
-### `infra init`
+### `core init`
 
 Initialize `infrastructure.yml` config file.
 
 ```bash
-npx infra init
-npx infra init --force  # Overwrite existing
+npx core init
+npx core init --force  # Overwrite existing
 ```
 
-### `infra validate`
+### `core validate`
 
 Validate your `infrastructure.yml` file.
 
 ```bash
-npx infra validate
-npx infra validate --config path/to/infrastructure.yml
+npx core validate
+npx core validate --config path/to/infrastructure.yml
 ```
 
-### `infra check-config`
+### `core check-config`
 
 Check and regenerate configurations on servers.
 
 ```bash
 # Check all environments
-npx infra check-config
+npx core check-config
 
 # Check specific environment
-npx infra check-config --environment staging
+npx core check-config --environment staging
 
 # With explicit credentials
-npx infra check-config \
+npx core check-config \
   --ssh-staging "$SSH_KEY" \
   --staging-host "192.168.1.100" \
   --staging-user "admin"
 ```
 
-### `infra generate-workflows`
+### `core generate-workflows`
 
 Generate GitHub workflow files.
 
 ```bash
-npx infra generate-workflows
-npx infra generate-workflows --output .github/workflows
+npx core generate-workflows
+npx core generate-workflows --output .github/workflows
 ```
 
 ## Configuration Format
@@ -219,7 +219,7 @@ mkdir -p ~/infrastructure/{configs,scripts,nginx}
 
 ### Config Discovery
 
-The `CheckConfig` workflow (or manual `infra check-config`) will:
+The `CheckConfig` workflow (or manual `core check-config`) will:
 
 1. SSH to the server
 2. Scan `~/infrastructure/configs/*.yml` for all repo configs
@@ -275,9 +275,9 @@ Same as DeployStaging but for production.
 
 ## Adding a New Service
 
-1. In your repo, run `npx infra init`
+1. In your repo, run `npx core init`
 2. Edit `infrastructure.yml` with your domains and ECR settings
-3. Run `npx infra generate-workflows`
+3. Run `npx core generate-workflows`
 4. Add GitHub secrets (STAGING_SSH, PROD_SSH, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, etc.)
 5. Push code to trigger deployment
 
@@ -288,14 +288,14 @@ The service will automatically appear in the server's docker-compose and nginx c
 Use the `remove` command:
 
 ```bash
-npx infra remove --environment staging
-npx infra remove --environment all
+npx core remove --environment staging
+npx core remove --environment all
 ```
 
 Or manually:
 1. Remove the config file from `~/infrastructure/configs/<repo-name>.yml` on the server
 2. Remove the env file `~/infrastructure/<repo-name>-<env>.env` if it exists
-3. Run `infra check-config` to regenerate configs
+3. Run `core check-config` to regenerate configs
 4. The service will be removed from docker-compose and nginx
 5. All remaining repos will be verified and reconfigured
 
@@ -328,7 +328,7 @@ docker compose ps
 ## Programmatic Usage
 
 ```javascript
-const infra = require('@yourorg/infrastructure');
+const infra = require('@factiii/core');
 
 // Merge configs from a directory
 const merged = infra.mergeConfigs('/path/to/configs');

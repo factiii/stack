@@ -1,6 +1,6 @@
 # Quick Start Guide - Infrastructure Package
 
-**TL;DR:** Each repo stores its own `infrastructure.yml` config. Use `npx infra` commands to validate, deploy, update, and remove configurations. The package ensures configs are valid and handles deployment without an external infrastructure layer.
+**TL;DR:** Each repo stores its own `infrastructure.yml` config. Use `npx core` commands to validate, deploy, update, and remove configurations. The package ensures configs are valid and handles deployment without an external infrastructure layer.
 
 ## Architecture Overview
 
@@ -12,21 +12,21 @@
 
 **Deployment Flow:**
 1. Repo contains `infrastructure.yml` with its deployment config
-2. Run `npx infra validate` to check config locally
-3. Run `npx infra deploy` (or use GitHub Actions) to deploy config to server
+2. Run `npx core validate` to check config locally
+3. Run `npx core deploy` (or use GitHub Actions) to deploy config to server
 4. Server collects all configs and auto-generates docker-compose.yml and nginx.conf
-5. Run `npx infra check-config` to verify everything is working
+5. Run `npx core check-config` to verify everything is working
 
 ## Installation
 
 ```bash
-npm install @yourorg/infrastructure
+npm install @factiii/core
 ```
 
 Or use directly with npx (no installation needed):
 
 ```bash
-npx infra init
+npx core init
 ```
 
 ## Quick Start
@@ -36,7 +36,7 @@ npx infra init
 In your repository root:
 
 ```bash
-npx infra init
+npx core init
 ```
 
 This creates an `infrastructure.yml` example file. Edit it with your domains and settings:
@@ -96,7 +96,7 @@ ecr_repository: apps
 Check that your config is valid:
 
 ```bash
-npx infra validate
+npx core validate
 ```
 
 This will:
@@ -111,7 +111,7 @@ This will:
 Before deploying, check if everything is configured correctly on your servers:
 
 ```bash
-npx infra check-config
+npx core check-config
 ```
 
 This command:
@@ -130,13 +130,13 @@ This command:
 **Options:**
 ```bash
 # Check specific environment
-npx infra check-config --environment staging
+npx core check-config --environment staging
 
 # Check all environments (default)
-npx infra check-config --environment all
+npx core check-config --environment all
 
 # With explicit credentials
-npx infra check-config \
+npx core check-config \
   --ssh-staging "$STAGING_SSH_KEY" \
   --staging-host "staging.example.com" \
   --staging-user "ubuntu" \
@@ -150,7 +150,7 @@ npx infra check-config \
 Deploy or update your config to servers:
 
 ```bash
-npx infra deploy
+npx core deploy
 ```
 
 This command:
@@ -165,13 +165,13 @@ This command:
 **Options:**
 ```bash
 # Deploy to specific environment
-npx infra deploy --environment staging
+npx core deploy --environment staging
 
 # Deploy to all environments
-npx infra deploy --environment all
+npx core deploy --environment all
 
 # Deploy with explicit credentials
-npx infra deploy \
+npx core deploy \
   --environment staging \
   --ssh-staging "$SSH_KEY" \
   --staging-host "staging.example.com"
@@ -182,7 +182,7 @@ npx infra deploy \
 Remove your config from servers:
 
 ```bash
-npx infra remove
+npx core remove
 ```
 
 This command:
@@ -195,10 +195,10 @@ This command:
 **Options:**
 ```bash
 # Remove from specific environment
-npx infra remove --environment staging
+npx core remove --environment staging
 
 # Remove from all environments
-npx infra remove --environment all
+npx core remove --environment all
 ```
 
 ## GitHub Secrets Setup
@@ -291,7 +291,7 @@ On each server:
 
 ### "Config file not found"
 - Ensure `infrastructure.yml` exists in repo root
-- Run `npx infra init` to create example file
+- Run `npx core init` to create example file
 
 ### "SSH connection failed"
 - Verify SSH key is in GitHub Secrets with correct name (`STAGING_SSH` or `PROD_SSH`)
@@ -300,35 +300,35 @@ On each server:
 - Ensure firewall allows SSH (port 22)
 
 ### "Validation failed"
-- Run `npx infra validate` to see specific errors
+- Run `npx core validate` to see specific errors
 - Check required fields are present
 - Verify YAML syntax is correct
 
 ### "GitHub secrets missing"
-- Run `npx infra check-config` to see which secrets are missing
+- Run `npx core check-config` to see which secrets are missing
 - Add missing secrets in GitHub Settings → Secrets
 - Ensure secret names match expected format
 
 ### "Port conflict"
 - The system auto-assigns ports, but you can specify a port in your config
-- Run `npx infra check-config` to see port assignments
+- Run `npx core check-config` to see port assignments
 - Conflicts are automatically resolved
 
 ### "Service not starting"
 - Check logs: `docker compose logs <service-name>`
 - Verify config exists on server: `ls ~/infrastructure/configs/<repo-name>.yml`
-- Run `npx infra check-config` to regenerate configs
+- Run `npx core check-config` to regenerate configs
 
 ## CLI Commands Summary
 
 | Command | Description |
 |---------|-------------|
-| `npx infra init` | Create example `infrastructure.yml` file |
-| `npx infra validate` | Validate config file locally |
-| `npx infra check-config` | Check and regenerate configs on servers, verify GitHub secrets, provide report |
-| `npx infra deploy` | Deploy/update config to servers |
-| `npx infra remove` | Remove config from servers and clean up |
-| `npx infra generate-workflows` | Generate GitHub Actions workflow files |
+| `npx core init` | Create example `infrastructure.yml` file |
+| `npx core validate` | Validate config file locally |
+| `npx core check-config` | Check and regenerate configs on servers, verify GitHub secrets, provide report |
+| `npx core deploy` | Deploy/update config to servers |
+| `npx core remove` | Remove config from servers and clean up |
+| `npx core generate-workflows` | Generate GitHub Actions workflow files |
 
 ## Next Steps
 
