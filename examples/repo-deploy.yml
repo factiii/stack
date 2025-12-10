@@ -1,0 +1,174 @@
+# ============================================================================
+# Example Deploy Workflow for Individual Repos (Legacy Centralized Approach)
+# ============================================================================
+#
+# ⚠️ NOTE: This example is for the LEGACY centralized approach.
+# For new repositories, use the decentralized approach with `npx infra generate-workflows`
+# See README.md for the recommended approach.
+#
+# Copy this file to your repo as .github/workflows/deploy.yml
+#
+# REQUIRED SECRETS (add to your repo's Settings → Secrets → Actions):
+#   - AWS_SECRETS: JSON with ECR credentials (same as infrastructure repo)
+#   - INFRA_DISPATCH_TOKEN: PAT token to trigger infrastructure workflows
+#
+# This workflow:
+#   1. Builds and tests your code
+#   2. Builds Docker image and pushes to ECR
+#   3. Triggers infrastructure repo's rebuild-service workflow to deploy
+#
+# ============================================================================
+
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # These are extracted from AWS_SECRETS in the jobs below
+  # Adjust if your repo uses different environment variable names
+  NODE_VERSION: '20'
+
+jobs:
+  # ============================================================================
+  # BUILD AND TEST
+  # ============================================================================
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint --if-present
+
+      - name: Run tests
+        run: npm test --if-present
+
+      - name: Build
+        run: npm run build --if-present
+
+  # ============================================================================
+  # PUSH TO ECR (only on main branch)
+  # ============================================================================
+  push-to-ecr:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.build.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ fromJson(secrets.AWS_SECRETS).AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ fromJson(secrets.AWS_SECRETS).AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ fromJson(secrets.AWS_SECRETS).AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        id: build
+        run: |
+          ECR_REGISTRY="${{ fromJson(secrets.AWS_SECRETS).ECR_REGISTRY }}"
+          ECR_REPO="${{ fromJson(secrets.AWS_SECRETS).ECR_REPOSITORY }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          
+          # Image tags
+          IMAGE_TAG="${REPO_NAME}-main-${SHORT_SHA}"
+          LATEST_TAG="${REPO_NAME}-main-latest"
+          
+          echo "Building image: ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
+          
+          # Build the image
+          docker build -t ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG} .
+          
+          # Tag as latest
+          docker tag ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG} ${ECR_REGISTRY}/${ECR_REPO}:${LATEST_TAG}
+          
+          # Push both tags
+          docker push ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}
+          docker push ${ECR_REGISTRY}/${ECR_REPO}:${LATEST_TAG}
+          
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "✅ Pushed: ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
+          echo "✅ Pushed: ${ECR_REGISTRY}/${ECR_REPO}:${LATEST_TAG}"
+
+  # ============================================================================
+  # TRIGGER DEPLOYMENT (only on main branch)
+  # ============================================================================
+  trigger-deploy:
+    needs: push-to-ecr
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Deploy to both staging and prod
+        # Remove 'prod' if you want manual prod deployments
+        environment: [staging, prod]
+    steps:
+      - name: Trigger infrastructure deployment
+        run: |
+          REPO_NAME="${{ github.event.repository.name }}"
+          ENVIRONMENT="${{ matrix.environment }}"
+          
+          echo "🚀 Triggering deployment: ${REPO_NAME} → ${ENVIRONMENT}"
+          
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.INFRA_DISPATCH_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository_owner }}/infrastructure/dispatches \
+            -d "{\"event_type\":\"rebuild-service\",\"client_payload\":{\"repo\":\"${REPO_NAME}\",\"environment\":\"${ENVIRONMENT}\"}}"
+          
+          echo "✅ Deployment triggered for ${REPO_NAME}-${ENVIRONMENT}"
+
+# ============================================================================
+# CUSTOMIZATION NOTES
+# ============================================================================
+#
+# 1. DOCKERFILE LOCATION
+#    By default, this looks for Dockerfile in the repo root.
+#    If your Dockerfile is elsewhere, update the docker build command:
+#      docker build -f path/to/Dockerfile -t ... .
+#
+# 2. BUILD ARGS
+#    If your Dockerfile needs build args:
+#      docker build --build-arg NODE_ENV=production -t ... .
+#
+# 3. MONOREPO
+#    If this is a monorepo with multiple services, you may want to:
+#    - Build multiple images with different tags
+#    - Trigger multiple deployments
+#
+# 4. MANUAL PROD DEPLOYMENT
+#    To require manual approval for prod:
+#    - Remove 'prod' from the matrix
+#    - Create a separate workflow with workflow_dispatch trigger
+#
+# 5. BRANCH-BASED ENVIRONMENTS
+#    To deploy different branches to different environments:
+#    - main → staging
+#    - release/* → prod
+#    Modify the 'if' conditions and matrix accordingly.
+#
+# ============================================================================
+

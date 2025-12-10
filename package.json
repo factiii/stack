@@ -1,0 +1,51 @@
+{
+  "name": "@yourorg/infrastructure",
+  "version": "1.0.0",
+  "description": "Infrastructure management package for deploying services to servers",
+  "main": "src/index.js",
+  "bin": {
+    "infra": "./bin/infra"
+  },
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "infrastructure",
+    "deployment",
+    "docker",
+    "nginx"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^11.1.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/test/**/*.test.js"],
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "scripts/**/*.js",
+      "!**/node_modules/**"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 70,
+        "functions": 70,
+        "lines": 70,
+        "statements": 70
+      }
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
+

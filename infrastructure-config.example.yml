@@ -1,0 +1,144 @@
+# ============================================================================
+# Infrastructure Configuration Example
+# ============================================================================
+#
+# This file defines your entire infrastructure setup:
+#   - Which servers you have
+#   - Which repos/services run on each server
+#   - Domain routing and SSL configuration
+#
+# SETUP:
+# 1. Copy this file's contents to a GitHub repository variable:
+#    Settings → Secrets and variables → Actions → Variables → New variable
+#    Name: INFRASTRUCTURE_CONFIG
+#    Value: (paste the contents)
+#
+# 2. Create the required secrets (see "Required Secrets" section below)
+#
+# 3. Run the "Setup Infrastructure" workflow
+#
+# ============================================================================
+
+# ------------------------------------------------------------------------------
+# SERVERS
+# ------------------------------------------------------------------------------
+# Define each server that will run your services.
+# Each server needs:
+#   - ssh_key_secret: Name of the GitHub secret containing the SSH private key
+#   - host: Hostname or IP address
+#   - user: SSH username
+#   - repos: List of repos/services to deploy on this server
+
+servers:
+  # Staging server (e.g., local Mac Mini)
+  mac_mini:
+    ssh_key_secret: MAC_MINI_SSH      # GitHub secret name for SSH key
+    host: 192.168.1.100               # IP or hostname
+    user: admin                        # SSH username
+    repos:
+      - name: factiii
+        environment: staging
+        domain: staging-factiii.yourdomain.com
+      
+      - name: chop-shop
+        environment: staging
+        domain: staging-api.yourdomain.com
+      
+      - name: link3d
+        environment: staging
+        domain: staging-link3d.yourdomain.com
+      
+      - name: tap-track
+        environment: staging
+        domain: staging-tap-track.yourdomain.com
+
+  # Production server (e.g., AWS EC2)
+  ec2:
+    ssh_key_secret: EC2_SSH
+    host: ec2-xx-xx-xx-xx.compute-1.amazonaws.com
+    user: ubuntu
+    repos:
+      - name: factiii
+        environment: prod
+        domain: factiii.yourdomain.com
+      
+      - name: chop-shop
+        environment: prod
+        domain: api.yourdomain.com
+      
+      - name: link3d
+        environment: prod
+        domain: link3d.yourdomain.com
+      
+      - name: tap-track
+        environment: prod
+        domain: tap-track.yourdomain.com
+
+# ------------------------------------------------------------------------------
+# GLOBAL CONFIGURATION
+# ------------------------------------------------------------------------------
+# SSL Email: Used by Let's Encrypt for:
+#   - Certificate expiration notifications
+#   - Account recovery
+#   - Important security notices
+# This email is public in certificate transparency logs
+ssl_email: admin@yourdomain.com
+
+# ------------------------------------------------------------------------------
+# REQUIRED SECRETS (create in GitHub Settings → Secrets → Actions)
+# ------------------------------------------------------------------------------
+#
+# 1. AWS_SECRETS (JSON format):
+#    {
+#      "AWS_ACCESS_KEY_ID": "AKIA...",
+#      "AWS_SECRET_ACCESS_KEY": "...",
+#      "AWS_REGION": "us-east-1",
+#      "ECR_REGISTRY": "123456789.dkr.ecr.us-east-1.amazonaws.com",
+#      "ECR_REPOSITORY": "apps"
+#    }
+#
+# 2. SSH Keys (one per server):
+#    - MAC_MINI_SSH: Private SSH key for mac_mini server
+#    - EC2_SSH: Private SSH key for ec2 server
+#
+# 3. Environment Variables (one per repo/environment):
+#    Format: <REPO_NAME>_<ENV>_ENVS (uppercase, hyphens → underscores)
+#    Examples:
+#      - FACTIII_STAGING_ENVS: "DATABASE_URL=...\nAPI_KEY=..."
+#      - FACTIII_PROD_ENVS: "DATABASE_URL=...\nAPI_KEY=..."
+#      - CHOP_SHOP_STAGING_ENVS: "..."
+#      - CHOP_SHOP_PROD_ENVS: "..."
+#
+# ------------------------------------------------------------------------------
+# DOMAIN CONFIGURATION
+# ------------------------------------------------------------------------------
+#
+# Each repo must have an explicit domain set. This makes it clear where
+# each service is deployed and allows full control over domain names.
+#
+# Examples:
+#   domain: staging-factiii.yourdomain.com
+#   domain: api.yourdomain.com
+#   domain: custom-subdomain.example.com
+#
+# ------------------------------------------------------------------------------
+# ADDING A NEW SERVICE
+# ------------------------------------------------------------------------------
+#
+# 1. Add the repo to the appropriate server(s) above
+# 2. Create the environment secret: <REPO>_<ENV>_ENVS
+# 3. Run "Setup Infrastructure" workflow
+# 4. The individual repo needs:
+#    - AWS_SECRETS secret (for ECR push)
+#    - INFRA_DISPATCH_TOKEN secret (to trigger deployments)
+#    - A deploy workflow (see examples/repo-deploy.yml)
+#
+# ------------------------------------------------------------------------------
+# REMOVING A SERVICE
+# ------------------------------------------------------------------------------
+#
+# 1. Remove the repo entry from the server(s) above
+# 2. Run "Setup Infrastructure" workflow
+# 3. The service will be removed from docker-compose and nginx
+#
+

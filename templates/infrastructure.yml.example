@@ -1,0 +1,52 @@
+# Infrastructure Configuration
+# This file defines how your service is deployed to staging and production servers
+
+# Repository name (must match GitHub repo name)
+name: your-repo-name
+
+# Environment configurations
+environments:
+  staging:
+    # Domain for staging environment
+    domain: staging-your-repo.yourdomain.com
+    
+    # Port (optional - will be auto-assigned if not specified)
+    # port: 3001
+    
+    # Health check endpoint (defaults to /health)
+    health_check: /health
+    
+    # Dependencies (optional)
+    # depends_on: [postgres-staging]
+    
+    # Environment file path (optional)
+    # env_file: .env.staging
+
+  prod:
+    # Domain for production environment
+    domain: your-repo.yourdomain.com
+    
+    # Port (optional - will be auto-assigned if not specified)
+    # port: 3002
+    
+    # Health check endpoint
+    health_check: /health
+    
+    # Dependencies (optional)
+    # depends_on: []
+    
+    # Environment file path (optional)
+    # env_file: .env.prod
+
+# Global settings
+ssl_email: admin@yourdomain.com
+
+# ECR configuration (used for building and pushing Docker images)
+ecr_registry: 123456789.dkr.ecr.us-east-1.amazonaws.com
+ecr_repository: apps
+
+# Dockerfile path (optional, defaults to Dockerfile)
+# dockerfile: Dockerfile
+# dockerfile: apps/server/Dockerfile  # Example for monorepo
+
+

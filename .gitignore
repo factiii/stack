@@ -4,6 +4,18 @@ repos/*
 secrets/*
 !secrets/.gitignore
 
+# Auto-generated files (created by scripts/generate-all.js)
+docker-compose.yml
+nginx/nginx.conf
+infrastructure-config.yml
+
+# Manual test files (gitignored - for local testing)
+test-manual.yml
+
+# Test temp files
+test/temp-*
+test/**/temp-*
+
 # GitHub Actions runner (contains binaries and config)
 actions-runner/
 
@@ -17,6 +29,10 @@ actions-runner/
 *.log
 .env.local
 .env.*.local
+
+# Node.js
+node_modules/
+package-lock.json
 
 # Docker
 .dockerignore

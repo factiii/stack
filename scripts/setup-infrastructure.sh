@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# ============================================================================
+# LEGACY SCRIPT - For backward compatibility with centralized approach
+# ============================================================================
+# This script is part of the legacy centralized infrastructure-config.yml
+# approach. For new repositories, use the decentralized approach with
+# the npm package CLI commands (npx infra check-config, etc.)
+# ============================================================================
+#
 # Setup infrastructure on target server
 # Usage: ./scripts/setup-infrastructure.sh [server-name]
 # If server-name not provided, sets up for all servers in config

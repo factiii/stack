@@ -1,295 +1,337 @@
-# Quick Start Guide - Centralized Infrastructure Deployment
+# Quick Start Guide - Infrastructure Package
 
-**TL;DR:** All configuration lives in the infrastructure repo. One-button deploy sets up everything automatically.
+**TL;DR:** Each repo stores its own `infrastructure.yml` config. Use `npx infra` commands to validate, deploy, update, and remove configurations. The package ensures configs are valid and handles deployment without an external infrastructure layer.
 
 ## Architecture Overview
 
-**Single Source of Truth:** Infrastructure repo holds ALL configuration:
-- Server mappings (which repos on which servers) in `infrastructure-config.yml`
-- SSH keys for all servers (GitHub Secrets)
-- Environment variables for all repos/environments (GitHub Secrets/Variables)
-- Domain configurations
+**Decentralized Configuration:** Each repository manages its own infrastructure configuration:
+- Each repo has `infrastructure.yml` in its root
+- Repos store their own configs (no central infrastructure repo needed)
+- Servers collect configs from deployed repos automatically
+- Package validates configs and ensures everything works together
 
 **Deployment Flow:**
-1. Repo pushes to `main` or `production` branch
-2. Repo workflow triggers infrastructure repo via `repository_dispatch` webhook
-3. Infrastructure repo reads `infrastructure-config.yml`
-4. Infrastructure repo identifies which server(s) need deployment
-5. Infrastructure repo SSHs to appropriate server(s) and deploys
+1. Repo contains `infrastructure.yml` with its deployment config
+2. Run `npx infra validate` to check config locally
+3. Run `npx infra deploy` (or use GitHub Actions) to deploy config to server
+4. Server collects all configs and auto-generates docker-compose.yml and nginx.conf
+5. Run `npx infra check-config` to verify everything is working
 
-## Initial Setup
-
-### 1. Configure Infrastructure Repo
-
-**Step 1: Create `infrastructure-config.yml`**
-
-Create or update `infrastructure-config.yml` in the infrastructure repo root:
-
-```yaml
-servers:
-  mac_mini:
-    ssh_key_secret: MAC_MINI_SSH
-    host: mac-mini.local  # Update with actual hostname/IP
-    user: jon  # Update with actual username
-    repos:
-      - name: factiii
-        environment: staging
-        domain_override: null  # Uses default: staging-factiii.greasemoto.com
-      - name: chop-shop
-        environment: staging
-        domain_override: api.greasemoto.com  # Special case
-        
-  ec2:
-    ssh_key_secret: EC2_SSH
-    host: ec2-xxx.amazonaws.com  # Update with actual EC2 hostname/IP
-    user: ec2-user  # Update with actual username
-    repos:
-      - name: factiii
-        environment: prod
-      - name: chop-shop
-        environment: prod
-        domain_override: api.greasemoto.com
-
-# Global configuration
-base_domain: greasemoto.com
-ssl_email: admin@greasemoto.com
-```
-
-**Step 2: Configure GitHub Secrets**
-
-Go to **Settings → Secrets and variables → Actions** in the infrastructure repo.
-
-**SSH Keys (one per server, stored as secrets):**
-- `MAC_MINI_SSH` - SSH private key for Mac Mini
-- `EC2_SSH` - SSH private key for EC2
-- `SERVER2_SSH` - SSH private key for any additional servers
-
-**Environment Variables (per repo/environment, stored as secrets/variables):**
-- `FACTIII_STAGING_ENVS` - Staging env vars for factiii (can be variables if not sensitive)
-- `FACTIII_PROD_ENVS` - Production env vars for factiii (MUST be secret)
-- `CHOPSHOP_STAGING_ENVS` - Staging env vars for chop-shop
-- `CHOPSHOP_PROD_ENVS` - Production env vars for chop-shop
-
-**Format for ENVS:** 
-- Newline-separated `key=value` pairs (one per line)
-- Example:
-  ```
-  NODE_ENV=staging
-  PORT=5001
-  DATABASE_URL=postgresql://postgres:postgres@postgres-staging:5432/factiii_staging
-  ```
-
-**Optional: Store config in GitHub Environment Variable**
-
-You can also store the entire `infrastructure-config.yml` content in a GitHub Environment variable:
-- Go to **Settings → Environments → staging** (or production)
-- Add variable: `INFRASTRUCTURE_CONFIG` with the full YAML content
-- The setup workflow can read from this instead of the file
-
-### 2. Setup Each Server
-
-On each target server (Mac Mini, EC2, etc.):
+## Installation
 
 ```bash
-# Clone infrastructure repo
-git clone <infrastructure-repo-url> infrastructure
-cd infrastructure
-
-# Set environment (optional, for backward compatibility)
-echo "INFRA_ENV=staging" > infra.conf  # or "prod" for EC2
-
-# Install dependencies (if needed)
-# - Docker
-# - Docker Compose
-# - Git
+npm install @yourorg/infrastructure
 ```
 
-### 3. Run Initial Setup
-
-**Option A: Using GitHub Actions Workflow (Recommended)**
-
-1. Go to **Actions → "Setup Infrastructure"**
-2. Click **"Run workflow"**
-3. Select:
-   - **Config source:** `file` (or `github-env` if stored in environment variable)
-   - **Environment:** `staging` or `production`
-4. Click **"Run workflow"**
-
-The workflow will:
-- Read `infrastructure-config.yml`
-- For each server in config:
-  - SSHs to server
-  - Sets up Docker, Nginx, SSL
-  - Clones all configured repos
-  - Writes env files from GitHub Secrets
-  - Deploys all repos
-
-**Option B: Manual Setup**
+Or use directly with npx (no installation needed):
 
 ```bash
-# On each server
-cd infrastructure
-./scripts/setup-infrastructure.sh <server-name>
+npx infra init
 ```
 
-## Individual Repo Setup
+## Quick Start
 
-### Add Repository Trigger Workflow
+### 1. Initialize Your Repo
 
-Each application repo needs a simple workflow to trigger infrastructure deployment.
+In your repository root:
 
-Create `.github/workflows/trigger-infrastructure.yml` in each app repo:
+```bash
+npx infra init
+```
+
+This creates an `infrastructure.yml` example file. Edit it with your domains and settings:
 
 ```yaml
-name: Trigger Infrastructure Deploy
+# Repository name (must match GitHub repo name)
+name: your-repo-name
 
-on:
-  push:
-    branches: [main, production]
+# Environment configurations
+environments:
+  staging:
+    # Domain for staging environment
+    domain: staging-your-repo.yourdomain.com
+    
+    # Port (optional - will be auto-assigned if not specified)
+    # port: 3001
+    
+    # Health check endpoint (defaults to /health)
+    health_check: /health
+    
+    # Dependencies (optional)
+    # depends_on: [postgres-staging]
+    
+    # Environment file path (optional - secrets stored securely on server)
+    # env_file: .env.staging
 
-jobs:
-  trigger-infrastructure:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger Infrastructure Deployment
-        uses: peter-evans/repository-dispatch@v2
-        with:
-          token: ${{ secrets.INFRASTRUCTURE_DISPATCH_TOKEN }}
-          repository: owner/infrastructure  # Update with your infrastructure repo
-          event-type: repo-updated
-          client-payload: |
-            {
-              "repo_name": "${{ github.event.repository.name }}",
-              "branch": "${{ github.ref_name }}",
-              "environment": "${{ github.ref_name == 'production' && 'prod' || 'staging' }}",
-              "commit_sha": "${{ github.sha }}"
-            }
+  prod:
+    # Domain for production environment
+    domain: your-repo.yourdomain.com
+    
+    # Port (optional - will be auto-assigned if not specified)
+    # port: 3002
+    
+    # Health check endpoint
+    health_check: /health
+    
+    # Dependencies (optional)
+    # depends_on: []
+    
+    # Environment file path (optional)
+    # env_file: .env.prod
+
+# Global settings
+ssl_email: admin@yourdomain.com
+
+# ECR configuration (used for building and pushing Docker images)
+ecr_registry: 123456789.dkr.ecr.us-east-1.amazonaws.com
+ecr_repository: apps
+
+# Dockerfile path (optional, defaults to Dockerfile)
+# dockerfile: Dockerfile
+# dockerfile: apps/server/Dockerfile  # Example for monorepo
 ```
 
-**Required Secret in App Repo:**
-- `INFRASTRUCTURE_DISPATCH_TOKEN` - Personal Access Token with `repo` scope, created in infrastructure repo settings
+### 2. Validate Configuration
 
-## Deployment Workflows
+Check that your config is valid:
 
-### Manual Deploy All
+```bash
+npx infra validate
+```
 
-1. Go to **Actions → "Deploy Infrastructure"**
-2. Click **"Run workflow"**
-3. Select:
-   - **Deploy scope:** `all`
-   - **Environment:** `both` (or specific)
-4. Click **"Run workflow"**
+This will:
+- ✅ Check required fields are present
+- ✅ Validate YAML syntax
+- ✅ Check domain formats
+- ✅ Verify port ranges
+- ✅ Warn about missing optional fields
 
-### Deploy Specific Repo
+### 3. Check Configuration on Servers
 
-1. Go to **Actions → "Deploy Infrastructure"**
-2. Click **"Run workflow"**
-3. Select:
-   - **Deploy scope:** `specific-repo`
-   - **Repo name:** e.g., `factiii`
-   - **Environment:** `staging`, `prod`, or `both`
-4. Click **"Run workflow"**
+Before deploying, check if everything is configured correctly on your servers:
 
-### Auto Deploy on Repo Push
+```bash
+npx infra check-config
+```
 
-When a repo pushes to `main` or `production`:
-1. Repo workflow triggers infrastructure via webhook
-2. Infrastructure receives webhook, reads config
-3. Finds all servers that have this repo for matching environment
-4. For each server:
-   - SSHs to server
-   - Pulls latest infrastructure repo
-   - Pulls latest target repo
-   - Writes env file from GitHub Secrets (`<REPO>_<ENV>_ENVS`)
-   - Runs `docker-compose up -d <repo>-<env>` to recreate container
+This command:
+- ✅ SSHs to staging and/or production servers
+- ✅ Checks all configs on each server
+- ✅ Validates GitHub secrets/envs are available
+- ✅ Auto-compiles docker-compose.yml and nginx.conf
+- ✅ Provides a comprehensive report of:
+  - Missing GitHub secrets/envs
+  - Config validation issues
+  - Port conflicts
+  - Domain conflicts
+  - Services that need updates
+  - Any fixes that were automatically applied
 
-### Add New Repo
+**Options:**
+```bash
+# Check specific environment
+npx infra check-config --environment staging
 
-1. Go to **Actions → "Add Repo to Infrastructure"**
-2. Click **"Run workflow"**
-3. Enter:
-   - **Repository name:** e.g., `my-new-repo`
-   - **Git URL:** e.g., `https://github.com/user/my-new-repo.git`
-   - **Server name:** e.g., `mac_mini`
-   - **Environment:** `staging` or `prod`
-   - **Domain override:** (optional, leave empty for default)
-4. Click **"Run workflow"**
+# Check all environments (default)
+npx infra check-config --environment all
 
-Workflow will:
-- Add repo to `infrastructure-config.yml`
-- Commit changes
-- Setup repo on target server
-- Deploy the new repo
+# With explicit credentials
+npx infra check-config \
+  --ssh-staging "$STAGING_SSH_KEY" \
+  --staging-host "staging.example.com" \
+  --staging-user "ubuntu" \
+  --ssh-prod "$PROD_SSH_KEY" \
+  --prod-host "prod.example.com" \
+  --prod-user "ubuntu"
+```
 
-### Remove Repo
+### 4. Deploy Configuration
 
-1. Go to **Actions → "Remove Repo from Infrastructure"**
-2. Click **"Run workflow"**
-3. Enter:
-   - **Repository name:** e.g., `my-old-repo`
-   - **Server name:** e.g., `mac_mini`
-   - **Environment:** `staging` or `prod`
-4. Click **"Run workflow"**
+Deploy or update your config to servers:
+
+```bash
+npx infra deploy
+```
+
+This command:
+- ✅ Validates config locally first
+- ✅ SSHs to target server(s)
+- ✅ Copies `infrastructure.yml` to server as `configs/<repo-name>.yml`
+- ✅ Writes secrets securely to root-level files (named from config)
+- ✅ Runs check-config to regenerate docker-compose and nginx
+- ✅ Pulls latest Docker image
+- ✅ Restarts service
+
+**Options:**
+```bash
+# Deploy to specific environment
+npx infra deploy --environment staging
+
+# Deploy to all environments
+npx infra deploy --environment all
+
+# Deploy with explicit credentials
+npx infra deploy \
+  --environment staging \
+  --ssh-staging "$SSH_KEY" \
+  --staging-host "staging.example.com"
+```
+
+### 5. Remove Configuration
+
+Remove your config from servers:
+
+```bash
+npx infra remove
+```
+
+This command:
+- ✅ Removes config file from server(s)
+- ✅ Removes associated secrets/env files
+- ✅ Runs check-config to regenerate configs without your repo
+- ✅ Ensures all remaining repos on server are still properly configured
+- ✅ Verifies no broken dependencies
+
+**Options:**
+```bash
+# Remove from specific environment
+npx infra remove --environment staging
+
+# Remove from all environments
+npx infra remove --environment all
+```
+
+## GitHub Secrets Setup
+
+In your repository's **Settings → Secrets and variables → Actions**, add:
+
+**SSH Keys:**
+- `STAGING_SSH` - SSH private key for staging server
+- `PROD_SSH` - SSH private key for production server
+
+**Server Connection:**
+- `STAGING_HOST` - Staging server hostname/IP
+- `STAGING_USER` - SSH user for staging (default: ubuntu)
+- `PROD_HOST` - Production server hostname/IP
+- `PROD_USER` - SSH user for production (default: ubuntu)
+
+**AWS Credentials (for ECR):**
+- `AWS_ACCESS_KEY_ID` - AWS access key ID
+- `AWS_SECRET_ACCESS_KEY` - AWS secret access key
+- `AWS_REGION` - AWS region (e.g., us-east-1)
+
+**Environment Variables (optional):**
+- `STAGING_ENVS` - Environment variables for staging (newline-separated `key=value` pairs)
+- `PROD_ENVS` - Environment variables for production (newline-separated `key=value` pairs)
+
+**Format for ENVS:**
+```
+NODE_ENV=staging
+PORT=5001
+DATABASE_URL=postgresql://postgres:postgres@postgres-staging:5432/mydb
+```
+
+## Server Setup
+
+On each target server (staging and production):
+
+```bash
+# Create infrastructure directory structure
+mkdir -p ~/infrastructure/{configs,scripts,nginx}
+
+# Install Node.js (if not already installed)
+# Install Docker and docker-compose
+```
+
+The `check-config` command will automatically:
+- Create necessary directories
+- Copy generator scripts
+- Generate docker-compose.yml and nginx.conf from all configs
+- Validate configurations
 
 ## Configuration Reference
 
-### infrastructure-config.yml Structure
+### infrastructure.yml Structure
 
 ```yaml
-servers:
-  <server-name>:
-    ssh_key_secret: <SECRET_NAME>  # GitHub Secret name for SSH key
-    host: <hostname-or-ip>
-    user: <ssh-username>
-    repos:
-      - name: <repo-name>
-        environment: staging | prod
-        domain_override: <domain> | null  # Optional override
+name: <repo-name>  # Must match GitHub repo name
 
-base_domain: <domain>
+environments:
+  staging:
+    domain: <domain>
+    port: <port>  # Optional, auto-assigned if not specified
+    health_check: <endpoint>  # Defaults to /health
+    depends_on: [<service>]  # Optional
+    env_file: <path>  # Optional, secrets stored securely on server
+
+  prod:
+    domain: <domain>
+    port: <port>
+    health_check: <endpoint>
+    depends_on: []
+    env_file: <path>
+
 ssl_email: <email>
+ecr_registry: <ecr-registry-url>
+ecr_repository: <ecr-repo-name>
+dockerfile: <path>  # Optional, defaults to Dockerfile
 ```
 
-### GitHub Secrets Structure
+### How Configs Are Merged
 
-**SSH Keys:**
-- Format: SSH private key content
-- Naming: `<SERVER_NAME>_SSH` (e.g., `MAC_MINI_SSH`)
-
-**Environment Variables:**
-- Format: Newline-separated `key=value` pairs
-- Naming: `<REPO_NAME>_<ENV>_ENVS` (e.g., `FACTIII_STAGING_ENVS`)
-- Staging: Can be variables (non-secret) if not sensitive
-- Production: MUST be secrets
+On each server:
+1. All `configs/*.yml` files are collected
+2. Configs are merged and validated
+3. Ports are auto-assigned (starting at 3001) if not specified
+4. Domain conflicts are detected
+5. Unified `docker-compose.yml` and `nginx/nginx.conf` are generated
+6. Secrets are stored securely in root-level files (named from config)
 
 ## Troubleshooting
 
+### "Config file not found"
+- Ensure `infrastructure.yml` exists in repo root
+- Run `npx infra init` to create example file
+
 ### "SSH connection failed"
-- Verify SSH key is in GitHub Secrets with correct name
+- Verify SSH key is in GitHub Secrets with correct name (`STAGING_SSH` or `PROD_SSH`)
 - Test SSH manually: `ssh -i ~/.ssh/key user@host`
-- Check hostname/IP is correct in `infrastructure-config.yml`
+- Check hostname/IP is correct
 - Ensure firewall allows SSH (port 22)
 
-### "Config file not found"
-- Ensure `infrastructure-config.yml` exists in repo root
-- Or set `INFRASTRUCTURE_CONFIG` in GitHub Environment variables
+### "Validation failed"
+- Run `npx infra validate` to see specific errors
+- Check required fields are present
+- Verify YAML syntax is correct
 
-### "Repo not found on server"
-- Run initial setup workflow first
-- Or manually clone repo: `./scripts/setup-repo.sh <repo-name> <git-url>`
+### "GitHub secrets missing"
+- Run `npx infra check-config` to see which secrets are missing
+- Add missing secrets in GitHub Settings → Secrets
+- Ensure secret names match expected format
 
-### "Environment variables missing"
-- Verify GitHub Secret exists: `<REPO>_<ENV>_ENVS`
-- Check secret format is `key=value` (one per line)
-- Ensure secret is accessible in the workflow environment
+### "Port conflict"
+- The system auto-assigns ports, but you can specify a port in your config
+- Run `npx infra check-config` to see port assignments
+- Conflicts are automatically resolved
 
-### "Docker compose failed"
-- Check logs: `docker-compose logs <service-name>`
-- Verify env file exists: `ls secrets/<repo-name>-<env>.env`
-- Run validation: `./scripts/validate-infra.sh`
+### "Service not starting"
+- Check logs: `docker compose logs <service-name>`
+- Verify config exists on server: `ls ~/infrastructure/configs/<repo-name>.yml`
+- Run `npx infra check-config` to regenerate configs
+
+## CLI Commands Summary
+
+| Command | Description |
+|---------|-------------|
+| `npx infra init` | Create example `infrastructure.yml` file |
+| `npx infra validate` | Validate config file locally |
+| `npx infra check-config` | Check and regenerate configs on servers, verify GitHub secrets, provide report |
+| `npx infra deploy` | Deploy/update config to servers |
+| `npx infra remove` | Remove config from servers and clean up |
+| `npx infra generate-workflows` | Generate GitHub Actions workflow files |
 
 ## Next Steps
 
+- See **[README.md](README.md)** for full documentation
 - See **[INITIAL_SETUP.md](INITIAL_SETUP.md)** for detailed server setup
 - See **[REPO_SETUP.md](REPO_SETUP.md)** for adding new repositories
-- See **[README.md](README.md)** for full documentation

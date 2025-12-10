@@ -2,45 +2,34 @@
 
 Quick setup guide for getting infrastructure running.
 
-> **NEW: Centralized Deployment**
-> For the recommended one-button deploy approach, see **[QUICK_START.md](QUICK_START.md)**.
-> This document covers manual server setup. The centralized approach automates most of these steps.
+> **Recommended: Decentralized Approach**
+> The recommended approach is the decentralized per-repo configuration. See **[QUICK_START.md](QUICK_START.md)** for complete instructions.
+> 
+> This document covers legacy centralized setup and manual server configuration.
 
 ## Choose Your Setup Method
 
-### Option A: Centralized Deployment (Recommended)
+### Option A: Decentralized Approach (Recommended)
+
+Each repository manages its own infrastructure configuration:
+1. Each repo has its own `infrastructure.yml` config file
+2. Use `npx infra` CLI commands to manage deployments
+3. Servers automatically collect and merge configs from all repos
+
+See **[QUICK_START.md](QUICK_START.md)** for complete instructions.
+
+### Option B: Legacy Centralized Approach
+
+> **Note:** This approach uses a centralized `infrastructure-config.yml` file and is maintained for backward compatibility.
 
 Use GitHub Actions workflows to deploy everything automatically:
 1. Configure `infrastructure-config.yml` with your servers and repos
 2. Add SSH keys and environment variables to GitHub Secrets
 3. Run the "Setup Infrastructure" workflow
 
-See **[QUICK_START.md](QUICK_START.md)** for complete instructions.
-
-### Option B: Manual Setup (This Document)
+### Option C: Manual Setup
 
 Follow the steps below to manually set up each server.
-
----
-
-## Manual Setup Steps
-
-### 1. Clone Infrastructure Repo
-
-```bash
-git clone <infrastructure-repo-url> infrastructure
-cd infrastructure
-```
-
-### 2. Clone Application Repos
-
-```bash
-./scripts/setup-repo.sh factiii <git-url>
-./scripts/setup-repo.sh chop-shop <git-url>
-# ... repeat for each repo
-```
-
-This clones repos to `repos/` and creates env file templates in `secrets/`.
 
 ### 3. Configure Environment Files
 
@@ -205,7 +194,10 @@ jobs:
 
 **Manual Staging Test:**
 ```bash
-./scripts/deploy.sh factiii staging
+# Using the CLI (recommended)
+npx infra deploy --environment staging
+
+# Or manually SSH to server and run docker compose commands
 ```
 
 **Auto-Deploy:**

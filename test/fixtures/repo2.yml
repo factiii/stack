@@ -1,0 +1,10 @@
+name: test-repo2
+environments:
+  staging:
+    domain: test-repo2.local
+    health_check: /health
+ssl_email: test@example.com
+ecr_registry: 123456789.dkr.ecr.us-east-1.amazonaws.com
+ecr_repository: test-apps
+
+

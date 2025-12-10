@@ -65,16 +65,7 @@ jobs:
       - name: Setup servers
         env:
           AWS_SECRETS: ${{ secrets.AWS_SECRETS }}
-          # Auto-generated from infrastructure-config.yml
-          # Re-run: node scripts/generate-workflow.js
-          #
-          # SSH Keys (one per server)
-          TEST_SSH: ${{ secrets.TEST_SSH }}
-          #
-          # Environment Variables (one per repo/environment)
-          ANOTHER_REPO_STAGING_ENVS: ${{ secrets.ANOTHER_REPO_STAGING_ENVS }}
-          TEST_REPO_PROD_ENVS: ${{ secrets.TEST_REPO_PROD_ENVS }}
-          TEST_REPO_STAGING_ENVS: ${{ secrets.TEST_REPO_STAGING_ENVS }}
+{{SECRETS_ENV_BLOCK}}
         run: |
           source ./scripts/parse-infrastructure-config.sh
           

@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# ============================================================================
+# LEGACY SCRIPT - For backward compatibility with centralized approach
+# ============================================================================
+# This script is part of the legacy centralized infrastructure-config.yml
+# approach. For new repositories, use the decentralized approach with
+# the npm package CLI commands (npx infra check-config, etc.)
+# ============================================================================
+#
 # Parse infrastructure-config.yml and extract server/repo mappings
 # Usage: source this script to use functions, or call directly with function name
 
@@ -103,52 +111,33 @@ get_domain() {
     local repo_name="$1"
     local env="$2"
     local server_name="$3"
-    local base_domain
     
     if [ -z "$repo_name" ] || [ -z "$env" ]; then
         echo "Usage: get_domain <repo-name> <environment> [server-name]" >&2
         return 1
     fi
     
-    base_domain=$(if command -v yq &> /dev/null; then yq eval ".base_domain" "$CONFIG_FILE"; else grep "^base_domain:" "$CONFIG_FILE" | sed 's/.*base_domain: //'; fi)
-    
-    # Check for domain override
-    local domain_override
+    # Get explicit domain from config
+    local domain
     if [ -n "$server_name" ]; then
         if command -v yq &> /dev/null; then
-            domain_override=$(yq eval ".servers.$server_name.repos[] | select(.name == \"$repo_name\" and .environment == \"$env\") | .domain_override" "$CONFIG_FILE" | head -1)
+            domain=$(yq eval ".servers.$server_name.repos[] | select(.name == \"$repo_name\" and .environment == \"$env\") | .domain" "$CONFIG_FILE" | head -1)
         else
             # Fallback: basic grep
-            domain_override=$(grep -A 20 "^  $server_name:" "$CONFIG_FILE" | grep -A 5 "name: $repo_name" | grep "domain_override:" | sed 's/.*domain_override: //' | head -1)
+            domain=$(grep -A 20 "^  $server_name:" "$CONFIG_FILE" | grep -A 5 "name: $repo_name" | grep "domain:" | sed 's/.*domain: //' | head -1)
+        fi
+    else
+        # If no server specified, get from first matching server
+        if command -v yq &> /dev/null; then
+            domain=$(yq eval ".servers | to_entries | .[] | .value.repos[] | select(.name == \"$repo_name\" and .environment == \"$env\") | .domain" "$CONFIG_FILE" | head -1)
         fi
     fi
     
-    if [ "$domain_override" != "null" ] && [ -n "$domain_override" ]; then
-        echo "$domain_override"
+    if [ -n "$domain" ]; then
+        echo "$domain"
     else
-        # Generate default domain
-        if [ "$env" = "staging" ]; then
-            if [ "$repo_name" = "chop-shop" ]; then
-                echo "staging-api.$base_domain"
-            else
-                echo "staging-$repo_name.$base_domain"
-            fi
-        else
-            if [ "$repo_name" = "chop-shop" ]; then
-                echo "api.$base_domain"
-            else
-                echo "$repo_name.$base_domain"
-            fi
-        fi
-    fi
-}
-
-# Function to get base domain
-get_base_domain() {
-    if command -v yq &> /dev/null; then
-        yq eval ".base_domain" "$CONFIG_FILE"
-    else
-        grep "^base_domain:" "$CONFIG_FILE" | sed 's/.*base_domain: //'
+        echo "Error: Domain not found for $repo_name ($env)" >&2
+        return 1
     fi
 }
 

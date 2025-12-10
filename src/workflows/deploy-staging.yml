@@ -1,0 +1,177 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+  ENVIRONMENT: staging
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint --if-present
+
+      - name: Run tests
+        run: npm test --if-present
+
+      - name: Build
+        run: npm run build --if-present
+
+  push-to-ecr:
+    needs: build-and-test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.build.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Read ECR registry from config
+        id: config
+        run: |
+          if [ ! -f infrastructure.yml ]; then
+            echo "❌ infrastructure.yml not found"
+            exit 1
+          fi
+          ECR_REGISTRY=$(grep '^ecr_registry:' infrastructure.yml | cut -d: -f2 | tr -d ' ' || echo "")
+          ECR_REPO=$(grep '^ecr_repository:' infrastructure.yml | cut -d: -f2 | tr -d ' ' || echo "apps")
+          DOCKERFILE=$(grep '^dockerfile:' infrastructure.yml | cut -d: -f2 | tr -d ' ' || echo "Dockerfile")
+          
+          if [ -z "$ECR_REGISTRY" ]; then
+            echo "❌ ecr_registry not found in infrastructure.yml"
+            exit 1
+          fi
+          
+          echo "registry=${ECR_REGISTRY}" >> $GITHUB_OUTPUT
+          echo "repository=${ECR_REPO}" >> $GITHUB_OUTPUT
+          echo "dockerfile=${DOCKERFILE}" >> $GITHUB_OUTPUT
+          echo "✅ ECR Registry: ${ECR_REGISTRY}"
+          echo "✅ ECR Repository: ${ECR_REPO}"
+          echo "✅ Dockerfile: ${DOCKERFILE}"
+
+      - name: Build and push Docker image
+        id: build
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          ECR_REGISTRY="${{ steps.config.outputs.registry }}"
+          ECR_REPO="${{ steps.config.outputs.repository }}"
+          DOCKERFILE="${{ steps.config.outputs.dockerfile }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          
+          echo "🔐 Logging into ECR..."
+          aws ecr get-login-password --region ${AWS_REGION} | \
+            docker login --username AWS --password-stdin ${ECR_REGISTRY}
+          
+          IMAGE_NAME="${ECR_REGISTRY}/${ECR_REPO}"
+          IMAGE_TAG="${IMAGE_NAME}:latest"
+          
+          echo "🏗️  Building image: ${IMAGE_TAG}"
+          echo "   Dockerfile: ${DOCKERFILE}"
+          
+          docker build --platform linux/amd64 -t ${IMAGE_TAG} -f ${DOCKERFILE} .
+          
+          echo "📤 Pushing image..."
+          docker push ${IMAGE_TAG}
+          
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "✅ Pushed: ${IMAGE_TAG}"
+
+  deploy:
+    needs: push-to-ecr
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install infrastructure package
+        run: npm install @yourorg/infrastructure
+
+      - name: Validate infrastructure config
+        run: npx infra validate
+
+      - name: Deploy to staging server
+        env:
+          SSH_KEY: ${{ secrets.STAGING_SSH }}
+          SSH_HOST: ${{ secrets.STAGING_HOST }}
+          SSH_USER: ${{ secrets.STAGING_USER || 'ubuntu' }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
+            echo "❌ Missing SSH credentials for staging"
+            exit 1
+          fi
+          
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          # Ensure infrastructure directory exists
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "mkdir -p ~/infrastructure/configs ~/infrastructure/scripts ~/infrastructure/nginx"
+          
+          # Copy infrastructure.yml to server
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            infrastructure.yml \
+            "$SSH_USER@$SSH_HOST:~/infrastructure/configs/${REPO_NAME}.yml"
+          
+          # Copy scripts and generators to server
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            node_modules/@yourorg/infrastructure/src/scripts/check-config.sh \
+            "$SSH_USER@$SSH_HOST:~/infrastructure/scripts/"
+          
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            node_modules/@yourorg/infrastructure/src/scripts/deploy.sh \
+            "$SSH_USER@$SSH_HOST:~/infrastructure/scripts/"
+          
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "mkdir -p ~/infrastructure/scripts/generators"
+          
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            -r node_modules/@yourorg/infrastructure/src/generators/* \
+            "$SSH_USER@$SSH_HOST:~/infrastructure/scripts/generators/"
+          
+          # Run deployment script
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "chmod +x ~/infrastructure/scripts/*.sh && \
+             cd ~/infrastructure && \
+             ~/infrastructure/scripts/deploy.sh ${REPO_NAME} staging infrastructure.yml"
+          
+          rm -f ~/.ssh/deploy_key
+          
+          echo "✅ Deployed ${REPO_NAME} to staging"
+
+

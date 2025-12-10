@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# ============================================================================
+# LEGACY SCRIPT - For backward compatibility with centralized approach
+# ============================================================================
+# This script is part of the legacy centralized infrastructure-config.yml
+# approach. For new repositories, use the decentralized approach with
+# the npm package CLI commands (npx infra check-config, etc.)
+# ============================================================================
+#
 # Generate nginx.conf from infrastructure-config.yml
 # Usage: ./scripts/generate-nginx-config.sh [output-file]
 # If output-file not specified, outputs to nginx/nginx.conf
@@ -12,8 +20,6 @@ OUTPUT_FILE="${1:-${INFRASTRUCTURE_ROOT}/nginx/nginx.conf}"
 
 # Source the parse script
 source "${INFRASTRUCTURE_ROOT}/scripts/parse-infrastructure-config.sh"
-
-BASE_DOMAIN=$(get_base_domain)
 
 # Function to get port for a repo (from docker-compose.yml or default)
 get_repo_port() {
@@ -96,29 +102,16 @@ http {
 EOF
 
     # Generate server blocks for each unique domain
-    # First, collect all unique repo/environment combinations with their domains
-    yq eval '.servers | to_entries | .[] | .key as $server | .value.repos[] | "\(.name)|\(.environment)|\(.domain_override // "")"' "$CONFIG_FILE" | sort -u | while IFS='|' read -r repo_name env domain_override; do
+    # Collect all unique repo/environment combinations with their explicit domains
+    yq eval '.servers | to_entries | .[] | .key as $server | .value.repos[] | "\(.name)|\(.environment)|\($server)"' "$CONFIG_FILE" | sort -u | while IFS='|' read -r repo_name env server_name; do
         # Skip empty lines
         [ -z "$repo_name" ] && continue
         
-        # Get domain (use override or generate default)
-        if [ -n "$domain_override" ] && [ "$domain_override" != "null" ]; then
-            domain="$domain_override"
-        else
-            # Generate default domain
-            if [ "$env" = "staging" ]; then
-                if [ "$repo_name" = "chop-shop" ]; then
-                    domain="staging-api.$BASE_DOMAIN"
-                else
-                    domain="staging-$repo_name.$BASE_DOMAIN"
-                fi
-            else
-                if [ "$repo_name" = "chop-shop" ]; then
-                    domain="api.$BASE_DOMAIN"
-                else
-                    domain="$repo_name.$BASE_DOMAIN"
-                fi
-            fi
+        # Get explicit domain from config
+        domain=$(get_domain "$repo_name" "$env" "$server_name" 2>/dev/null || echo "")
+        if [ -z "$domain" ]; then
+            echo "Warning: No domain found for $repo_name ($env) on $server_name, skipping" >&2
+            continue
         fi
         
         # Skip if we've already generated this domain

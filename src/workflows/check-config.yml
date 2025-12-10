@@ -1,0 +1,76 @@
+name: Check Infrastructure Config
+
+# This workflow checks configurations on staging and production servers
+# and regenerates docker-compose.yml and nginx.conf from all repo configs
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run daily at 2 AM UTC to sync configs
+    - cron: '0 2 * * *'
+
+jobs:
+  check-config:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [staging, prod]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install infrastructure package
+        run: |
+          npm install @yourorg/infrastructure
+          # Or if using local package:
+          # npm install
+
+      - name: Check config on ${{ matrix.environment }}
+        env:
+          SSH_KEY: ${{ matrix.environment == 'staging' && secrets.STAGING_SSH || secrets.PROD_SSH }}
+          SSH_HOST: ${{ matrix.environment == 'staging' && secrets.STAGING_HOST || secrets.PROD_HOST }}
+          SSH_USER: ${{ matrix.environment == 'staging' && secrets.STAGING_USER || secrets.PROD_USER }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
+            echo "⚠️  Skipping ${{ matrix.environment }}: Missing SSH credentials"
+            exit 0
+          fi
+          
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          # Copy check-config script to server
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "mkdir -p ~/infrastructure/configs ~/infrastructure/scripts ~/infrastructure/nginx"
+          
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            node_modules/@yourorg/infrastructure/src/scripts/check-config.sh \
+            "$SSH_USER@$SSH_HOST:~/infrastructure/scripts/"
+          
+          # Copy generators to server
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "mkdir -p ~/infrastructure/scripts/generators"
+          
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            -r node_modules/@yourorg/infrastructure/src/generators/* \
+            "$SSH_USER@$SSH_HOST:~/infrastructure/scripts/generators/"
+          
+          # Run check-config script
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "chmod +x ~/infrastructure/scripts/check-config.sh && \
+             cd ~/infrastructure && \
+             INFRA_DIR=~/infrastructure ~/infrastructure/scripts/check-config.sh"
+          
+          rm -f ~/.ssh/deploy_key
+          
+          echo "✅ ${{ matrix.environment }} configuration checked"
+
+
