@@ -48,8 +48,8 @@ describe('CLI Command Tests', () => {
   });
 
   describe('init command', () => {
-    test('creates infrastructure.yml from template', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+    test('creates core.yml from template', () => {
+      const configPath = path.join(testDir, 'core.yml');
       
       // Should not exist initially
       expect(fs.existsSync(configPath)).toBe(false);
@@ -70,7 +70,7 @@ describe('CLI Command Tests', () => {
 
       init({});
       
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       const content = fs.readFileSync(configPath, 'utf8');
       expect(content).toContain('name: test-repo');
       expect(content).not.toContain('your-repo-name');
@@ -82,14 +82,14 @@ describe('CLI Command Tests', () => {
 
       init({});
       
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       const content = fs.readFileSync(configPath, 'utf8');
       expect(content).toContain('name: test-repo');
       expect(content).not.toContain('@org/test-repo');
     });
 
     test('fails if config exists without --force', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       fs.writeFileSync(configPath, 'existing config');
 
       try {
@@ -102,7 +102,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('overwrites existing config with --force', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       fs.writeFileSync(configPath, 'existing config');
 
       init({ force: true });
@@ -122,7 +122,7 @@ describe('CLI Command Tests', () => {
 
   describe('validate command', () => {
     test('validates a correct config file', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       const validConfig = {
         name: 'test-repo',
         environments: {
@@ -145,7 +145,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('fails on missing name field', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       const invalidConfig = {
         environments: {
           staging: {
@@ -158,7 +158,7 @@ describe('CLI Command Tests', () => {
       fs.writeFileSync(configPath, yaml.dump(invalidConfig));
 
       try {
-        validate({ config: 'infrastructure.yml' });
+        validate({ config: 'core.yml' });
         fail('Should have exited');
       } catch (error) {
         expect(exitCode).toBe(1);
@@ -167,7 +167,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('fails on missing environments field', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       const invalidConfig = {
         name: 'test-repo'
       };
@@ -176,7 +176,7 @@ describe('CLI Command Tests', () => {
       fs.writeFileSync(configPath, yaml.dump(invalidConfig));
 
       try {
-        validate({ config: 'infrastructure.yml' });
+        validate({ config: 'core.yml' });
         fail('Should have exited');
       } catch (error) {
         expect(exitCode).toBe(1);
@@ -185,7 +185,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('fails on missing domain', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       const invalidConfig = {
         name: 'test-repo',
         environments: {
@@ -197,7 +197,7 @@ describe('CLI Command Tests', () => {
       fs.writeFileSync(configPath, yaml.dump(invalidConfig));
 
       try {
-        validate({ config: 'infrastructure.yml' });
+        validate({ config: 'core.yml' });
         fail('Should have exited');
       } catch (error) {
         expect(exitCode).toBe(1);
@@ -206,7 +206,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('warns on invalid port range', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       const configWithBadPort = {
         name: 'test-repo',
         environments: {
@@ -228,7 +228,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('warns on missing ssl_email', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       const configWithoutEmail = {
         name: 'test-repo',
         environments: {
@@ -258,11 +258,11 @@ describe('CLI Command Tests', () => {
     });
 
     test('fails on invalid YAML', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+      const configPath = path.join(testDir, 'core.yml');
       fs.writeFileSync(configPath, 'invalid: yaml: content: [unclosed');
 
       try {
-        validate({ config: 'infrastructure.yml' });
+        validate({ config: 'core.yml' });
         fail('Should have exited');
       } catch (error) {
         expect(exitCode).toBe(1);
@@ -306,8 +306,8 @@ describe('CLI Command Tests', () => {
       });
     });
 
-    test('replaces repo name placeholder if infrastructure.yml exists', () => {
-      const configPath = path.join(testDir, 'infrastructure.yml');
+    test('replaces repo name placeholder if core.yml exists', () => {
+      const configPath = path.join(testDir, 'core.yml');
       const yaml = require('js-yaml');
       fs.writeFileSync(configPath, yaml.dump({
         name: 'my-test-repo'

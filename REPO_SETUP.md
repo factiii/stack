@@ -19,7 +19,7 @@ Each repository manages its own infrastructure configuration. This guide shows h
    npx core init
    ```
 
-3. **Edit `infrastructure.yml`** with your domains and settings
+3. **Edit `core.yml`** with your domains and settings
 
 4. **Validate config**:
    ```bash
@@ -54,7 +54,7 @@ your-repo/
 
 ## Dockerfile Requirements
 
-- **Location**: `Dockerfile` at root, or `apps/server/Dockerfile` (specify in `infrastructure.yml` with `dockerfile` field)
+- **Location**: `Dockerfile` at root, or `apps/server/Dockerfile` (specify in `core.yml` with `dockerfile` field)
 - **Health endpoint**: Must expose a `/health` endpoint (or customize with `health_check` in config)
 - **Port**: Should listen on the port specified in your config (auto-assigned if not specified)
 
@@ -201,7 +201,7 @@ After running `npx core generate-workflows`, workflows are created:
 The workflows will:
 1. Build and push Docker image to ECR
 2. SSH to target server(s)
-3. Copy `infrastructure.yml` to `~/infrastructure/configs/<repo-name>.yml`
+3. Copy `core.yml` to `~/infrastructure/configs/<repo-name>.yml`
 4. Write env file if `STAGING_ENVS` or `PROD_ENVS` secrets exist
 5. Run `check-config.sh` to regenerate docker-compose.yml and nginx.conf
 6. Pull latest image and restart service
@@ -296,8 +296,8 @@ These files are:
 
 ### In Your Application Repo:
 
-- [ ] Run `npx core init` to create `infrastructure.yml`
-- [ ] Edit `infrastructure.yml` with your domains and settings
+- [ ] Run `npx core init` to create `core.yml`
+- [ ] Edit `core.yml` with your domains and settings
 - [ ] Run `npx core validate` to check config
 - [ ] Run `npx core generate-workflows` to create GitHub workflows
 - [ ] Add GitHub secrets:
@@ -320,7 +320,7 @@ These files are:
 
 ### "Config validation failed"
 - Run `npx core validate` to see specific errors
-- Check required fields are present in `infrastructure.yml`
+- Check required fields are present in `core.yml`
 - Verify YAML syntax is correct
 
 ### "SSH connection failed"

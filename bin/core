@@ -8,7 +8,7 @@ const init = require('../src/cli/init');
 const validate = require('../src/cli/validate');
 const checkConfig = require('../src/cli/check-config');
 const deploy = require('../src/cli/deploy');
-const remove = require('../src/cli/remove');
+const undeploy = require('../src/cli/undeploy');
 const generateWorkflows = require('../src/cli/generate-workflows');
 
 program
@@ -18,7 +18,7 @@ program
 
 program
   .command('init')
-  .description('Initialize infrastructure.yml config file')
+  .description('Initialize core.yml config file')
   .option('-f, --force', 'Overwrite existing config file')
   .action((options) => {
     init(options);
@@ -26,8 +26,8 @@ program
 
 program
   .command('validate')
-  .description('Validate infrastructure.yml config file')
-  .option('-c, --config <path>', 'Path to config file', 'infrastructure.yml')
+  .description('Validate core.yml config file')
+  .option('-c, --config <path>', 'Path to config file', 'core.yml')
   .action((options) => {
     validate(options);
   });
@@ -48,23 +48,18 @@ program
 
 program
   .command('deploy')
-  .description('Deploy/update config to servers')
-  .option('-c, --config <path>', 'Path to config file', 'infrastructure.yml')
+  .description('Validate local config and trigger GitHub deploy workflow')
+  .option('-c, --config <path>', 'Path to config file', 'core.yml')
   .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
-  .option('--ssh-staging <key>', 'SSH key for staging server')
-  .option('--ssh-prod <key>', 'SSH key for production server')
-  .option('--staging-host <host>', 'Staging server host')
-  .option('--staging-user <user>', 'Staging server user')
-  .option('--prod-host <host>', 'Production server host')
-  .option('--prod-user <user>', 'Production server user')
-  .action((options) => {
-    deploy(options);
+  .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
+  .action(async (options) => {
+    await deploy(options);
   });
 
 program
-  .command('remove')
-  .description('Remove config from servers and clean up')
-  .option('-c, --config <path>', 'Path to config file', 'infrastructure.yml')
+  .command('undeploy')
+  .description('Completely remove repo from staging and prod servers (deletes configs, env files, and all data)')
+  .option('-c, --config <path>', 'Path to config file', 'core.yml')
   .option('--repo <name>', 'Repository name (if not using config file)')
   .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
   .option('--ssh-staging <key>', 'SSH key for staging server')
@@ -74,7 +69,7 @@ program
   .option('--prod-host <host>', 'Production server host')
   .option('--prod-user <user>', 'Production server user')
   .action((options) => {
-    remove(options);
+    undeploy(options);
   });
 
 program

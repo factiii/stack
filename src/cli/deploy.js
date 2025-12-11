@@ -2,17 +2,45 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const { Octokit } = require('@octokit/rest');
 const validate = require('./validate');
 
 /**
- * Deploy infrastructure.yml config to server(s)
+ * Get GitHub owner/repo from git remote URL
  */
-function deploy(options = {}) {
-  const rootDir = process.cwd();
-  const configPath = path.resolve(rootDir, options.config || 'infrastructure.yml');
+function getGitHubRepo() {
+  try {
+    const repoUrl = execSync('git config --get remote.origin.url', { encoding: 'utf8' }).trim();
+    const match = repoUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
+    if (match) {
+      const parts = match[1].split('/');
+      return { owner: parts[0], repo: parts[1] };
+    }
+  } catch (e) {
+    // Ignore errors
+  }
+  return null;
+}
 
-  // Validate config first
-  console.log('🔍 Validating configuration...\n');
+/**
+ * Deploy by validating local config and triggering GitHub workflow
+ */
+async function deploy(options = {}) {
+  const rootDir = process.cwd();
+  const configPath = path.resolve(rootDir, options.config || 'core.yml');
+
+  console.log('🔍 Validating local repository configuration...\n');
+
+  // Step 1: Check core.yml exists
+  if (!fs.existsSync(configPath)) {
+    console.error(`❌ Config file not found: ${configPath}`);
+    console.error('   Run: npx core init');
+    process.exit(1);
+  }
+  console.log('✅ Found core.yml');
+
+  // Step 2: Validate core.yml
+  console.log('🔍 Validating core.yml...');
   try {
     validate({ config: configPath });
   } catch (error) {
@@ -20,7 +48,7 @@ function deploy(options = {}) {
     process.exit(1);
   }
 
-  // Load config to get repo name
+  // Load config to get repo name and environments
   const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
   const repoName = config.name;
 
@@ -38,124 +66,156 @@ function deploy(options = {}) {
     process.exit(1);
   }
 
-  console.log(`🚀 Deploying ${repoName} to: ${environments.join(', ')}\n`);
+  // Step 3: Check deploy.yml workflow exists locally
+  const workflowPath = path.join(rootDir, '.github/workflows/deploy.yml');
+  if (!fs.existsSync(workflowPath)) {
+    console.error('❌ Workflow file not found: .github/workflows/deploy.yml');
+    console.error('   Run: npx core generate-workflows');
+    process.exit(1);
+  }
+  console.log('✅ Found deploy.yml workflow');
 
-  for (const env of environments) {
-    if (!config.environments || !config.environments[env]) {
-      console.log(`⚠️  Skipping ${env}: Not configured in infrastructure.yml\n`);
-      continue;
-    }
-
-    const envUpper = env.toUpperCase();
-    const sshKeyVar = env === 'staging' ? 'STAGING_SSH' : env === 'prod' ? 'PROD_SSH' : `SSH_${envUpper}`;
-    const hostVar = `${envUpper}_HOST`;
-    const userVar = `${envUpper}_USER`;
-    const envsVar = `${envUpper}_ENVS`;
-
-    // Get SSH credentials from environment or options
-    const sshKey = options[`ssh${env.charAt(0).toUpperCase() + env.slice(1)}`] || process.env[sshKeyVar];
-    const host = options[`${env}Host`] || process.env[hostVar];
-    const user = options[`${env}User`] || process.env[userVar] || 'ubuntu';
-    const envVars = process.env[envsVar];
-
-    if (!sshKey || !host) {
-      console.log(`⚠️  Skipping ${env}: Missing SSH credentials`);
-      console.log(`   Set ${sshKeyVar} and ${hostVar} environment variables\n`);
-      continue;
-    }
-
-    console.log(`📡 Deploying to ${env} server (${user}@${host})...`);
-
-    try {
-      // Write SSH key to temp file
-      const sshKeyPath = path.join(__dirname, `../../.ssh_key_${env}`);
-      fs.writeFileSync(sshKeyPath, sshKey);
-      fs.chmodSync(sshKeyPath, 0o600);
-
-      const remoteConfigPath = `~/infrastructure/configs/${repoName}.yml`;
-      const serviceKey = `${repoName}-${env}`;
-      const remoteEnvPath = `~/infrastructure/${serviceKey}.env`;
-
-      // Ensure infrastructure directory exists
-      execSync(
-        `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"mkdir -p ~/infrastructure/configs ~/infrastructure/scripts/generators ~/infrastructure/nginx"`,
-        { stdio: 'inherit' }
-      );
-
-      // Copy config file
-      console.log(`   📝 Copying config file...`);
-      execSync(
-        `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no ${configPath} ${user}@${host}:${remoteConfigPath}`,
-        { stdio: 'inherit' }
-      );
-
-      // Write env file if provided
-      if (envVars) {
-        console.log(`   🔐 Writing environment variables...`);
-        // Write to temp file first, then copy via SSH
-        const tempEnvFile = path.join(__dirname, `../../.env_temp_${env}`);
-        fs.writeFileSync(tempEnvFile, envVars);
-        execSync(
-          `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no ${tempEnvFile} ${user}@${host}:${remoteEnvPath}`,
-          { stdio: 'inherit' }
-        );
-        // Set secure permissions
-        execSync(
-          `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-          `"chmod 600 ${remoteEnvPath}"`,
-          { stdio: 'inherit' }
-        );
-        fs.unlinkSync(tempEnvFile);
-      }
-
-      // Copy generators if needed
-      const generatorsDir = path.join(__dirname, '../generators');
-      execSync(
-        `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no -r ${generatorsDir}/* ${user}@${host}:~/infrastructure/scripts/generators/ 2>/dev/null || true`,
-        { stdio: 'inherit' }
-      );
-
-      // Run check-config to regenerate docker-compose and nginx
-      console.log(`   🔄 Regenerating configurations...`);
-      const scriptPath = path.join(__dirname, '../scripts/check-config.sh');
-      const remoteScriptPath = '~/infrastructure/scripts/check-config.sh';
-      
-      // Copy script if needed
-      execSync(
-        `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no ${scriptPath} ${user}@${host}:${remoteScriptPath} 2>/dev/null || true`,
-        { stdio: 'inherit' }
-      );
-
-      execSync(
-        `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"chmod +x ${remoteScriptPath} && cd ~/infrastructure && INFRA_DIR=~/infrastructure ${remoteScriptPath}"`,
-        { stdio: 'inherit' }
-      );
-
-      // Pull latest image and restart service
-      console.log(`   🐳 Pulling latest image and restarting service...`);
-      execSync(
-        `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"cd ~/infrastructure && docker compose pull ${serviceKey} && docker compose up -d ${serviceKey}"`,
-        { stdio: 'inherit' }
-      );
-
-      // Clean up
-      fs.unlinkSync(sshKeyPath);
-
-      console.log(`✅ ${env} deployment complete!\n`);
-
-    } catch (error) {
-      console.error(`❌ Failed to deploy to ${env}: ${error.message}\n`);
-      if (fs.existsSync(path.join(__dirname, `../../.ssh_key_${env}`))) {
-        fs.unlinkSync(path.join(__dirname, `../../.ssh_key_${env}`));
-      }
-      process.exit(1);
-    }
+  // Step 4: Check undeploy.yml workflow exists locally (optional but recommended)
+  const undeployWorkflowPath = path.join(rootDir, '.github/workflows/undeploy.yml');
+  if (!fs.existsSync(undeployWorkflowPath)) {
+    console.log('⚠️  Optional: undeploy.yml workflow not found');
+    console.log('   Run: npx core generate-workflows (to add undeploy support)\n');
+  } else {
+    console.log('✅ Found undeploy.yml workflow');
   }
 
-  console.log('✅ Deployment complete!');
+  // Step 5: Get GitHub token
+  const token = options.token || process.env.GITHUB_TOKEN;
+  if (!token) {
+    console.error('\n❌ GitHub token required to trigger workflow');
+    console.error('   Set GITHUB_TOKEN environment variable or use --token option');
+    console.error('   Token needs "repo" scope to trigger workflows');
+    process.exit(1);
+  }
+
+  // Step 6: Get GitHub repo info
+  const repoInfo = getGitHubRepo();
+  if (!repoInfo) {
+    console.error('\n❌ Could not detect GitHub repository');
+    console.error('   Make sure you are in a git repository with a GitHub remote');
+    process.exit(1);
+  }
+
+  console.log(`\n📦 Repository: ${repoInfo.owner}/${repoInfo.repo}`);
+  console.log(`🚀 Deploying ${repoName} to: ${environments.join(', ')}\n`);
+
+  // Step 7: Trigger GitHub workflow
+  const octokit = new Octokit({ auth: token });
+
+  try {
+    // Verify workflow exists in GitHub
+    console.log('🔍 Verifying workflow exists in GitHub...');
+    try {
+      await octokit.rest.actions.getWorkflow({
+        owner: repoInfo.owner,
+        repo: repoInfo.repo,
+        workflow_id: 'deploy.yml'
+      });
+      console.log('✅ Workflow found in GitHub');
+    } catch (e) {
+      if (e.status === 404) {
+        console.error('❌ Workflow not found in GitHub repository');
+        console.error('   Make sure .github/workflows/deploy.yml is committed and pushed');
+        process.exit(1);
+      }
+      throw e;
+    }
+
+    // Trigger workflow
+    console.log('🚀 Triggering deploy workflow...');
+    await octokit.rest.actions.createWorkflowDispatch({
+      owner: repoInfo.owner,
+      repo: repoInfo.repo,
+      workflow_id: 'deploy.yml',
+      ref: 'main',
+      inputs: {
+        environment: options.environment || 'all'
+      }
+    });
+
+    console.log('✅ Workflow triggered successfully!\n');
+
+    // Step 8: Poll for workflow run status
+    console.log('⏳ Waiting for workflow to start...');
+    
+    // Wait a moment for the workflow to be created
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Find the latest workflow run
+    const { data: runs } = await octokit.rest.actions.listWorkflowRuns({
+      owner: repoInfo.owner,
+      repo: repoInfo.repo,
+      workflow_id: 'deploy.yml',
+      per_page: 1
+    });
+
+    if (runs.workflow_runs.length === 0) {
+      console.log('⚠️  Could not find workflow run. Check GitHub Actions manually.');
+      console.log(`   https://github.com/${repoInfo.owner}/${repoInfo.repo}/actions`);
+      return;
+    }
+
+    const run = runs.workflow_runs[0];
+    console.log(`📋 Workflow run: ${run.html_url}\n`);
+
+    // Poll for completion
+    let status = run.status;
+    let conclusion = run.conclusion;
+    const startTime = Date.now();
+    const timeout = 10 * 60 * 1000; // 10 minutes
+
+    while (status !== 'completed') {
+      if (Date.now() - startTime > timeout) {
+        console.log('\n⚠️  Timeout waiting for workflow. Check GitHub Actions:');
+        console.log(`   ${run.html_url}`);
+        process.exit(1);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      const { data: updatedRun } = await octokit.rest.actions.getWorkflowRun({
+        owner: repoInfo.owner,
+        repo: repoInfo.repo,
+        run_id: run.id
+      });
+
+      status = updatedRun.status;
+      conclusion = updatedRun.conclusion;
+
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      process.stdout.write(`\r⏳ Status: ${status}... (${elapsed}s)`);
+    }
+
+    console.log('\n');
+
+    // Report final status
+    if (conclusion === 'success') {
+      console.log('✅ Deployment complete!');
+      console.log('   Workflow verified configs on staging/prod servers');
+      console.log('   Docker compose and nginx configurations are up to date');
+    } else {
+      console.error(`❌ Workflow failed with conclusion: ${conclusion}`);
+      console.error(`   Check the workflow run for details: ${run.html_url}`);
+      process.exit(1);
+    }
+
+  } catch (error) {
+    if (error.status === 401) {
+      console.error('❌ GitHub token is invalid or expired');
+      console.error('   Generate a new token with "repo" scope');
+    } else if (error.status === 403) {
+      console.error('❌ GitHub token does not have permission to trigger workflows');
+      console.error('   Ensure token has "repo" scope');
+    } else {
+      console.error(`❌ Failed to trigger workflow: ${error.message}`);
+    }
+    process.exit(1);
+  }
 }
 
 module.exports = deploy;

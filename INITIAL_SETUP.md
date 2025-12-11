@@ -12,7 +12,7 @@ Quick setup guide for getting infrastructure running.
 ### Option A: Decentralized Approach (Recommended)
 
 Each repository manages its own infrastructure configuration:
-1. Each repo has its own `infrastructure.yml` config file
+1. Each repo has its own `core.yml` config file
 2. Use `npx core` CLI commands to manage deployments
 3. Servers automatically collect and merge configs from all repos
 
@@ -20,10 +20,10 @@ See **[QUICK_START.md](QUICK_START.md)** for complete instructions.
 
 ### Option B: Legacy Centralized Approach
 
-> **Note:** This approach uses a centralized `infrastructure-config.yml` file and is maintained for backward compatibility.
+> **Note:** This approach uses a centralized `core.yml` file and is maintained for backward compatibility.
 
 Use GitHub Actions workflows to deploy everything automatically:
-1. Configure `infrastructure-config.yml` with your servers and repos
+1. Configure `core.yml` with your servers and repos
 2. Add SSH keys and environment variables to GitHub Secrets
 3. Run the "Setup Infrastructure" workflow
 

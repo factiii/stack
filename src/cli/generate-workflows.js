@@ -11,11 +11,12 @@ function generateWorkflows(options = {}) {
   // Ensure output directory exists
   fs.mkdirSync(outputDir, { recursive: true });
 
-  // Copy workflow templates
+  // Copy workflow files (static files, no templates)
   const workflows = [
-    'check-config.yml',
-    'deploy-staging.yml',
-    'deploy-prod.yml'
+    'deploy.yml',
+    'undeploy.yml',
+    'staging.yml',
+    'production.yml'
   ];
 
   for (const workflow of workflows) {
@@ -31,7 +32,7 @@ function generateWorkflows(options = {}) {
 
     // Replace placeholders if needed (e.g., repo name)
     try {
-      const configPath = path.join(rootDir, 'infrastructure.yml');
+      const configPath = path.join(rootDir, 'core.yml');
       if (fs.existsSync(configPath)) {
         const yaml = require('js-yaml');
         const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
@@ -48,10 +49,17 @@ function generateWorkflows(options = {}) {
   }
 
   console.log(`\n✅ Workflows generated successfully!`);
+  console.log(`\n📝 Generated workflows:`);
+  console.log(`   - deploy.yml: Infrastructure configuration management (triggered by CLI)`);
+  console.log(`   - undeploy.yml: Remove repository from servers`);
+  console.log(`   - staging.yml: Application CI/CD for staging environment`);
+  console.log(`   - production.yml: Application CI/CD for production with migrations`);
   console.log(`\n📋 Next steps:`);
   console.log(`   1. Review the generated workflow files`);
-  console.log(`   2. Add GitHub secrets: STAGING_SSH, PROD_SSH, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION`);
-  console.log(`   3. Commit and push the workflows`);
+  console.log(`   2. Add required package.json scripts (see validation output)`);
+  console.log(`   3. Add GitHub secrets: STAGING_SSH, PROD_SSH, STAGING_HOST, PROD_HOST, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION`);
+  console.log(`   4. Create staging and production branches`);
+  console.log(`   5. Commit and push the workflows`);
 }
 
 module.exports = generateWorkflows;

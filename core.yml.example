@@ -8,14 +8,15 @@
 #   - Domain routing and SSL configuration
 #
 # SETUP:
-# 1. Copy this file's contents to a GitHub repository variable:
-#    Settings → Secrets and variables → Actions → Variables → New variable
-#    Name: INFRASTRUCTURE_CONFIG
-#    Value: (paste the contents)
+# 1. Copy this file to core.yml in the repository root:
+#    cp core.yml.example core.yml
+#    # Then edit core.yml with your actual configuration
 #
 # 2. Create the required secrets (see "Required Secrets" section below)
 #
-# 3. Run the "Setup Infrastructure" workflow
+# 3. Commit core.yml to the repository
+#
+# 4. Run the "Setup Infrastructure" workflow
 #
 # ============================================================================
 

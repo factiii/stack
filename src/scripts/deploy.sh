@@ -11,7 +11,7 @@ CONFIG_FILE="$3"
 
 if [ -z "$REPO_NAME" ] || [ -z "$ENVIRONMENT" ]; then
     echo "Usage: $0 <repo-name> <environment> [config-file]"
-    echo "Example: $0 factiii staging /path/to/infrastructure.yml"
+    echo "Example: $0 factiii staging /path/to/core.yml"
     exit 1
 fi
 

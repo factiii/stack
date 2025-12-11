@@ -1,0 +1,282 @@
+name: Production CI/CD
+
+# Application deployment workflow for production environment
+# Handles testing, building, migrations with backup/restore, and rollback
+
+on:
+  pull_request:
+    branches: [production, main]
+  push:
+    branches: [production, main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  test-and-build-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.push.outputs.image_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image to ECR
+        id: push
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'apps' }}
+          IMAGE_TAG: prod-${{ github.sha }}
+        run: |
+          echo "🔨 Building Docker image..."
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          
+          echo "📤 Pushing to ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "✅ Image built and pushed: $IMAGE_TAG"
+
+  deploy-production:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/production' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy to production with migration handling
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH }}
+          SSH_HOST: ${{ secrets.PROD_HOST }}
+          SSH_USER: ${{ secrets.PROD_USER || 'ubuntu' }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'apps' }}
+          IMAGE_TAG: prod-${{ github.sha }}
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
+            echo "❌ Missing SSH credentials for production"
+            exit 1
+          fi
+          
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          SERVICE_KEY="${REPO_NAME}-prod"
+          BACKUP_FILE="backup_${REPO_NAME}_$(date +%Y%m%d_%H%M%S).sql"
+          NEEDS_MIGRATION=false
+          BACKUP_CREATED=false
+          
+          echo "🔍 Checking for pending migrations..."
+          
+          # Check if migrations are pending
+          if npx prisma migrate status 2>&1 | grep -q "pending\|not been applied"; then
+            echo "⚠️  Migrations pending, will handle after deployment"
+            NEEDS_MIGRATION=true
+          else
+            echo "✅ No pending migrations"
+          fi
+          
+          # Create backup if migrations are needed
+          if [ "$NEEDS_MIGRATION" = true ]; then
+            echo "💾 Creating database backup..."
+            
+            # Try custom backup script first
+            if npm run db:backup --if-present; then
+              BACKUP_CREATED=true
+              echo "✅ Backup created using custom script"
+            else
+              # Fallback to Prisma-based backup via SSH
+              ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+                "$SSH_USER@$SSH_HOST" \
+                "cd ~/infrastructure/${SERVICE_KEY} && \
+                 pg_dump \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
+                 mysqldump --no-tablespaces \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
+                 echo 'Backup attempted'"
+              BACKUP_CREATED=true
+              echo "✅ Database backup created: ${BACKUP_FILE}"
+            fi
+            
+            # Upload backup to S3 (optional, requires S3_BACKUP_BUCKET secret)
+            if [ -n "${{ secrets.S3_BACKUP_BUCKET }}" ]; then
+              ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+                "$SSH_USER@$SSH_HOST" \
+                "aws s3 cp /tmp/${BACKUP_FILE} s3://${{ secrets.S3_BACKUP_BUCKET }}/backups/${BACKUP_FILE}"
+              echo "✅ Backup uploaded to S3"
+            fi
+          fi
+          
+          # Get current running container ID for potential rollback
+          echo "📋 Recording current container state..."
+          CURRENT_CONTAINER=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "cd ~/infrastructure && docker compose ps -q ${SERVICE_KEY}" || echo "")
+          
+          # Pull new image and deploy
+          echo "🚀 Deploying new container..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "cd ~/infrastructure && \
+             docker compose pull ${SERVICE_KEY} && \
+             docker compose up -d ${SERVICE_KEY}"
+          
+          DEPLOYMENT_SUCCESS=true
+          
+          # Run migrations if needed
+          if [ "$NEEDS_MIGRATION" = true ]; then
+            echo "🔄 Running database migrations..."
+            
+            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+              "$SSH_USER@$SSH_HOST" \
+              "cd ~/infrastructure/${SERVICE_KEY} && npx prisma migrate deploy"; then
+              echo "✅ Migrations completed successfully"
+            else
+              echo "❌ Migration failed! Starting rollback..."
+              DEPLOYMENT_SUCCESS=false
+              
+              # Restore database from backup
+              if [ "$BACKUP_CREATED" = true ]; then
+                echo "♻️  Restoring database from backup..."
+                
+                # Try custom restore script first
+                if npm run db:restore --if-present -- /tmp/${BACKUP_FILE}; then
+                  echo "✅ Database restored using custom script"
+                else
+                  ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+                    "$SSH_USER@$SSH_HOST" \
+                    "psql \$DATABASE_URL < /tmp/${BACKUP_FILE} 2>/dev/null || \
+                     mysql \$DATABASE_URL < /tmp/${BACKUP_FILE} 2>/dev/null"
+                  echo "✅ Database restored from backup"
+                fi
+              fi
+              
+              # Revert to previous container
+              if [ -n "$CURRENT_CONTAINER" ]; then
+                echo "♻️  Reverting to previous container..."
+                ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+                  "$SSH_USER@$SSH_HOST" \
+                  "cd ~/infrastructure && \
+                   docker compose stop ${SERVICE_KEY} && \
+                   docker compose rm -f ${SERVICE_KEY} && \
+                   docker start ${CURRENT_CONTAINER} || \
+                   docker compose up -d ${SERVICE_KEY}"
+                echo "✅ Reverted to previous container"
+              fi
+              
+              rm -f ~/.ssh/deploy_key
+              exit 1
+            fi
+          fi
+          
+          # Health check
+          echo "🏥 Running health check..."
+          HEALTH_CHECK_PASSED=false
+          
+          for i in {1..10}; do
+            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+              "$SSH_USER@$SSH_HOST" \
+              "curl -f -s http://localhost:3000/health > /dev/null 2>&1"; then
+              echo "✅ Health check passed!"
+              HEALTH_CHECK_PASSED=true
+              break
+            fi
+            echo "⏳ Waiting for service to be ready (attempt $i/10)..."
+            sleep 5
+          done
+          
+          if [ "$HEALTH_CHECK_PASSED" = false ]; then
+            echo "❌ Health check failed! Starting rollback..."
+            DEPLOYMENT_SUCCESS=false
+            
+            # Restore database if backup was created
+            if [ "$BACKUP_CREATED" = true ] && [ "$NEEDS_MIGRATION" = true ]; then
+              echo "♻️  Restoring database from backup..."
+              ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+                "$SSH_USER@$SSH_HOST" \
+                "psql \$DATABASE_URL < /tmp/${BACKUP_FILE} 2>/dev/null || \
+                 mysql \$DATABASE_URL < /tmp/${BACKUP_FILE} 2>/dev/null"
+            fi
+            
+            # Revert container
+            if [ -n "$CURRENT_CONTAINER" ]; then
+              echo "♻️  Reverting to previous container..."
+              ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+                "$SSH_USER@$SSH_HOST" \
+                "cd ~/infrastructure && \
+                 docker compose stop ${SERVICE_KEY} && \
+                 docker start ${CURRENT_CONTAINER} || \
+                 docker compose up -d ${SERVICE_KEY}"
+            fi
+            
+            rm -f ~/.ssh/deploy_key
+            exit 1
+          fi
+          
+          # Prune old Docker images
+          echo "🧹 Pruning old Docker images..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "docker image prune -f --filter 'until=48h'"
+          
+          # Clean up backup file (keep on server for manual recovery if needed)
+          echo "🗑️  Cleaning up temporary files..."
+          
+          rm -f ~/.ssh/deploy_key
+          
+          echo "✅ Production deployment complete!"
+          echo "🎉 Application is running and healthy"

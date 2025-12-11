@@ -74,10 +74,8 @@ services:
   for (const service of services) {
     const imageTag = `${service.name}-main-latest`;
     const isStaging = service.environment === 'staging';
-    // Secrets are stored securely in root-level files named from config
-    const envFile = service.envFile 
-      ? `      - ./${service.key}.env`
-      : '';
+    // Always include env_file - env files are named using service.key format: ${repo-name}-${env}.env
+    const envFile = `      - ./${service.key}.env`;
 
     compose += `  # ${service.name} - ${service.environment}
   ${service.key}:
@@ -85,9 +83,9 @@ services:
     container_name: ${service.key}
     environment:
       - NODE_ENV=${service.environment === 'staging' ? 'staging' : 'production'}
-${envFile ? `    env_file:
+    env_file:
 ${envFile}
-` : ''}    networks:
+    networks:
       - infrastructure_network
     restart: unless-stopped
 ${isStaging ? `    depends_on:

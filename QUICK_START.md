@@ -1,17 +1,17 @@
 # Quick Start Guide - Infrastructure Package
 
-**TL;DR:** Each repo stores its own `infrastructure.yml` config. Use `npx core` commands to validate, deploy, update, and remove configurations. The package ensures configs are valid and handles deployment without an external infrastructure layer.
+**TL;DR:** Each repo stores its own `core.yml` config. Use `npx core` commands to validate, deploy, update, and remove configurations. The package ensures configs are valid and handles deployment without an external infrastructure layer.
 
 ## Architecture Overview
 
 **Decentralized Configuration:** Each repository manages its own infrastructure configuration:
-- Each repo has `infrastructure.yml` in its root
+- Each repo has `core.yml` in its root
 - Repos store their own configs (no central infrastructure repo needed)
 - Servers collect configs from deployed repos automatically
 - Package validates configs and ensures everything works together
 
 **Deployment Flow:**
-1. Repo contains `infrastructure.yml` with its deployment config
+1. Repo contains `core.yml` with its deployment config
 2. Run `npx core validate` to check config locally
 3. Run `npx core deploy` (or use GitHub Actions) to deploy config to server
 4. Server collects all configs and auto-generates docker-compose.yml and nginx.conf
@@ -39,7 +39,7 @@ In your repository root:
 npx core init
 ```
 
-This creates an `infrastructure.yml` example file. Edit it with your domains and settings:
+This creates a `core.yml` example file. Edit it with your domains and settings:
 
 ```yaml
 # Repository name (must match GitHub repo name)
@@ -156,7 +156,7 @@ npx core deploy
 This command:
 - ✅ Validates config locally first
 - ✅ SSHs to target server(s)
-- ✅ Copies `infrastructure.yml` to server as `configs/<repo-name>.yml`
+- ✅ Copies `core.yml` to server as `configs/<repo-name>.yml`
 - ✅ Writes secrets securely to root-level files (named from config)
 - ✅ Runs check-config to regenerate docker-compose and nginx
 - ✅ Pulls latest Docker image
@@ -290,7 +290,7 @@ On each server:
 ## Troubleshooting
 
 ### "Config file not found"
-- Ensure `infrastructure.yml` exists in repo root
+- Ensure `core.yml` exists in repo root
 - Run `npx core init` to create example file
 
 ### "SSH connection failed"
@@ -323,7 +323,7 @@ On each server:
 
 | Command | Description |
 |---------|-------------|
-| `npx core init` | Create example `infrastructure.yml` file |
+| `npx core init` | Create example `core.yml` file |
 | `npx core validate` | Validate config file locally |
 | `npx core check-config` | Check and regenerate configs on servers, verify GitHub secrets, provide report |
 | `npx core deploy` | Deploy/update config to servers |

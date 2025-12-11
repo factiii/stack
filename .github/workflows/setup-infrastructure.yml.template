@@ -4,17 +4,12 @@ name: Setup Infrastructure
 # AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
 # ============================================================================
 # This file is generated from setup-infrastructure.yml.template
-# To update, modify infrastructure-config.yml then run:
+# To update, modify core.yml then run:
 #   node scripts/generate-workflow.js
 # ============================================================================
 
 on:
   workflow_dispatch:
-    inputs:
-      server_filter:
-        description: 'Server name to setup (leave empty for all servers)'
-        required: false
-        type: string
 
 jobs:
   setup:
@@ -30,13 +25,12 @@ jobs:
 
       - name: Load infrastructure config
         run: |
-          if [ -n "${{ vars.INFRASTRUCTURE_CONFIG }}" ]; then
-            echo "${{ vars.INFRASTRUCTURE_CONFIG }}" > infrastructure-config.yml
-            echo "✅ Loaded config from GitHub variable"
-          else
-            echo "❌ INFRASTRUCTURE_CONFIG not found"
+          if [ ! -f "core.yml" ]; then
+            echo "❌ core.yml not found in repository"
+            echo "   Ensure core.yml exists in the repo root"
             exit 1
           fi
+          echo "✅ Using core.yml from repository"
 
       - name: Display configuration
         run: |
@@ -47,10 +41,10 @@ jobs:
           echo "════════════════════════════════════════════════════════════"
           echo "SSL Email: $(get_ssl_email)"
           echo ""
-          SERVERS=$(yq eval '.servers | keys | .[]' infrastructure-config.yml)
+          SERVERS=$(yq eval '.servers | keys | .[]' core.yml)
           for server in $SERVERS; do
             echo "🖥️ $server: $(get_ssh_user $server)@$(get_ssh_host $server)"
-            yq eval ".servers.$server.repos[] | \"   - \" + .name + \" (\" + .environment + \") → \" + .domain" infrastructure-config.yml
+            yq eval ".servers.$server.repos[] | \"   - \" + .name + \" (\" + .environment + \") → \" + .domain" core.yml
           done
           echo "════════════════════════════════════════════════════════════"
 
@@ -69,12 +63,9 @@ jobs:
         run: |
           source ./scripts/parse-infrastructure-config.sh
           
-          SERVER_FILTER="${{ github.event.inputs.server_filter }}"
-          if [ -n "$SERVER_FILTER" ]; then
-            SERVERS="$SERVER_FILTER"
-          else
-            SERVERS=$(yq eval '.servers | keys | .[]' infrastructure-config.yml)
-          fi
+          # Get all servers from core.yml
+          # (This workflow is for legacy centralized approach only)
+          SERVERS=$(yq eval '.servers | keys | .[]' core.yml)
           
           AWS_ACCESS_KEY_ID=$(echo "$AWS_SECRETS" | jq -r '.AWS_ACCESS_KEY_ID')
           AWS_SECRET_ACCESS_KEY=$(echo "$AWS_SECRETS" | jq -r '.AWS_SECRET_ACCESS_KEY')
@@ -129,7 +120,7 @@ jobs:
           REMOTE_SETUP
             
             # Write secrets for each service
-            REPOS=$(yq eval ".servers.$server.repos[] | \"\(.name)|\(.environment)\"" infrastructure-config.yml)
+            REPOS=$(yq eval ".servers.$server.repos[] | \"\(.name)|\(.environment)\"" core.yml)
             while IFS='|' read -r repo_name repo_env; do
               [ -z "$repo_name" ] && continue
               SERVICE_NAME="${repo_name}-${repo_env}"

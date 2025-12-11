@@ -9,7 +9,7 @@ An npm package for managing infrastructure deployments across multiple repositor
 │                    INDIVIDUAL REPOS                         │
 │  (factiii, chop-shop, link3d, tap-track)                    │
 ├─────────────────────────────────────────────────────────────┤
-│  infrastructure.yml (per repo)                              │
+│  core.yml (per repo)                                        │
 │  GitHub Secrets: SSH_STAGING, SSH_PROD, AWS_SECRETS         │
 │  Workflows: CheckConfig, DeployStaging, DeployProd          │
 └─────────────────────────────────────────────────────────────┘
@@ -57,7 +57,7 @@ In your repository root:
 npx core init
 ```
 
-This creates an `infrastructure.yml` file. Edit it with your domains and settings:
+This creates a `core.yml` file. Edit it with your domains and settings:
 
 ```yaml
 name: your-repo-name
@@ -87,9 +87,8 @@ npx core generate-workflows
 ```
 
 This creates:
-- `.github/workflows/check-config.yml` - Checks and regenerates configs on servers
-- `.github/workflows/deploy-staging.yml` - Deploys to staging
-- `.github/workflows/deploy-prod.yml` - Deploys to production
+- `.github/workflows/deploy.yml` - Infrastructure configuration checker/regenerator (handles staging and prod)
+- `.github/workflows/undeploy.yml` - Completely removes repo from staging and prod servers
 
 ### 4. Add GitHub Secrets
 
@@ -104,8 +103,17 @@ In your repository's **Settings → Secrets → Actions**, add:
 - `AWS_ACCESS_KEY_ID` - AWS access key ID for ECR
 - `AWS_SECRET_ACCESS_KEY` - AWS secret access key for ECR
 - `AWS_REGION` - AWS region (e.g., us-east-1)
+- `STAGING_ENVS` - Environment variables for staging (newline-separated `key=value` pairs)
+- `PROD_ENVS` - Environment variables for production (newline-separated `key=value` pairs)
 
-**Note:** ECR registry and repository are read from your `infrastructure.yml` config file, not from secrets.
+**Note:** ECR registry and repository are read from your `core.yml` config file, not from secrets.
+
+**Format for ENVS secrets:**
+```
+NODE_ENV=staging
+PORT=5001
+DATABASE_URL=postgresql://postgres:postgres@postgres-staging:5432/mydb
+```
 
 ### 5. Deploy
 
@@ -115,7 +123,7 @@ Push to `main` branch to trigger staging deployment, or manually run the workflo
 
 ### `core init`
 
-Initialize `infrastructure.yml` config file.
+Initialize `core.yml` config file.
 
 ```bash
 npx core init
@@ -128,7 +136,7 @@ Validate your `infrastructure.yml` file.
 
 ```bash
 npx core validate
-npx core validate --config path/to/infrastructure.yml
+npx core validate --config path/to/core.yml
 ```
 
 ### `core check-config`
@@ -238,40 +246,50 @@ The `CheckConfig` workflow (or manual `core check-config`) will:
 
 1. **Repo pushes code** → Triggers `DeployStaging` or `DeployProd` workflow
 2. **Workflow builds** Docker image using AWS CLI:
-   - Reads ECR registry from `infrastructure.yml`
+   - Reads ECR registry from `core.yml`
    - Uses `aws ecr get-login-password` for authentication
    - Builds with `--platform linux/amd64` flag
    - Pushes image with `:latest` tag
 3. **Workflow SSHs** to target server
 4. **Updates config** in `~/infrastructure/configs/<repo-name>.yml`
-5. **Runs check-config.sh** to regenerate nginx/docker-compose from all configs
+5. **Runs deploy.yml workflow** which regenerates nginx/docker-compose from all configs
 6. **Runs** `docker compose pull <service>` and `docker compose up -d <service>`
 
 ## Workflows
 
-### CheckConfig
+### Deploy
 
-**Trigger:** Manual or daily schedule (2 AM UTC)
+**Trigger:** Push to `main`/`develop`, manual (workflow_dispatch), or daily schedule (2 AM UTC)
 
-Scans all configs on staging and production servers and regenerates docker-compose and nginx configurations.
+Infrastructure configuration checker/regenerator (QA/auto-fix):
+- Validates all configs on servers
+- Regenerates docker-compose.yml from all configs
+- Regenerates nginx.conf from all configs
+- Auto-fixes issues
 
-### DeployStaging
-
-**Trigger:** Push to `main` or `develop` branch
-
+**For staging:**
 1. Builds and tests code
 2. Builds Docker image
 3. Pushes to ECR
 4. SSHs to staging server
-5. Updates config file
+5. Copies core.yml and STAGING_ENVS
 6. Regenerates infrastructure configs
-7. Deploys service
+7. Pulls latest image and restarts service
 
-### DeployProd
+**For prod:**
+1. SSHs to prod server (no building - containers already exist)
+2. Copies core.yml and PROD_ENVS
+3. Regenerates infrastructure configs
+4. Pulls latest image and restarts service
 
-**Trigger:** Push to `main` branch or version tags (`v*`)
+### Undeploy
 
-Same as DeployStaging but for production.
+**Trigger:** Manual (workflow_dispatch)
+
+Completely removes this repository from staging and production servers:
+- Deletes all configs, environment files, containers, and data
+- Regenerates infrastructure configs without the removed repo
+- **This action cannot be undone**
 
 ## Adding a New Service
 
@@ -295,7 +313,7 @@ npx core remove --environment all
 Or manually:
 1. Remove the config file from `~/infrastructure/configs/<repo-name>.yml` on the server
 2. Remove the env file `~/infrastructure/<repo-name>-<env>.env` if it exists
-3. Run `core check-config` to regenerate configs
+3. Run `core check-config` or trigger `deploy.yml` workflow to regenerate configs
 4. The service will be removed from docker-compose and nginx
 5. All remaining repos will be verified and reconfigured
 
@@ -303,11 +321,11 @@ Or manually:
 
 ### Config not found on server
 
-Ensure your deployment workflow is copying `infrastructure.yml` to `~/infrastructure/configs/<repo-name>.yml` on the server.
+Ensure your deployment workflow is copying `core.yml` to `~/infrastructure/configs/<repo-name>.yml` on the server.
 
 ### Port conflicts
 
-The system auto-assigns ports. If you need a specific port, specify it in your `infrastructure.yml`. Conflicts are automatically resolved.
+The system auto-assigns ports. If you need a specific port, specify it in your `core.yml`. Conflicts are automatically resolved.
 
 ### Nginx not reloading
 
@@ -342,12 +360,12 @@ infra.generateNginx('/path/to/configs', '/path/to/nginx.conf');
 
 ## Legacy Centralized Approach
 
-> **Note:** The centralized `infrastructure-config.yml` approach is still supported for backward compatibility but is not recommended for new setups.
+> **Note:** The centralized `core.yml` approach is still supported for backward compatibility but is not recommended for new setups.
 
 If you're using the legacy centralized approach:
 
-1. Configure `infrastructure-config.yml` with your servers and repos
-2. Store it as a GitHub variable `INFRASTRUCTURE_CONFIG`
+1. Configure `core.yml` with your servers and repos
+2. Store it in the repository root (commit it to the repo)
 3. Use the `setup-infrastructure.yml` workflow for initial setup
 4. Use the `rebuild-service.yml` workflow for deployments
 

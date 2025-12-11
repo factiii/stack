@@ -4,17 +4,17 @@ const path = require('path');
 const yaml = require('js-yaml');
 
 /**
- * Remove infrastructure.yml config from server(s)
+ * Completely remove repo from staging and prod servers (undeploy)
  */
-function remove(options = {}) {
+function undeploy(options = {}) {
   const rootDir = process.cwd();
-  const configPath = path.resolve(rootDir, options.config || 'infrastructure.yml');
+  const configPath = path.resolve(rootDir, options.config || 'core.yml');
 
   // Load config to get repo name
   let repoName = options.repo;
   if (!repoName) {
     if (!fs.existsSync(configPath)) {
-      console.error('❌ Config file not found. Specify --repo <repo-name> or ensure infrastructure.yml exists.');
+      console.error('❌ Config file not found. Specify --repo <repo-name> or ensure core.yml exists.');
       process.exit(1);
     }
     const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
@@ -122,4 +122,4 @@ function remove(options = {}) {
   console.log('   All remaining repos on servers have been verified and reconfigured.');
 }
 
-module.exports = remove;
+module.exports = undeploy;

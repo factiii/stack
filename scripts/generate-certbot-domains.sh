@@ -3,19 +3,19 @@
 # ============================================================================
 # LEGACY SCRIPT - For backward compatibility with centralized approach
 # ============================================================================
-# This script is part of the legacy centralized infrastructure-config.yml
+# This script is part of the legacy centralized core.yml
 # approach. For new repositories, use the decentralized approach with
 # the npm package CLI commands (npx core check-config, etc.)
 # ============================================================================
 #
-# Generate certbot domain list from infrastructure-config.yml
+# Generate certbot domain list from core.yml
 # Usage: ./scripts/generate-certbot-domains.sh
 # Outputs: space-separated list of domains for certbot -d flags
 
 set -e
 
 INFRASTRUCTURE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CONFIG_FILE="${INFRASTRUCTURE_ROOT}/infrastructure-config.yml"
+CONFIG_FILE="${INFRASTRUCTURE_ROOT}/core.yml"
 
 # Source the parse script
 source "${INFRASTRUCTURE_ROOT}/scripts/parse-infrastructure-config.sh"
