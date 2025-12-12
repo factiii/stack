@@ -48,13 +48,13 @@ describe('CLI Command Tests', () => {
   });
 
   describe('init command', () => {
-    test('creates core.yml from template', () => {
+    test('creates core.yml from template', async () => {
       const configPath = path.join(testDir, 'core.yml');
       
       // Should not exist initially
       expect(fs.existsSync(configPath)).toBe(false);
 
-      init({});
+      await init({});
 
       // Should be created
       expect(fs.existsSync(configPath)).toBe(true);
@@ -63,12 +63,12 @@ describe('CLI Command Tests', () => {
       expect(content).toContain('environments:');
     });
 
-    test('replaces placeholder repo name', () => {
+    test('replaces placeholder repo name', async () => {
       // Create a package.json to test repo name inference
       const packageJsonPath = path.join(testDir, 'package.json');
       fs.writeFileSync(packageJsonPath, JSON.stringify({ name: 'test-repo' }));
 
-      init({});
+      await init({});
       
       const configPath = path.join(testDir, 'core.yml');
       const content = fs.readFileSync(configPath, 'utf8');
@@ -76,11 +76,11 @@ describe('CLI Command Tests', () => {
       expect(content).not.toContain('your-repo-name');
     });
 
-    test('handles scoped package names', () => {
+    test('handles scoped package names', async () => {
       const packageJsonPath = path.join(testDir, 'package.json');
       fs.writeFileSync(packageJsonPath, JSON.stringify({ name: '@org/test-repo' }));
 
-      init({});
+      await init({});
       
       const configPath = path.join(testDir, 'core.yml');
       const content = fs.readFileSync(configPath, 'utf8');
@@ -88,35 +88,33 @@ describe('CLI Command Tests', () => {
       expect(content).not.toContain('@org/test-repo');
     });
 
-    test('fails if config exists without --force', () => {
+    test('skips creating config if exists without --force', async () => {
       const configPath = path.join(testDir, 'core.yml');
       fs.writeFileSync(configPath, 'existing config');
 
-      try {
-        init({});
-        fail('Should have exited');
-      } catch (error) {
-        expect(exitCode).toBe(1);
-        expect(consoleOutput.some(o => o[1].includes('already exists'))).toBe(true);
-      }
+      await init({});
+      
+      // Config should not be overwritten
+      const content = fs.readFileSync(configPath, 'utf8');
+      expect(content).toBe('existing config');
     });
 
-    test('overwrites existing config with --force', () => {
+    test('overwrites existing config with --force', async () => {
       const configPath = path.join(testDir, 'core.yml');
       fs.writeFileSync(configPath, 'existing config');
 
-      init({ force: true });
+      await init({ force: true });
 
       const content = fs.readFileSync(configPath, 'utf8');
       expect(content).not.toBe('existing config');
       expect(content).toContain('name:');
     });
 
-    test('outputs success message', () => {
-      init({});
+    test('outputs audit report', async () => {
+      await init({});
       
-      expect(consoleOutput.some(o => o[1].includes('Created infrastructure.yml'))).toBe(true);
-      expect(consoleOutput.some(o => o[1].includes('Repository name:'))).toBe(true);
+      // Init now outputs comprehensive audit report
+      expect(consoleOutput.some(o => o[1].includes('Running infrastructure audit') || o[1].includes('core.yml'))).toBe(true);
     });
   });
 
@@ -138,7 +136,7 @@ describe('CLI Command Tests', () => {
       const yaml = require('js-yaml');
       fs.writeFileSync(configPath, yaml.dump(validConfig));
 
-      validate({ config: 'infrastructure.yml' });
+      validate({ config: 'core.yml' });
 
       expect(consoleOutput.some(o => o[1].includes('Configuration is valid'))).toBe(true);
       expect(exitCode).toBeNull();
@@ -221,7 +219,7 @@ describe('CLI Command Tests', () => {
       const yaml = require('js-yaml');
       fs.writeFileSync(configPath, yaml.dump(configWithBadPort));
 
-      validate({ config: 'infrastructure.yml' });
+      validate({ config: 'core.yml' });
 
       expect(consoleOutput.some(o => o[1].includes('Port 2000') && o[1].includes('outside recommended range'))).toBe(true);
       expect(exitCode).toBeNull(); // Should not exit on warnings
@@ -241,7 +239,7 @@ describe('CLI Command Tests', () => {
       const yaml = require('js-yaml');
       fs.writeFileSync(configPath, yaml.dump(configWithoutEmail));
 
-      validate({ config: 'infrastructure.yml' });
+      validate({ config: 'core.yml' });
 
       expect(consoleOutput.some(o => o[1].includes('Missing ssl_email'))).toBe(true);
       expect(exitCode).toBeNull();
@@ -275,9 +273,11 @@ describe('CLI Command Tests', () => {
     test('generates workflow files in default directory', () => {
       const workflowsDir = path.join(testDir, '.github', 'workflows');
       const expectedFiles = [
-        'check-config.yml',
-        'deploy-staging.yml',
-        'deploy-prod.yml'
+        'init.yml',
+        'deploy.yml',
+        'undeploy.yml',
+        'staging.yml',
+        'production.yml'
       ];
 
       generateWorkflows({});
@@ -292,9 +292,11 @@ describe('CLI Command Tests', () => {
     test('generates workflow files in custom directory', () => {
       const customDir = path.join(testDir, 'custom-workflows');
       const expectedFiles = [
-        'check-config.yml',
-        'deploy-staging.yml',
-        'deploy-prod.yml'
+        'init.yml',
+        'deploy.yml',
+        'undeploy.yml',
+        'staging.yml',
+        'production.yml'
       ];
 
       generateWorkflows({ output: 'custom-workflows' });

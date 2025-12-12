@@ -72,7 +72,8 @@ services:
 
   // Generate service entries
   for (const service of services) {
-    const imageTag = `${service.name}-main-latest`;
+    // New image naming pattern: {repo-name}-{env}
+    const imageTag = `${service.name}-${service.environment}`;
     const isStaging = service.environment === 'staging';
     // Always include env_file - env files are named using service.key format: ${repo-name}-${env}.env
     const envFile = `      - ./${service.key}.env`;

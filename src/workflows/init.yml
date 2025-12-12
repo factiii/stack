@@ -1,0 +1,444 @@
+name: Init Check
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [init-check]
+  pull_request:
+    paths:
+      - 'core.yml'
+      - '.github/workflows/**'
+
+jobs:
+  check-secrets-and-generate-templates:
+    name: Check Secrets & Generate Templates
+    runs-on: ubuntu-latest
+    outputs:
+      secrets-ready: ${{ steps.check-secrets.outputs.all-present }}
+      missing-secrets: ${{ steps.check-secrets.outputs.missing }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install dependencies
+        run: |
+          npm install @octokit/rest js-yaml
+          
+      - name: Validate core.yml
+        id: validate
+        run: |
+          if [ ! -f core.yml ]; then
+            echo "❌ core.yml not found"
+            exit 1
+          fi
+          
+          echo "✅ core.yml exists"
+          
+          # Basic YAML validation
+          node -e "
+            const yaml = require('js-yaml');
+            const fs = require('fs');
+            try {
+              const config = yaml.load(fs.readFileSync('core.yml', 'utf8'));
+              if (!config.name) {
+                console.log('❌ core.yml missing required field: name');
+                process.exit(1);
+              }
+              if (!config.environments) {
+                console.log('❌ core.yml missing required field: environments');
+                process.exit(1);
+              }
+              console.log('✅ core.yml is valid');
+              console.log('repo-name=' + config.name);
+            } catch (e) {
+              console.log('❌ core.yml has syntax errors:', e.message);
+              process.exit(1);
+            }
+          " >> $GITHUB_OUTPUT
+          
+      - name: Check GitHub Secrets
+        id: check-secrets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node -e "
+            const { Octokit } = require('@octokit/rest');
+            const fs = require('fs');
+            const yaml = require('js-yaml');
+            
+            async function checkSecrets() {
+              const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+              const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+              
+              const required = [
+                'STAGING_SSH', 'STAGING_HOST', 'STAGING_USER',
+                'PROD_SSH', 'PROD_HOST', 'PROD_USER',
+                'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
+                'STAGING_ENVS', 'PROD_ENVS'
+              ];
+              
+              try {
+                const { data } = await octokit.rest.actions.listRepoSecrets({
+                  owner, repo, per_page: 100
+                });
+                
+                const existing = data.secrets.map(s => s.name);
+                const missing = required.filter(s => !existing.includes(s));
+                const present = required.filter(s => existing.includes(s));
+                
+                console.log('🔑 GitHub Secrets Check:');
+                present.forEach(s => console.log(\`   ✅ \${s} exists\`));
+                missing.forEach(s => console.log(\`   ⚠️  \${s} not found\`));
+                
+                fs.writeFileSync(process.env.GITHUB_OUTPUT,
+                  \`all-present=\${missing.length === 0}\\n\` +
+                  \`missing=\${missing.join(',')}\\n\` +
+                  \`present=\${present.join(',')}\\n\`
+                );
+                
+                if (missing.length > 0) {
+                  fs.writeFileSync('missing-secrets.txt', missing.join('\\n'));
+                }
+              } catch (error) {
+                console.log('❌ Failed to check secrets:', error.message);
+                process.exit(1);
+              }
+            }
+            
+            checkSecrets();
+          "
+          
+      - name: Generate environment templates
+        if: steps.check-secrets.outputs.all-present != 'true'
+        run: |
+          echo "⚠️  Missing GitHub Secrets detected"
+          echo "💡 Environment templates should be created locally"
+          echo "   Run: npx core init (in your local repo)"
+          
+      - name: Report missing secrets
+        if: steps.check-secrets.outputs.all-present != 'true'
+        run: |
+          echo "⚠️  SETUP INCOMPLETE"
+          echo ""
+          echo "Missing GitHub Secrets:"
+          cat missing-secrets.txt | while read secret; do
+            echo "   - $secret"
+          done
+          echo ""
+          echo "💡 Next Steps:"
+          echo "   1. Create .env files locally (.env.example, .env.staging, .env.prod)"
+          echo "   2. Run: npx core init (validates and syncs to GitHub)"
+          echo "   3. Add remaining secrets to GitHub (Settings → Secrets → Actions)"
+          echo "   4. Re-run this workflow to verify"
+
+  audit-and-sync-env-files:
+    name: Audit & Sync Environment Files
+    runs-on: ubuntu-latest
+    needs: check-secrets-and-generate-templates
+    if: needs.check-secrets-and-generate-templates.outputs.secrets-ready == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install dependencies
+        run: npm install @octokit/rest js-yaml
+        
+      - name: Validate environment files
+        id: validate-env
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const yaml = require('js-yaml');
+            
+            // Load config
+            const config = yaml.load(fs.readFileSync('core.yml', 'utf8'));
+            const isStagingSecret = config.auto?.isStagingSecret !== false; // default true
+            
+            // Parse env files
+            function parseEnvFile(filepath) {
+              if (!fs.existsSync(filepath)) return null;
+              const content = fs.readFileSync(filepath, 'utf8');
+              const env = {};
+              content.split('\n').forEach(line => {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) return;
+                const match = trimmed.match(/^([^=]+)=(.*)$/);
+                if (match) env[match[1].trim()] = match[2].trim();
+              });
+              return env;
+            }
+            
+            const devEnv = parseEnvFile('.env.example');
+            const stagingEnv = parseEnvFile('.env.staging');
+            const prodEnv = parseEnvFile('.env.prod');
+            
+            let hasErrors = false;
+            
+            // Validate .env.example exists
+            if (!devEnv) {
+              console.log('❌ .env.example not found (required as template)');
+              hasErrors = true;
+            } else {
+              console.log(\`✅ .env.example exists (\${Object.keys(devEnv).length} keys)\`);
+            }
+            
+            // Validate .env.staging
+            if (!stagingEnv) {
+              console.log('❌ .env.staging not found (required)');
+              hasErrors = true;
+            } else {
+              console.log(\`✅ .env.staging exists (\${Object.keys(stagingEnv).length} keys)\`);
+              
+              // Check keys match dev
+              const devKeys = Object.keys(devEnv || {});
+              const stagingKeys = Object.keys(stagingEnv);
+              const missing = devKeys.filter(k => !stagingKeys.includes(k));
+              if (missing.length > 0) {
+                console.log(\`⚠️  .env.staging missing keys: \${missing.join(', ')}\`);
+                hasErrors = true;
+              }
+            }
+            
+            // Validate .env.prod (optional locally)
+            if (!prodEnv) {
+              console.log('⚠️  .env.prod not found locally (OK if in GitHub Secrets)');
+            } else {
+              console.log(\`✅ .env.prod exists locally (\${Object.keys(prodEnv).length} keys)\`);
+              
+              // Check keys match dev
+              const devKeys = Object.keys(devEnv || {});
+              const prodKeys = Object.keys(prodEnv);
+              const missing = devKeys.filter(k => !prodKeys.includes(k));
+              if (missing.length > 0) {
+                console.log(\`⚠️  .env.prod missing keys: \${missing.join(', ')}\`);
+                hasErrors = true;
+              }
+            }
+            
+            if (hasErrors) {
+              console.log('');
+              console.log('❌ Environment file validation failed');
+              process.exit(1);
+            }
+            
+            // Write outputs
+            fs.writeFileSync(process.env.GITHUB_OUTPUT,
+              \`staging-exists=\${!!stagingEnv}\\n\` +
+              \`prod-exists=\${!!prodEnv}\\n\` +
+              \`is-staging-secret=\${isStagingSecret}\\n\`
+            );
+          "
+      
+      - name: Check existing GitHub secrets
+        id: check-existing
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node -e "
+            const { Octokit } = require('@octokit/rest');
+            const fs = require('fs');
+            
+            async function checkExisting() {
+              const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+              const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+              
+              try {
+                // Check secrets
+                const { data: secrets } = await octokit.rest.actions.listRepoSecrets({
+                  owner, repo, per_page: 100
+                });
+                const secretNames = secrets.secrets.map(s => s.name);
+                
+                // Check variables
+                const { data: variables } = await octokit.rest.actions.listRepoVariables({
+                  owner, repo, per_page: 100
+                });
+                const variableNames = variables.variables.map(v => v.name);
+                
+                const hasStaging = secretNames.includes('STAGING_ENVS') || variableNames.includes('STAGING_ENVS');
+                const hasProd = secretNames.includes('PROD_ENVS');
+                
+                console.log('📊 GitHub Secrets/Variables Status:');
+                console.log(\`   STAGING_ENVS: \${hasStaging ? '✅ Exists' : '⚠️  Not found'}\`);
+                console.log(\`   PROD_ENVS: \${hasProd ? '✅ Exists' : '⚠️  Not found'}\`);
+                
+                fs.writeFileSync(process.env.GITHUB_OUTPUT,
+                  \`staging-exists-gh=\${hasStaging}\\n\` +
+                  \`prod-exists-gh=\${hasProd}\\n\`
+                );
+              } catch (error) {
+                console.log('❌ Failed to check existing secrets:', error.message);
+                process.exit(1);
+              }
+            }
+            
+            checkExisting();
+          "
+      
+      - name: Audit or Sync
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STAGING_EXISTS_LOCAL: ${{ steps.validate-env.outputs.staging-exists }}
+          PROD_EXISTS_LOCAL: ${{ steps.validate-env.outputs.prod-exists }}
+          STAGING_EXISTS_GH: ${{ steps.check-existing.outputs.staging-exists-gh }}
+          PROD_EXISTS_GH: ${{ steps.check-existing.outputs.prod-exists-gh }}
+          IS_STAGING_SECRET: ${{ steps.validate-env.outputs.is-staging-secret }}
+        run: |
+          echo "📋 Environment Sync Strategy:"
+          
+          if [ "$STAGING_EXISTS_GH" == "true" ]; then
+            echo "   STAGING_ENVS: Exists in GitHub - AUDIT MODE"
+          else
+            echo "   STAGING_ENVS: Not in GitHub - will upload from .env.staging"
+          fi
+          
+          if [ "$PROD_EXISTS_GH" == "true" ]; then
+            echo "   PROD_ENVS: Exists in GitHub - AUDIT MODE"
+          else
+            if [ "$PROD_EXISTS_LOCAL" == "true" ]; then
+              echo "   PROD_ENVS: Not in GitHub - will upload from .env.prod"
+            else
+              echo "   PROD_ENVS: Not found locally or in GitHub - REQUIRED"
+              exit 1
+            fi
+          fi
+          
+          echo ""
+          echo "💡 Init only audits existing secrets"
+          echo "   Run 'deploy' to sync/update secrets"
+
+  check-servers:
+    name: Check Servers
+    runs-on: ubuntu-latest
+    needs: [check-secrets-and-generate-templates, audit-and-sync-env-files]
+    if: needs.check-secrets-and-generate-templates.outputs.secrets-ready == 'true'
+    
+    strategy:
+      matrix:
+        environment: [staging, prod]
+        
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install dependencies
+        run: npm install js-yaml
+        
+      - name: Check ${{ matrix.environment }} server
+        env:
+          SSH_KEY: ${{ matrix.environment == 'staging' && secrets.STAGING_SSH || secrets.PROD_SSH }}
+          HOST: ${{ matrix.environment == 'staging' && secrets.STAGING_HOST || secrets.PROD_HOST }}
+          USER: ${{ matrix.environment == 'staging' && secrets.STAGING_USER || secrets.PROD_USER }}
+          ENVIRONMENT: ${{ matrix.environment }}
+        run: |
+          # Write SSH key to file
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          # Test SSH connection
+          echo "🔌 Testing SSH connection to $ENVIRONMENT server..."
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$USER@$HOST" "echo connected" 2>/dev/null; then
+            echo "✅ SSH connection successful"
+          else
+            echo "❌ SSH connection failed"
+            exit 1
+          fi
+          
+          # Check infrastructure directory
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" "test -d ~/infrastructure"; then
+            echo "✅ Infrastructure directory exists"
+          else
+            echo "⚠️  Infrastructure directory not found (will be created on first deploy)"
+          fi
+          
+          # Discover deployed repos
+          echo ""
+          echo "📦 Discovering deployed repos..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" "
+            if [ -d ~/infrastructure/configs ]; then
+              for config in ~/infrastructure/configs/*.yml; do
+                if [ -f \"\$config\" ]; then
+                  repo=\$(basename \"\$config\" .yml)
+                  echo \"   • \$repo\"
+                fi
+              done
+            else
+              echo \"   (none - first deployment)\"
+            fi
+          " || echo "   (cannot access configs directory)"
+          
+          # Check current repo status
+          REPO_NAME=\$(node -e "console.log(require('js-yaml').load(require('fs').readFileSync('core.yml', 'utf8')).name)")
+          echo ""
+          echo "📋 Checking current repo ($REPO_NAME)..."
+          
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" "test -f ~/infrastructure/configs/$REPO_NAME.yml"; then
+            echo "   ✅ Already deployed"
+            echo "   🔄 Running init will show configuration changes"
+          else
+            echo "   ⚠️  Not deployed yet"
+            echo "   💡 This will be a NEW deployment"
+          fi
+          
+          # Cleanup
+          rm -f ~/.ssh/deploy_key
+          
+  generate-report:
+    name: Generate Report
+    runs-on: ubuntu-latest
+    needs: [check-secrets-and-generate-templates, audit-and-sync-env-files, check-servers]
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Generate summary
+        run: |
+          REPO_NAME=\$(grep '^name:' core.yml | awk '{print $2}' | tr -d '"' || echo "unknown")
+          
+          echo "# 🚀 Deployment Readiness Report - $REPO_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.check-secrets-and-generate-templates.outputs.secrets-ready }}" == "true" ]; then
+            echo "## ✅ All checks passed!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Your repository is ready to deploy." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Run: \`npx core deploy --environment staging\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. Or push to main branch to trigger automatic deployment" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚠️  Setup incomplete" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Missing Secrets:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "${{ needs.check-secrets-and-generate-templates.outputs.missing }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Create \`.env.example\`, \`.env.staging\`, \`.env.prod\` locally" >> $GITHUB_STEP_SUMMARY
+            echo "2. Run: \`npx core init\` (validates and syncs to GitHub)" >> $GITHUB_STEP_SUMMARY
+            echo "3. Add remaining secrets to GitHub (Settings → Secrets → Actions)" >> $GITHUB_STEP_SUMMARY
+            echo "4. Re-run this workflow to verify" >> $GITHUB_STEP_SUMMARY
+          fi
+

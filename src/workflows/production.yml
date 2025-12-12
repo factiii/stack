@@ -37,7 +37,7 @@ jobs:
         run: pnpm install
 
       - name: Run tests
-        run: pnpm test
+        run: pnpm run test:server
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -50,21 +50,38 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Read config for Dockerfile path
+        id: read-config
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          
+          if [ -f "core.yml" ]; then
+            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' core.yml)
+            REPO_NAME=$(yq eval '.name' core.yml)
+            echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
+            echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "dockerfile=Dockerfile" >> $GITHUB_OUTPUT
+            echo "repo_name=${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build and push Docker image to ECR
         id: push
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'apps' }}
-          IMAGE_TAG: prod-${{ github.sha }}
+          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
+          DOCKERFILE: ${{ steps.read-config.outputs.dockerfile }}
         run: |
-          echo "🔨 Building Docker image..."
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          echo "🔨 Building Docker image from $DOCKERFILE..."
+          docker build --platform linux/amd64 -f $DOCKERFILE -t $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-prod .
           
           echo "📤 Pushing to ECR..."
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-prod
           
-          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-          echo "✅ Image built and pushed: $IMAGE_TAG"
+          echo "image_tag=${REPO_NAME}-prod" >> $GITHUB_OUTPUT
+          echo "✅ Image built and pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-prod"
 
   deploy-production:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/production' || github.ref == 'refs/heads/main')
@@ -98,15 +115,45 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Read config for Dockerfile path
+        id: read-config
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          
+          if [ -f "core.yml" ]; then
+            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' core.yml)
+            REPO_NAME=$(yq eval '.name' core.yml)
+            echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
+            echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "dockerfile=Dockerfile" >> $GITHUB_OUTPUT
+            echo "repo_name=${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push Docker image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'apps' }}
+          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
+          DOCKERFILE: ${{ steps.read-config.outputs.dockerfile }}
+        run: |
+          echo "🔨 Building Docker image from $DOCKERFILE..."
+          docker build --platform linux/amd64 -f $DOCKERFILE -t $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-prod .
+          
+          echo "📤 Pushing to ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-prod
+          
+          echo "✅ Image built and pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-prod"
+
       - name: Deploy to production with migration handling
         env:
           SSH_KEY: ${{ secrets.PROD_SSH }}
           SSH_HOST: ${{ secrets.PROD_HOST }}
           SSH_USER: ${{ secrets.PROD_USER || 'ubuntu' }}
-          REPO_NAME: ${{ github.event.repository.name }}
+          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'apps' }}
-          IMAGE_TAG: prod-${{ github.sha }}
           DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
         run: |
           if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
@@ -122,10 +169,31 @@ jobs:
           NEEDS_MIGRATION=false
           BACKUP_CREATED=false
           
+          # Read Prisma config from core.yml
+          PRISMA_SCHEMA=$(grep '^prisma_schema:' core.yml | cut -d: -f2 | tr -d ' ' || echo "")
+          PRISMA_VERSION=$(grep '^prisma_version:' core.yml | cut -d: -f2 | tr -d ' ' || echo "")
+          
+          # Set defaults if not configured
+          if [ -z "$PRISMA_SCHEMA" ]; then
+            PRISMA_SCHEMA="prisma/schema.prisma"
+          fi
+          
+          if [ -z "$PRISMA_VERSION" ]; then
+            PRISMA_VERSION="latest"
+          fi
+          
+          echo "📋 Prisma Configuration:"
+          echo "   Schema: $PRISMA_SCHEMA"
+          echo "   Version: $PRISMA_VERSION"
+          
           echo "🔍 Checking for pending migrations..."
           
-          # Check if migrations are pending
-          if npx prisma migrate status 2>&1 | grep -q "pending\|not been applied"; then
+          # Check if migrations are pending using docker compose run
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "cd ~/infrastructure && \
+             docker compose run --rm --no-deps ${SERVICE_KEY} \
+             npx -y prisma@${PRISMA_VERSION} migrate status --schema=${PRISMA_SCHEMA}" 2>&1 | grep -q "pending\|not been applied"; then
             echo "⚠️  Migrations pending, will handle after deployment"
             NEEDS_MIGRATION=true
           else
@@ -141,13 +209,14 @@ jobs:
               BACKUP_CREATED=true
               echo "✅ Backup created using custom script"
             else
-              # Fallback to Prisma-based backup via SSH
+              # Fallback to database backup via docker compose
               ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
                 "$SSH_USER@$SSH_HOST" \
-                "cd ~/infrastructure/${SERVICE_KEY} && \
-                 pg_dump \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
-                 mysqldump --no-tablespaces \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
-                 echo 'Backup attempted'"
+                "cd ~/infrastructure && \
+                 docker compose run --rm --no-deps ${SERVICE_KEY} \
+                 sh -c 'pg_dump \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
+                        mysqldump --no-tablespaces \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
+                        echo \"Backup attempted\"'"
               BACKUP_CREATED=true
               echo "✅ Database backup created: ${BACKUP_FILE}"
             fi
@@ -183,7 +252,9 @@ jobs:
             
             if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
               "$SSH_USER@$SSH_HOST" \
-              "cd ~/infrastructure/${SERVICE_KEY} && npx prisma migrate deploy"; then
+              "cd ~/infrastructure && \
+               docker compose run --rm --no-deps ${SERVICE_KEY} \
+               npx -y prisma@${PRISMA_VERSION} migrate deploy --schema=${PRISMA_SCHEMA}"; then
               echo "✅ Migrations completed successfully"
             else
               echo "❌ Migration failed! Starting rollback..."

@@ -34,14 +34,11 @@ jobs:
         run: pnpm install
 
       - name: Run tests
-        run: pnpm test
+        run: pnpm run test:server
 
       - name: Run integration tests (if available)
         run: pnpm run test:integration --if-present
         continue-on-error: false
-
-      - name: Build Docker image for staging
-        run: pnpm run build:docker:staging
 
   deploy-staging:
     needs: test-and-build
@@ -50,6 +47,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -62,16 +64,37 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Read config for Dockerfile path
+        id: read-config
+        run: |
+          if [ -f "core.yml" ]; then
+            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' core.yml)
+            REPO_NAME=$(yq eval '.name' core.yml)
+            echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
+            echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "dockerfile=Dockerfile" >> $GITHUB_OUTPUT
+            echo "repo_name=${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build and push Docker image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'apps' }}
-          IMAGE_TAG: staging-${{ github.sha }}
+          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
+          DOCKERFILE: ${{ steps.read-config.outputs.dockerfile }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:staging-latest
+          echo "🔨 Building Docker image from $DOCKERFILE..."
+          docker build --platform linux/amd64 -f $DOCKERFILE -t $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-staging .
+          
+          echo "📤 Pushing to ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-staging
+          
+          echo "🏷️  Tagging as staging-latest for backward compatibility..."
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-staging $ECR_REGISTRY/$ECR_REPOSITORY:staging-latest
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:staging-latest
+          
+          echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-staging"
 
       - name: Deploy to staging server
         env:

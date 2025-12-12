@@ -139,7 +139,7 @@ describe('Generator Tests', () => {
       generateCompose(testDir, composeOutput);
       const content = fs.readFileSync(composeOutput, 'utf8');
 
-      expect(content).toContain('image: 123456789.dkr.ecr.us-east-1.amazonaws.com/test-apps:test-repo1-main-latest');
+      expect(content).toContain('image: 123456789.dkr.ecr.us-east-1.amazonaws.com/test-apps:test-repo1-staging');
     });
 
     test('ports are assigned sequentially starting at 3001', () => {

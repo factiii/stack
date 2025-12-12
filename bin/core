@@ -18,10 +18,12 @@ program
 
 program
   .command('init')
-  .description('Initialize core.yml config file')
+  .description('Initialize core.yml config file and auto-trigger init workflow')
   .option('-f, --force', 'Overwrite existing config file')
-  .action((options) => {
-    init(options);
+  .option('--no-remote', 'Skip auto-triggering the init workflow')
+  .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
+  .action(async (options) => {
+    await init(options);
   });
 
 program

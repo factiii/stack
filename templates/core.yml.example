@@ -49,4 +49,17 @@ ecr_repository: apps
 # dockerfile: Dockerfile
 # dockerfile: apps/server/Dockerfile  # Example for monorepo
 
+# Prisma configuration (auto-detected from your project)
+# prisma_schema: prisma/schema.prisma  # Path relative to repository root
+# prisma_schema: apps/server/prisma/schema.prisma  # Example for monorepo
+# prisma_version: 7.1.0  # Detected from package.json, ensures version match
 
+# Auto-detected/configured settings
+auto:
+  # Whether staging env should be treated as secret
+  # true = GitHub Secret, false = GitHub Variable
+  isStagingSecret: true
+  
+  # Auto-detected Prisma configuration (if detected, values shown below)
+  # prisma_schema: apps/server/prisma/schema.prisma
+  # prisma_version: 5.7.0

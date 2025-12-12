@@ -13,6 +13,7 @@ function generateWorkflows(options = {}) {
 
   // Copy workflow files (static files, no templates)
   const workflows = [
+    'init.yml',
     'deploy.yml',
     'undeploy.yml',
     'staging.yml',
@@ -50,6 +51,7 @@ function generateWorkflows(options = {}) {
 
   console.log(`\n✅ Workflows generated successfully!`);
   console.log(`\n📝 Generated workflows:`);
+  console.log(`   - init.yml: Deployment readiness checker (verifies secrets and server state)`);
   console.log(`   - deploy.yml: Infrastructure configuration management (triggered by CLI)`);
   console.log(`   - undeploy.yml: Remove repository from servers`);
   console.log(`   - staging.yml: Application CI/CD for staging environment`);
