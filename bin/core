@@ -27,6 +27,17 @@ program
   });
 
 program
+  .command('init fix')
+  .alias('init-fix')
+  .description('Fix all environments including uploading secrets to GitHub')
+  .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
+  .option('--continue-on-error', 'Continue even if some secrets fail to upload')
+  .action(async (options) => {
+    const initFix = require('../src/cli/init-fix');
+    await initFix(options);
+  });
+
+program
   .command('validate')
   .description('Validate core.yml config file')
   .option('-c, --config <path>', 'Path to config file', 'core.yml')

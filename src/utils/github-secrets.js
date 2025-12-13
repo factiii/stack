@@ -1,4 +1,5 @@
 const { Octokit } = require('@octokit/rest');
+const sodium = require('libsodium-wrappers');
 
 /**
  * Get required GitHub secrets list based on core.yml configuration
@@ -136,10 +137,92 @@ function getGitHubRepoInfo() {
   return null;
 }
 
+/**
+ * Encrypt a secret value for GitHub using libsodium
+ * @param {string} value - Secret value to encrypt
+ * @param {string} publicKey - Repository public key (base64)
+ * @param {string} keyId - Repository public key ID
+ * @returns {Promise<string>} - Encrypted secret (base64)
+ */
+async function encryptSecret(value, publicKey, keyId) {
+  await sodium.ready;
+  
+  // Decode the public key
+  const publicKeyBytes = Buffer.from(publicKey, 'base64');
+  
+  // Encrypt the secret
+  const messageBytes = Buffer.from(value, 'utf8');
+  const encryptedBytes = sodium.crypto_box_seal(messageBytes, publicKeyBytes);
+  
+  return Buffer.from(encryptedBytes).toString('base64');
+}
+
+/**
+ * Upload a secret to GitHub repository
+ * @param {string} owner - GitHub repository owner
+ * @param {string} repo - GitHub repository name
+ * @param {string} secretName - Name of the secret
+ * @param {string} secretValue - Value of the secret
+ * @param {string} token - GitHub token with repo scope
+ * @returns {Promise<object>} - Result with success status and error if any
+ */
+async function uploadSecret(owner, repo, secretName, secretValue, token) {
+  const result = {
+    success: false,
+    error: null
+  };
+  
+  if (!token) {
+    result.error = 'No GitHub token provided';
+    return result;
+  }
+  
+  const octokit = new Octokit({ auth: token });
+  
+  try {
+    // Get repository public key
+    const { data: publicKeyData } = await octokit.rest.actions.getRepoPublicKey({
+      owner,
+      repo
+    });
+    
+    // Encrypt the secret
+    const encryptedValue = await encryptSecret(
+      secretValue,
+      publicKeyData.key,
+      publicKeyData.key_id
+    );
+    
+    // Upload the secret
+    await octokit.rest.actions.createOrUpdateRepoSecret({
+      owner,
+      repo,
+      secret_name: secretName,
+      encrypted_value: encryptedValue,
+      key_id: publicKeyData.key_id
+    });
+    
+    result.success = true;
+  } catch (error) {
+    if (error.status === 401) {
+      result.error = 'GitHub token is invalid or expired';
+    } else if (error.status === 403) {
+      result.error = 'GitHub token does not have permission to create/update secrets';
+    } else if (error.status === 404) {
+      result.error = 'Repository not found or token lacks access';
+    } else {
+      result.error = `Failed to upload secret: ${error.message}`;
+    }
+  }
+  
+  return result;
+}
+
 module.exports = {
   getRequiredSecrets,
   checkGitHubSecrets,
   formatSecretsReport,
-  getGitHubRepoInfo
+  getGitHubRepoInfo,
+  uploadSecret
 };
 

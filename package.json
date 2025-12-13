@@ -27,7 +27,8 @@
   "license": "MIT",
   "dependencies": {
     "@octokit/rest": "^20.0.2",
-    "commander": "^11.1.0"
+    "commander": "^11.1.0",
+    "libsodium-wrappers": "^0.7.11"
   },
   "devDependencies": {
     "jest": "^29.7.0",

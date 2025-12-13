@@ -101,9 +101,14 @@ Core provides exactly **3 commands**:
 
 ### `npx core init`
 
-**Purpose:** Validate and auto-fix local dev environment. Check-only for remote.
+**Purpose:** Comprehensive check of everything - local, GitHub, and remote servers. Auto-fixes local only.
 
-**Local Dev Environment:**
+**What It Checks:**
+- **Local environment:** All files, configs, dependencies, scripts
+- **GitHub:** Secrets, workflows, repository settings
+- **Remote servers:** Deployed configurations (read-only via SSH)
+
+**Local Dev Environment (Auto-Fix Enabled):**
 - Run package detection (Next.js, Expo, tRPC, Prisma)
 - Generate/update `coreAuto.yml`
 - Validate `core.yml` (check for EXAMPLE- values)
@@ -114,12 +119,18 @@ Core provides exactly **3 commands**:
 - Update .gitignore if needed
 - **Can delete/modify files** - developers understand git
 
-**Remote Environments (Staging/Prod):**
+**GitHub (Check-Only):**
+- Verify required secrets exist (STAGING_ENVS, PROD_ENVS, SSH keys, etc.)
+- Check workflow files are present
+- Report missing or misconfigured secrets
+- **NO modifications** - use `init fix` to upload secrets
+
+**Remote Environments (Staging/Prod) - Check-Only:**
 - SSH to servers (read-only)
 - Validate deployed configurations
 - Compare deployed vs local configs
 - Report mismatches and drift
-- **NO modifications allowed**
+- **NO modifications allowed** - use `init fix` for server-side fixes
 
 **Exit Codes:**
 - Exit 0: Success (permissive, even with warnings)
@@ -127,13 +138,24 @@ Core provides exactly **3 commands**:
 
 ### `npx core init fix`
 
-**Purpose:** Explicitly fix ALL environments including remote. Guarantees deploy will work.
+**Purpose:** Fix everything that `init` checks - local, GitHub, and remote servers. Guarantees deploy will work.
 
 **Must be explicitly called** - never runs automatically.
 
-**What It Does:**
-- Everything `init` does for local
-- SSH to staging/prod servers and:
+**What It Fixes:**
+
+**Local Environment:**
+- Everything `init` does (auto-fix enabled)
+- All local configs, dependencies, scripts, files
+
+**GitHub:**
+- Upload missing secrets from `.env.staging` → `STAGING_ENVS`
+- Upload missing secrets from `.env.prod` → `PROD_ENVS`
+- Create/update GitHub Secrets as needed
+- Verify all required secrets are present
+
+**Remote Servers (Staging/Prod):**
+- SSH to servers and fix infrastructure:
   - Create missing directories
   - Fix file permissions
   - Install missing dependencies
@@ -141,9 +163,17 @@ Core provides exactly **3 commands**:
   - Validate configurations
 
 **What It Does NOT Do:**
-- Deploy containers
+- Deploy containers (that's what `deploy` is for)
+- Update server deployment configs (nginx, docker-compose on servers)
 - Restart running services
 - Modify application code
+
+**After `init fix`:**
+- Everything is fully prepared for deployment
+- All local configs are correct
+- All GitHub secrets are uploaded
+- All server infrastructure is ready
+- Run `npx core deploy` to actually deploy
 
 **Safety:**
 - Prompts for confirmation before remote changes
@@ -153,6 +183,8 @@ Core provides exactly **3 commands**:
 - Initial setup of new environments
 - After major configuration changes
 - When `deploy` fails with blocking errors
+- When GitHub secrets are missing
+- To prepare everything for deployment
 
 ### `npx core deploy`
 

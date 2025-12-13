@@ -128,9 +128,14 @@ Core generates `.env.dev` as a template based on detected adapters.
 
 ### `npx core init`
 
-Validate configuration and auto-fix local dev environment.
+Comprehensive check of everything - local, GitHub, and remote servers. Auto-fixes local only.
 
-**Local (dev):**
+**What it checks:**
+- **Local:** All files, configs, dependencies, scripts (auto-fixes these)
+- **GitHub:** Secrets, workflows, repository settings (check-only)
+- **Remote:** Deployed configurations on servers (check-only via SSH)
+
+**Local (auto-fix enabled):**
 - Detects stack (Next.js, Expo, tRPC, Prisma)
 - Generates `coreAuto.yml`
 - Validates `core.yml`
@@ -138,23 +143,38 @@ Validate configuration and auto-fix local dev environment.
 - Creates missing config files
 - **Can modify files** (developers can git revert)
 
-**Remote (staging/prod):**
+**GitHub (check-only):**
+- Verifies required secrets exist
+- Checks workflow files
+- Reports missing secrets
+- **No modifications** - use `init fix` to upload
+
+**Remote (staging/prod) - check-only:**
 - SSH to servers (read-only)
 - Validates deployed configurations
 - Reports mismatches
-- **No modifications**
+- **No modifications** - use `init fix` for server fixes
 
 ### `npx core init fix`
 
-Explicitly fix ALL environments including remote servers.
+Fix everything that `init` checks - local, GitHub, and remote servers. Prepares everything for deployment.
 
 ```bash
 npx core init fix           # Fix all environments
 npx core init fix --dry-run # Preview changes only
 ```
 
-**What it does:**
-- Everything `init` does locally
+**What it fixes:**
+
+**Local:**
+- Everything `init` does (all local configs, dependencies, files)
+
+**GitHub:**
+- Uploads `STAGING_ENVS` from `.env.staging`
+- Uploads `PROD_ENVS` from `.env.prod`
+- Creates/updates GitHub Secrets as needed
+
+**Remote servers:**
 - SSH to staging/prod and:
   - Create missing directories
   - Fix file permissions
@@ -162,9 +182,13 @@ npx core init fix --dry-run # Preview changes only
   - Validate configurations
 
 **What it does NOT do:**
-- Deploy containers
+- Deploy containers (that's what `deploy` is for)
+- Update server deployment configs (nginx, docker-compose on servers)
 - Restart services
 - Modify application code
+
+**After `init fix`:**
+Everything is fully prepared for deployment. Run `npx core deploy` to actually deploy.
 
 ### `npx core deploy`
 
