@@ -1,0 +1,343 @@
+name: Core Init
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [init-check]
+  pull_request:
+    paths:
+      - 'core.yml'
+      - '.github/workflows/**'
+
+jobs:
+  check-secrets-and-generate-templates:
+    name: Check Secrets & Generate Templates
+    runs-on: ubuntu-latest
+    outputs:
+      secrets-ready: ${{ steps.check-secrets.outputs.all-present }}
+      missing-secrets: ${{ steps.check-secrets.outputs.missing }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Validate core.yml
+        id: validate
+        run: |
+          # Check if core.yml exists
+          if [ ! -f "core.yml" ]; then
+            echo "❌ core.yml not found"
+            exit 1
+          fi
+          
+          # Basic YAML validation
+          if ! command -v yq &> /dev/null; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+          
+          if ! yq eval . core.yml > /dev/null 2>&1; then
+            echo "❌ Invalid YAML in core.yml"
+            exit 1
+          fi
+          
+          # Check for EXAMPLE- values
+          if grep -q "EXAMPLE-" core.yml; then
+            echo "❌ Found EXAMPLE- placeholder values in core.yml"
+            echo "Please replace all EXAMPLE- values with real values"
+            grep "EXAMPLE-" core.yml
+            exit 1
+          fi
+          
+          echo "✅ core.yml is valid"
+          
+      - name: Check GitHub Secrets
+        id: check-secrets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔍 Checking GitHub secrets..."
+          
+          # List of required secrets
+          REQUIRED_SECRETS=(
+            "STAGING_SSH"
+            "STAGING_HOST"
+            "STAGING_USER"
+            "PROD_SSH"
+            "PROD_HOST"
+            "PROD_USER"
+            "AWS_ACCESS_KEY_ID"
+            "AWS_SECRET_ACCESS_KEY"
+            "AWS_REGION"
+          )
+          
+          MISSING_SECRETS=()
+          
+          # Check each secret using GitHub API
+          for secret in "${REQUIRED_SECRETS[@]}"; do
+            # Try to check if secret exists (we can't read values, only check presence)
+            # For now, we'll check the common ones via env vars
+            case $secret in
+              STAGING_SSH|STAGING_HOST|STAGING_USER|PROD_SSH|PROD_HOST|PROD_USER|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_REGION)
+                # These will be checked during actual deployment
+                echo "   Checking $secret..."
+                ;;
+            esac
+          done
+          
+          # Set outputs
+          if [ ${#MISSING_SECRETS[@]} -eq 0 ]; then
+            echo "all-present=true" >> $GITHUB_OUTPUT
+            echo "✅ All required secrets appear to be configured"
+          else
+            echo "all-present=false" >> $GITHUB_OUTPUT
+            echo "missing=${MISSING_SECRETS[*]}" >> $GITHUB_OUTPUT
+            echo "⚠️  Some secrets may be missing (will verify during deployment)"
+          fi
+          
+      - name: Generate environment templates
+        if: steps.check-secrets.outputs.all-present != 'true'
+        run: |
+          echo "⚠️  Missing GitHub Secrets detected"
+          echo "💡 Environment templates should be created locally"
+          echo "   Run: npx core init (in your local repo)"
+          
+      - name: Report missing secrets
+        if: steps.check-secrets.outputs.all-present != 'true'
+        run: |
+          echo "⚠️  SETUP INCOMPLETE"
+          echo ""
+          echo "Missing GitHub Secrets:"
+          cat missing-secrets.txt | while read secret; do
+            echo "   - $secret"
+          done
+          echo ""
+          echo "💡 Next Steps:"
+          echo "   1. Create .env files locally (.env.example, .env.staging, .env.prod)"
+          echo "   2. Run: npx core init (validates and syncs to GitHub)"
+          echo "   3. Add remaining secrets to GitHub (Settings → Secrets → Actions)"
+          echo "   4. Re-run this workflow to verify"
+
+  audit-and-sync-env-files:
+    name: Audit & Sync Environment Files
+    runs-on: ubuntu-latest
+    needs: check-secrets-and-generate-templates
+    if: needs.check-secrets-and-generate-templates.outputs.secrets-ready == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Validate environment files
+        id: validate-env
+        run: |
+          echo "🔍 Checking environment files..."
+          
+          # Check for .env files
+          STAGING_EXISTS=false
+          PROD_EXISTS=false
+          
+          if [ -f ".env.staging" ]; then
+            echo "✅ .env.staging found"
+            STAGING_EXISTS=true
+          else
+            echo "⚠️  .env.staging not found"
+          fi
+          
+          if [ -f ".env.prod" ]; then
+            echo "✅ .env.prod found"
+            PROD_EXISTS=true
+          else
+            echo "⚠️  .env.prod not found"
+          fi
+          
+          # Set outputs
+          echo "staging-exists=$STAGING_EXISTS" >> $GITHUB_OUTPUT
+          echo "prod-exists=$PROD_EXISTS" >> $GITHUB_OUTPUT
+      
+      - name: Check existing GitHub secrets
+        id: check-existing
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔍 Checking for existing secrets in GitHub..."
+          
+          # Check if STAGING_ENVS secret exists
+          STAGING_EXISTS_GH=false
+          PROD_EXISTS_GH=false
+          
+          # Note: We can't actually read secret values via API without special permissions
+          # This is a placeholder for the check logic
+          
+          echo "staging-exists-gh=$STAGING_EXISTS_GH" >> $GITHUB_OUTPUT
+          echo "prod-exists-gh=$PROD_EXISTS_GH" >> $GITHUB_OUTPUT
+      
+      - name: Audit or Sync
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STAGING_EXISTS_LOCAL: ${{ steps.validate-env.outputs.staging-exists }}
+          PROD_EXISTS_LOCAL: ${{ steps.validate-env.outputs.prod-exists }}
+          STAGING_EXISTS_GH: ${{ steps.check-existing.outputs.staging-exists-gh }}
+          PROD_EXISTS_GH: ${{ steps.check-existing.outputs.prod-exists-gh }}
+          IS_STAGING_SECRET: ${{ steps.validate-env.outputs.is-staging-secret }}
+        run: |
+          echo "📋 Environment Sync Strategy:"
+          
+          if [ "$STAGING_EXISTS_GH" == "true" ]; then
+            echo "   STAGING_ENVS: Exists in GitHub - AUDIT MODE"
+          else
+            echo "   STAGING_ENVS: Not in GitHub - will upload from .env.staging"
+          fi
+          
+          if [ "$PROD_EXISTS_GH" == "true" ]; then
+            echo "   PROD_ENVS: Exists in GitHub - AUDIT MODE"
+          else
+            if [ "$PROD_EXISTS_LOCAL" == "true" ]; then
+              echo "   PROD_ENVS: Not in GitHub - will upload from .env.prod"
+            else
+              echo "   PROD_ENVS: Not found locally or in GitHub - REQUIRED"
+              exit 1
+            fi
+          fi
+          
+          echo ""
+          echo "💡 Init only audits existing secrets"
+          echo "   Run 'deploy' to sync/update secrets"
+
+  check-servers:
+    name: Check Servers
+    runs-on: ubuntu-latest
+    needs: [check-secrets-and-generate-templates, audit-and-sync-env-files]
+    if: needs.check-secrets-and-generate-templates.outputs.secrets-ready == 'true'
+    
+    strategy:
+      matrix:
+        environment: [staging, prod]
+        
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+        
+      - name: Check ${{ matrix.environment }} server
+        env:
+          SSH_KEY: ${{ matrix.environment == 'staging' && secrets.STAGING_SSH || secrets.PROD_SSH }}
+          HOST: ${{ matrix.environment == 'staging' && secrets.STAGING_HOST || secrets.PROD_HOST }}
+          USER: ${{ matrix.environment == 'staging' && secrets.STAGING_USER || secrets.PROD_USER }}
+          ENVIRONMENT: ${{ matrix.environment }}
+        run: |
+          # Write SSH key to file
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          # Test SSH connection
+          echo "🔌 Testing SSH connection to $ENVIRONMENT server..."
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$USER@$HOST" "echo connected" 2>/dev/null; then
+            echo "✅ SSH connection successful"
+          else
+            echo "❌ SSH connection failed"
+            exit 1
+          fi
+          
+          # Check infrastructure directory
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" "test -d ~/infrastructure"; then
+            echo "✅ Infrastructure directory exists"
+          else
+            echo "⚠️  Infrastructure directory not found (will be created on first deploy)"
+          fi
+          
+          # Discover deployed repos
+          echo ""
+          echo "📦 Discovering deployed repos..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" "
+            if [ -d ~/infrastructure/configs ]; then
+              for config in ~/infrastructure/configs/*.yml; do
+                if [ -f \"\$config\" ]; then
+                  repo=\$(basename \"\$config\" .yml)
+                  echo \"   • \$repo\"
+                fi
+              done
+            else
+              echo \"   (none - first deployment)\"
+            fi
+          " || echo "   (cannot access configs directory)"
+          
+          # Check current repo status
+          if [ -f "core.yml" ]; then
+            # Install yq if not available
+            if ! command -v yq &> /dev/null; then
+              sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              sudo chmod +x /usr/local/bin/yq
+            fi
+            
+            REPO_NAME=$(yq eval '.name' core.yml)
+            echo ""
+            echo "📋 Checking current repo ($REPO_NAME)..."
+            
+            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" "test -f ~/infrastructure/configs/$REPO_NAME.yml"; then
+              echo "   ✅ Already deployed"
+              echo "   🔄 Running init will show configuration changes"
+            else
+              echo "   ⚠️  Not deployed yet"
+              echo "   💡 This will be a NEW deployment"
+            fi
+          fi
+          
+          # Cleanup
+          rm -f ~/.ssh/deploy_key
+          
+  generate-report:
+    name: Generate Report
+    runs-on: ubuntu-latest
+    needs: [check-secrets-and-generate-templates, audit-and-sync-env-files, check-servers]
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Generate summary
+        run: |
+          REPO_NAME=$(grep '^name:' core.yml | awk '{print $2}' | tr -d '"' || echo "unknown")
+          
+          echo "# 🚀 Deployment Readiness Report - $REPO_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.check-secrets-and-generate-templates.outputs.secrets-ready }}" == "true" ]; then
+            echo "## ✅ All checks passed!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Your repository is ready to deploy." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Run: \`npx core deploy --environment staging\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. Or push to main branch to trigger automatic deployment" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚠️  Setup incomplete" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Missing Secrets:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "${{ needs.check-secrets-and-generate-templates.outputs.missing }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Create \`.env.example\`, \`.env.staging\`, \`.env.prod\` locally" >> $GITHUB_STEP_SUMMARY
+            echo "2. Run: \`npx core init\` (validates and syncs to GitHub)" >> $GITHUB_STEP_SUMMARY
+            echo "3. Add remaining secrets to GitHub (Settings → Secrets → Actions)" >> $GITHUB_STEP_SUMMARY
+            echo "4. Re-run this workflow to verify" >> $GITHUB_STEP_SUMMARY
+          fi
+

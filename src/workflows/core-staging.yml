@@ -1,4 +1,4 @@
-name: Staging CI/CD
+name: Core Staging
 
 # Application deployment workflow for staging environment
 # Runs tests, builds Docker image, and deploys to staging server

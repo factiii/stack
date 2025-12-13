@@ -66,22 +66,22 @@ async function deploy(options = {}) {
     process.exit(1);
   }
 
-  // Step 3: Check deploy.yml workflow exists locally
-  const workflowPath = path.join(rootDir, '.github/workflows/deploy.yml');
+  // Step 3: Check core-deploy.yml workflow exists locally
+  const workflowPath = path.join(rootDir, '.github/workflows/core-deploy.yml');
   if (!fs.existsSync(workflowPath)) {
-    console.error('❌ Workflow file not found: .github/workflows/deploy.yml');
+    console.error('❌ Workflow file not found: .github/workflows/core-deploy.yml');
     console.error('   Run: npx core generate-workflows');
     process.exit(1);
   }
-  console.log('✅ Found deploy.yml workflow');
+  console.log('✅ Found core-deploy.yml workflow');
 
-  // Step 4: Check undeploy.yml workflow exists locally (optional but recommended)
-  const undeployWorkflowPath = path.join(rootDir, '.github/workflows/undeploy.yml');
+  // Step 4: Check core-undeploy.yml workflow exists locally (optional but recommended)
+  const undeployWorkflowPath = path.join(rootDir, '.github/workflows/core-undeploy.yml');
   if (!fs.existsSync(undeployWorkflowPath)) {
-    console.log('⚠️  Optional: undeploy.yml workflow not found');
+    console.log('⚠️  Optional: core-undeploy.yml workflow not found');
     console.log('   Run: npx core generate-workflows (to add undeploy support)\n');
   } else {
-    console.log('✅ Found undeploy.yml workflow');
+    console.log('✅ Found core-undeploy.yml workflow');
   }
 
   // Step 5: Get GitHub token
@@ -114,13 +114,13 @@ async function deploy(options = {}) {
       await octokit.rest.actions.getWorkflow({
         owner: repoInfo.owner,
         repo: repoInfo.repo,
-        workflow_id: 'deploy.yml'
+        workflow_id: 'core-deploy.yml'
       });
       console.log('✅ Workflow found in GitHub');
     } catch (e) {
       if (e.status === 404) {
         console.error('❌ Workflow not found in GitHub repository');
-        console.error('   Make sure .github/workflows/deploy.yml is committed and pushed');
+        console.error('   Make sure .github/workflows/core-deploy.yml is committed and pushed');
         process.exit(1);
       }
       throw e;

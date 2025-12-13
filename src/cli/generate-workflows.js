@@ -13,11 +13,11 @@ function generateWorkflows(options = {}) {
 
   // Copy workflow files (static files, no templates)
   const workflows = [
-    'init.yml',
-    'deploy.yml',
-    'undeploy.yml',
-    'staging.yml',
-    'production.yml'
+    'core-init.yml',
+    'core-deploy.yml',
+    'core-undeploy.yml',
+    'core-staging.yml',
+    'core-production.yml'
   ];
 
   let updated = 0;
@@ -76,11 +76,11 @@ function generateWorkflows(options = {}) {
   console.log(`\n✅ Workflow generation complete!`);
   console.log(`   📊 Summary: ${created} created, ${updated} updated, ${unchanged} unchanged`);
   console.log(`\n📝 Generated workflows:`);
-  console.log(`   - init.yml: Deployment readiness checker (verifies secrets and server state)`);
-  console.log(`   - deploy.yml: Infrastructure configuration management (triggered by CLI)`);
-  console.log(`   - undeploy.yml: Remove repository from servers`);
-  console.log(`   - staging.yml: Application CI/CD for staging environment`);
-  console.log(`   - production.yml: Application CI/CD for production with migrations`);
+  console.log(`   - core-init.yml: Deployment readiness checker (verifies secrets and server state)`);
+  console.log(`   - core-deploy.yml: Infrastructure configuration management (triggered by CLI)`);
+  console.log(`   - core-undeploy.yml: Remove repository from servers`);
+  console.log(`   - core-staging.yml: Application CI/CD for staging environment`);
+  console.log(`   - core-production.yml: Application CI/CD for production with migrations`);
   console.log(`\n📋 Next steps:`);
   console.log(`   1. Review the generated workflow files`);
   console.log(`   2. Add required package.json scripts (see validation output)`);

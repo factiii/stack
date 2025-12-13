@@ -33,7 +33,7 @@ function formatDeploymentReport(data) {
       lines.push(`   ✅ Git configured${localChecks.branch ? ` (${localChecks.branch} branch)` : ''}`);
     }
     if (localChecks.workflows) {
-      lines.push('   ✅ Workflows exist (deploy.yml, undeploy.yml, init.yml)');
+      lines.push('   ✅ Workflows exist (core-deploy.yml, core-undeploy.yml, core-init.yml)');
     }
     if (localChecks.scripts) {
       lines.push('   ✅ Required scripts present');

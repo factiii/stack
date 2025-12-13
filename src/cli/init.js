@@ -72,9 +72,9 @@ function checkWorkflowsStatus(rootDir) {
     allExist: false
   };
 
-  const deployPath = path.join(workflowsDir, 'deploy.yml');
-  const undeployPath = path.join(workflowsDir, 'undeploy.yml');
-  const initPath = path.join(workflowsDir, 'init.yml');
+  const deployPath = path.join(workflowsDir, 'core-deploy.yml');
+  const undeployPath = path.join(workflowsDir, 'core-undeploy.yml');
+  const initPath = path.join(workflowsDir, 'core-init.yml');
 
   result.deployExists = fs.existsSync(deployPath);
   result.undeployExists = fs.existsSync(undeployPath);
@@ -376,24 +376,24 @@ function displayAuditReport(auditResults) {
   // 2. GitHub Workflows
   console.log('\n📝 GitHub Workflows:');
   if (workflows.allExist) {
-    console.log('   ✅ init.yml exists');
-    console.log('   ✅ deploy.yml exists');
-    console.log('   ✅ undeploy.yml exists');
+    console.log('   ✅ core-init.yml exists');
+    console.log('   ✅ core-deploy.yml exists');
+    console.log('   ✅ core-undeploy.yml exists');
   } else {
     if (!workflows.initExists) {
-      console.log('   ❌ init.yml missing');
+      console.log('   ❌ core-init.yml missing');
     } else {
-      console.log('   ✅ init.yml exists');
+      console.log('   ✅ core-init.yml exists');
     }
     if (!workflows.deployExists) {
-      console.log('   ❌ deploy.yml missing');
+      console.log('   ❌ core-deploy.yml missing');
     } else {
-      console.log('   ✅ deploy.yml exists');
+      console.log('   ✅ core-deploy.yml exists');
     }
     if (!workflows.undeployExists) {
-      console.log('   ❌ undeploy.yml missing');
+      console.log('   ❌ core-undeploy.yml missing');
     } else {
-      console.log('   ✅ undeploy.yml exists');
+      console.log('   ✅ core-undeploy.yml exists');
     }
     if (!workflows.allExist) {
       console.log('      💡 Run: npx core generate-workflows');
@@ -916,7 +916,7 @@ async function triggerAndWaitForWorkflow(auditResults, options) {
     await octokit.rest.actions.createWorkflowDispatch({
       owner: repoInfo.owner,
       repo: repoInfo.repo,
-      workflow_id: 'init.yml',
+      workflow_id: 'core-init.yml',
       ref: currentBranch
     });
     
@@ -931,7 +931,7 @@ async function triggerAndWaitForWorkflow(auditResults, options) {
     const { data: runs } = await octokit.rest.actions.listWorkflowRuns({
       owner: repoInfo.owner,
       repo: repoInfo.repo,
-      workflow_id: 'init.yml',
+      workflow_id: 'core-init.yml',
       per_page: 1
     });
     
@@ -1008,7 +1008,7 @@ async function triggerAndWaitForWorkflow(auditResults, options) {
       console.log('❌ GitHub token does not have permission to trigger workflows');
       console.log('   Ensure token has "repo" and "workflow" scopes\n');
     } else if (error.status === 404) {
-      console.log('❌ Workflow not found. Make sure init.yml is committed and pushed.\n');
+      console.log('❌ Workflow not found. Make sure core-init.yml is committed and pushed.\n');
     } else {
       console.log(`❌ Failed to trigger workflow: ${error.message}\n`);
     }
@@ -1051,7 +1051,7 @@ function displayWorkflowInstructions(auditResults) {
         console.log('    git add . && git commit -m "Configure core" && git push');
         console.log('');
         console.log('2️⃣  Go to GitHub Actions and click "Run workflow":');
-        console.log(`    https://github.com/${owner}/${repo}/actions/workflows/init.yml`);
+        console.log(`    https://github.com/${owner}/${repo}/actions/workflows/core-init.yml`);
         console.log('');
         console.log('─'.repeat(60));
         console.log('');

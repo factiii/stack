@@ -1,4 +1,4 @@
-name: Undeploy Infrastructure
+name: Core Undeploy
 
 # Completely removes this repository from staging and production servers.
 # Deletes all configs, environment files, containers, and data.
@@ -38,9 +38,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install infrastructure package
-        run: npm install @factiii/core
 
       - name: Remove from staging server
         env:
@@ -99,9 +96,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install infrastructure package
-        run: npm install @factiii/core
-
       - name: Remove from production server
         env:
           SSH_KEY: ${{ secrets.PROD_SSH }}
@@ -158,7 +152,7 @@ jobs:
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: 'deploy.yml',
+              workflow_id: 'core-deploy.yml',
               ref: context.ref,
               inputs: {
                 environment: 'all'

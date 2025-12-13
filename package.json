@@ -6,6 +6,12 @@
   "bin": {
     "core": "./bin/core"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "templates/",
+    "scripts/"
+  ],
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",

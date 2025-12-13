@@ -273,11 +273,11 @@ describe('CLI Command Tests', () => {
     test('generates workflow files in default directory', () => {
       const workflowsDir = path.join(testDir, '.github', 'workflows');
       const expectedFiles = [
-        'init.yml',
-        'deploy.yml',
-        'undeploy.yml',
-        'staging.yml',
-        'production.yml'
+        'core-init.yml',
+        'core-deploy.yml',
+        'core-undeploy.yml',
+        'core-staging.yml',
+        'core-production.yml'
       ];
 
       generateWorkflows({});
@@ -292,11 +292,11 @@ describe('CLI Command Tests', () => {
     test('generates workflow files in custom directory', () => {
       const customDir = path.join(testDir, 'custom-workflows');
       const expectedFiles = [
-        'init.yml',
-        'deploy.yml',
-        'undeploy.yml',
-        'staging.yml',
-        'production.yml'
+        'core-init.yml',
+        'core-deploy.yml',
+        'core-undeploy.yml',
+        'core-staging.yml',
+        'core-production.yml'
       ];
 
       generateWorkflows({ output: 'custom-workflows' });

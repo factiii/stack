@@ -1,4 +1,4 @@
-name: Production CI/CD
+name: Core Production
 
 # Application deployment workflow for production environment
 # Handles testing, building, migrations with backup/restore, and rollback
