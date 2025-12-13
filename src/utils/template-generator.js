@@ -173,27 +173,28 @@ function createEnvTemplates(rootDir, config) {
  */
 function generateSecretsChecklist() {
   return `
-🔑 Required GitHub Secrets Checklist:
-   □ STAGING_SSH - SSH private key for staging server
-   □ STAGING_HOST - Staging server hostname/IP
-   □ STAGING_USER - SSH user (default: ubuntu)
-   □ PROD_SSH - SSH private key for production server
-   □ PROD_HOST - Production server hostname/IP
-   □ PROD_USER - SSH user (default: ubuntu)
-   □ AWS_ACCESS_KEY_ID - AWS access key for ECR
-   □ AWS_SECRET_ACCESS_KEY - AWS secret key for ECR
-   □ AWS_REGION - AWS region (e.g., us-east-1)
-   □ STAGING_ENVS - Environment variables for staging (shared across all repos)
-   □ PROD_ENVS - Environment variables for production (shared across all repos)
-
-💡 How to add secrets:
-   1. Go to: GitHub Repository → Settings → Secrets → Actions
-   2. Click "New repository secret"
-   3. Add each secret from the list above
+   SSH (server access):
+   ───────────────────────────────────────────────────────
+   □ STAGING_SSH    - SSH private key (ssh-keygen -t ed25519)
+   □ STAGING_HOST   - Server IP/hostname
+   □ STAGING_USER   - SSH username (default: ubuntu)
    
-   OR use .env files locally for development:
-   - .env.staging for staging environment
-   - .env.prod for production environment
+   □ PROD_SSH       - SSH private key (ssh-keygen -t ed25519)
+   □ PROD_HOST      - Server IP/hostname
+   □ PROD_USER      - SSH username (default: ubuntu)
+
+   AWS (Docker registry):
+   ───────────────────────────────────────────────────────
+   □ AWS_ACCESS_KEY_ID     - IAM credentials for ECR
+   □ AWS_SECRET_ACCESS_KEY - IAM credentials for ECR
+   □ AWS_REGION            - e.g., us-east-1
+
+   Environment (app secrets):
+   ───────────────────────────────────────────────────────
+   □ STAGING_ENVS   - .env.staging file contents
+   □ PROD_ENVS      - .env.prod file contents
+
+   💡 TIP: Keep .env files local instead of adding to GitHub
 `.trim();
 }
 

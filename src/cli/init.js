@@ -887,7 +887,8 @@ async function triggerAndWaitForWorkflow(auditResults, options) {
   const token = options.token || process.env.GITHUB_TOKEN;
   
   if (!token) {
-    console.log('⚠️  No GITHUB_TOKEN found. Cannot auto-trigger workflow.\n');
+    console.log('ℹ️  No GITHUB_TOKEN - Manual workflow trigger required');
+    console.log('   (With a token, this process is fully automated)\n');
     displayWorkflowInstructions(auditResults);
     return;
   }
@@ -1027,13 +1028,10 @@ function displayWorkflowInstructions(auditResults) {
     return; // Init workflow not generated yet
   }
   
-  console.log('🚀 Manual Workflow Trigger Required\n');
-  console.log('To run the Init workflow manually:');
-  console.log('   • Verifies all GitHub secrets are configured');
-  console.log('   • Tests SSH connections to staging/prod servers');
-  console.log('   • Shows what\'s currently deployed on each server');
-  console.log('   • Compares your local config with deployed versions');
   console.log('');
+  console.log('═'.repeat(60));
+  console.log('');
+  console.log('📋 MANUAL STEPS TO TRIGGER INIT WORKFLOW\n');
   
   if (branches.hasGit) {
     try {
@@ -1047,10 +1045,31 @@ function displayWorkflowInstructions(auditResults) {
       if (match) {
         const owner = match[1];
         const repo = match[2];
-        console.log('💡 How to run:');
-        console.log(`   1. Commit and push your changes`);
-        console.log(`   2. Go to: https://github.com/${owner}/${repo}/actions/workflows/init.yml`);
-        console.log(`   3. Click "Run workflow"`);
+        
+        console.log('1️⃣  Commit and push your changes:');
+        console.log('');
+        console.log('    git add . && git commit -m "Configure core" && git push');
+        console.log('');
+        console.log('2️⃣  Go to GitHub Actions and click "Run workflow":');
+        console.log(`    https://github.com/${owner}/${repo}/actions/workflows/init.yml`);
+        console.log('');
+        console.log('─'.repeat(60));
+        console.log('');
+        console.log('💡 AUTOMATE THIS (Optional):\n');
+        console.log('   Set up a GitHub token to auto-trigger workflows:\n');
+        console.log('   1. Generate token: https://github.com/settings/tokens');
+        console.log('      → "Generate new token (classic)"');
+        console.log('      → Select: repo + workflow scopes');
+        console.log('');
+        console.log('   2. Add to your shell (~/.zshrc):');
+        console.log('      export GITHUB_TOKEN=ghp_your_token_here');
+        console.log('');
+        console.log('   With the token set, "npx core init" will automatically:');
+        console.log('   • Trigger the workflow');
+        console.log('   • Wait for results');
+        console.log('   • Display the outcome');
+        console.log('');
+        console.log('═'.repeat(60));
         console.log('');
       }
     } catch (e) {
@@ -1059,6 +1078,8 @@ function displayWorkflowInstructions(auditResults) {
   }
   
   // Display secrets checklist
+  console.log('🔑 REQUIRED: Add GitHub Secrets Before Running Workflow\n');
+  console.log('   Location: Repository → Settings → Secrets → Actions\n');
   const { generateSecretsChecklist } = require('../utils/template-generator');
   console.log(generateSecretsChecklist());
   console.log('');
