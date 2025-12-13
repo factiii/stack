@@ -2,6 +2,12 @@ name: Core Init
 
 on:
   workflow_dispatch:
+    inputs:
+      fix:
+        description: 'Fix mode - upload secrets and make changes (default: false, check-only)'
+        required: false
+        default: 'false'
+        type: boolean
   repository_dispatch:
     types: [init-check]
   pull_request:
@@ -172,47 +178,141 @@ jobs:
         run: |
           echo "🔍 Checking for existing secrets in GitHub..."
           
-          # Check if STAGING_ENVS secret exists
-          STAGING_EXISTS_GH=false
-          PROD_EXISTS_GH=false
+          # Install dependencies
+          npm install @octokit/rest
           
-          # Note: We can't actually read secret values via API without special permissions
-          # This is a placeholder for the check logic
-          
-          echo "staging-exists-gh=$STAGING_EXISTS_GH" >> $GITHUB_OUTPUT
-          echo "prod-exists-gh=$PROD_EXISTS_GH" >> $GITHUB_OUTPUT
+          # Check if secrets exist via GitHub API
+          node -e "
+            const { Octokit } = require('@octokit/rest');
+            const fs = require('fs');
+            
+            async function checkSecrets() {
+              const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+              const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+              
+              try {
+                const { data } = await octokit.rest.actions.listRepoSecrets({
+                  owner,
+                  repo,
+                  per_page: 100
+                });
+                
+                const secretNames = data.secrets.map(s => s.name);
+                const hasStagingEnvs = secretNames.includes('STAGING_ENVS');
+                const hasProdEnvs = secretNames.includes('PROD_ENVS');
+                
+                console.log('   STAGING_ENVS:', hasStagingEnvs ? '✅ Found' : '⚠️  Not found');
+                console.log('   PROD_ENVS:', hasProdEnvs ? '✅ Found' : '⚠️  Not found');
+                
+                fs.appendFileSync(process.env.GITHUB_OUTPUT, 
+                  'staging-exists-gh=' + hasStagingEnvs + '\\n' +
+                  'prod-exists-gh=' + hasProdEnvs + '\\n'
+                );
+              } catch (error) {
+                console.error('❌ Failed to check secrets:', error.message);
+                fs.appendFileSync(process.env.GITHUB_OUTPUT, 
+                  'staging-exists-gh=false\\n' +
+                  'prod-exists-gh=false\\n'
+                );
+              }
+            }
+            
+            checkSecrets();
+          "
       
       - name: Audit or Sync
+        id: audit-sync
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STAGING_EXISTS_LOCAL: ${{ steps.validate-env.outputs.staging-exists }}
           PROD_EXISTS_LOCAL: ${{ steps.validate-env.outputs.prod-exists }}
           STAGING_EXISTS_GH: ${{ steps.check-existing.outputs.staging-exists-gh }}
           PROD_EXISTS_GH: ${{ steps.check-existing.outputs.prod-exists-gh }}
-          IS_STAGING_SECRET: ${{ steps.validate-env.outputs.is-staging-secret }}
+          FIX_MODE: ${{ inputs.fix }}
         run: |
           echo "📋 Environment Sync Strategy:"
           
-          if [ "$STAGING_EXISTS_GH" == "true" ]; then
-            echo "   STAGING_ENVS: Exists in GitHub - AUDIT MODE"
+          if [ "$FIX_MODE" == "true" ]; then
+            echo "🔧 FIX MODE: Will upload secrets if needed"
           else
-            echo "   STAGING_ENVS: Not in GitHub - will upload from .env.staging"
+            echo "🔍 AUDIT MODE: Check-only, no changes"
+          fi
+          echo ""
+          
+          # Check STAGING_ENVS
+          if [ "$STAGING_EXISTS_GH" == "true" ]; then
+            echo "   STAGING_ENVS: ✅ Exists in GitHub"
+            if [ "$FIX_MODE" == "true" ] && [ "$STAGING_EXISTS_LOCAL" == "true" ]; then
+              echo "      🔄 FIX MODE: Will update from .env.staging"
+            fi
+          else
+            if [ "$STAGING_EXISTS_LOCAL" == "true" ]; then
+              if [ "$FIX_MODE" == "true" ]; then
+                echo "   STAGING_ENVS: ⚠️  Not in GitHub - UPLOADING from .env.staging"
+              else
+                echo "   STAGING_ENVS: ⚠️  Not in GitHub - will upload from .env.staging (run with fix=true)"
+              fi
+            else
+              echo "   STAGING_ENVS: ⚠️  Not found locally or in GitHub (optional)"
+            fi
           fi
           
+          # Check PROD_ENVS
           if [ "$PROD_EXISTS_GH" == "true" ]; then
-            echo "   PROD_ENVS: Exists in GitHub - AUDIT MODE"
+            echo "   PROD_ENVS: ✅ Exists in GitHub"
+            if [ "$FIX_MODE" == "true" ] && [ "$PROD_EXISTS_LOCAL" == "true" ]; then
+              echo "      🔄 FIX MODE: Will update from .env.prod"
+            fi
           else
             if [ "$PROD_EXISTS_LOCAL" == "true" ]; then
-              echo "   PROD_ENVS: Not in GitHub - will upload from .env.prod"
+              if [ "$FIX_MODE" == "true" ]; then
+                echo "   PROD_ENVS: ⚠️  Not in GitHub - UPLOADING from .env.prod"
+              else
+                echo "   PROD_ENVS: ⚠️  Not in GitHub - will upload from .env.prod (run with fix=true)"
+              fi
             else
-              echo "   PROD_ENVS: Not found locally or in GitHub - REQUIRED"
-              exit 1
+              echo "   PROD_ENVS: ❌ Not found locally or in GitHub - REQUIRED"
+              if [ "$FIX_MODE" != "true" ]; then
+                echo "      💡 Run workflow with fix=true to upload, or create .env.prod locally"
+                exit 1
+              fi
             fi
           fi
           
           echo ""
-          echo "💡 Init only audits existing secrets"
-          echo "   Run 'deploy' to sync/update secrets"
+          if [ "$FIX_MODE" == "true" ]; then
+            echo "🔧 FIX MODE: Proceeding to upload secrets..."
+            echo "fix-mode=true" >> $GITHUB_OUTPUT
+          else
+            echo "💡 AUDIT MODE: No changes made"
+            echo "   Run workflow with fix=true to upload secrets"
+            echo "fix-mode=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Fix Mode Instructions
+        if: inputs.fix == 'true' && (steps.validate-env.outputs.staging-exists == 'true' || steps.validate-env.outputs.prod-exists == 'true')
+        run: |
+          echo "🔧 FIX MODE: Checking what needs to be fixed..."
+          echo ""
+          
+          if [ "${{ steps.validate-env.outputs.staging-exists }}" == "true" ] && [ "${{ steps.check-existing.outputs.staging-exists-gh }}" != "true" ]; then
+            echo "⚠️  STAGING_ENVS needs to be uploaded"
+            echo "   💡 Run locally: npx core init fix"
+            echo "   (Workflow cannot access .env files - they are gitignored for security)"
+          fi
+          
+          if [ "${{ steps.validate-env.outputs.prod-exists }}" == "true" ] && [ "${{ steps.check-existing.outputs.prod-exists-gh }}" != "true" ]; then
+            echo "⚠️  PROD_ENVS needs to be uploaded"
+            echo "   💡 Run locally: npx core init fix"
+            echo "   (Workflow cannot access .env.prod - it is gitignored for security)"
+          fi
+          
+          echo ""
+          echo "📝 Note: GitHub Secrets must be uploaded from local machine using:"
+          echo "   npx core init fix"
+          echo ""
+          echo "   This is because .env.prod is gitignored and not available in workflows."
+          echo "   The workflow can verify secrets exist, but cannot upload them."
 
   check-servers:
     name: Check Servers
@@ -318,7 +418,18 @@ jobs:
           echo "# 🚀 Deployment Readiness Report - $REPO_NAME" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ "${{ needs.check-secrets-and-generate-templates.outputs.secrets-ready }}" == "true" ]; then
+          # Check if all jobs passed
+          SECRETS_STATUS="${{ needs.check-secrets-and-generate-templates.result }}"
+          ENV_STATUS="${{ needs.audit-and-sync-env-files.result }}"
+          SERVERS_STATUS="${{ needs.check-servers.result }}"
+          
+          ALL_PASSED=true
+          
+          if [ "$SECRETS_STATUS" != "success" ] || [ "$ENV_STATUS" != "success" ] || [ "$SERVERS_STATUS" != "success" ]; then
+            ALL_PASSED=false
+          fi
+          
+          if [ "$ALL_PASSED" == "true" ]; then
             echo "## ✅ All checks passed!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Your repository is ready to deploy." >> $GITHUB_STEP_SUMMARY
@@ -327,17 +438,54 @@ jobs:
             echo "1. Run: \`npx core deploy --environment staging\`" >> $GITHUB_STEP_SUMMARY
             echo "2. Or push to main branch to trigger automatic deployment" >> $GITHUB_STEP_SUMMARY
           else
-            echo "## ⚠️  Setup incomplete" >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ Setup incomplete" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Missing Secrets:" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            echo "${{ needs.check-secrets-and-generate-templates.outputs.missing }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "### Failed Checks:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$SECRETS_STATUS" != "success" ]; then
+              echo "- ❌ Secrets check: $SECRETS_STATUS" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- ✅ Secrets check: passed" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$ENV_STATUS" != "success" ]; then
+              echo "- ❌ Environment files: $ENV_STATUS" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- ✅ Environment files: passed" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$SERVERS_STATUS" == "skipped" ]; then
+              echo "- ⚠️  Server checks: skipped (fix secrets first)" >> $GITHUB_STEP_SUMMARY
+            elif [ "$SERVERS_STATUS" != "success" ]; then
+              echo "- ❌ Server checks: $SERVERS_STATUS" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- ✅ Server checks: passed" >> $GITHUB_STEP_SUMMARY
+            fi
+            
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
-            echo "1. Create \`.env.example\`, \`.env.staging\`, \`.env.prod\` locally" >> $GITHUB_STEP_SUMMARY
-            echo "2. Run: \`npx core init\` (validates and syncs to GitHub)" >> $GITHUB_STEP_SUMMARY
-            echo "3. Add remaining secrets to GitHub (Settings → Secrets → Actions)" >> $GITHUB_STEP_SUMMARY
-            echo "4. Re-run this workflow to verify" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$ENV_STATUS" != "success" ]; then
+              echo "1. Create missing \`.env.staging\` and \`.env.prod\` files locally" >> $GITHUB_STEP_SUMMARY
+              echo "2. Run: \`npx core init fix\` (uploads secrets to GitHub)" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$SECRETS_STATUS" != "success" ]; then
+              echo "1. Add missing GitHub secrets (Settings → Secrets → Actions)" >> $GITHUB_STEP_SUMMARY
+              echo "2. Run: \`npx core init fix\` to upload environment secrets" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$SERVERS_STATUS" != "success" ] && [ "$SERVERS_STATUS" != "skipped" ]; then
+              echo "1. Verify SSH keys are correct in GitHub Secrets" >> $GITHUB_STEP_SUMMARY
+              echo "2. Test SSH manually: \`ssh user@host\`" >> $GITHUB_STEP_SUMMARY
+              echo "3. Check firewall allows SSH (port 22)" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "4. Re-run this workflow to verify fixes" >> $GITHUB_STEP_SUMMARY
+            
+            # Fail the workflow if any checks failed
+            exit 1
           fi
 

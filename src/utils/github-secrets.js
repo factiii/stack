@@ -1,5 +1,4 @@
 const { Octokit } = require('@octokit/rest');
-const sodium = require('libsodium-wrappers');
 
 /**
  * Get required GitHub secrets list based on core.yml configuration
@@ -145,6 +144,8 @@ function getGitHubRepoInfo() {
  * @returns {Promise<string>} - Encrypted secret (base64)
  */
 async function encryptSecret(value, publicKey, keyId) {
+  // Lazy load sodium only when needed (for init fix)
+  const sodium = require('libsodium-wrappers');
   await sodium.ready;
   
   // Decode the public key

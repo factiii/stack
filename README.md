@@ -17,40 +17,59 @@ npm install @factiii/core
 # or use directly with npx
 ```
 
-### 2. Initialize
+### 2. Set Up GitHub Token (One-time)
+
+```bash
+# Generate token: https://github.com/settings/tokens
+# Select scopes: repo + workflow
+
+# Add to shell config (persists across sessions)
+echo 'export GITHUB_TOKEN=ghp_your_token_here' >> ~/.zshrc
+source ~/.zshrc
+```
+
+### 3. Initialize (Check Everything)
 
 ```bash
 npx core init
 ```
 
-This will:
-- Scan your project structure
-- Detect Next.js, Expo, tRPC, Prisma
-- Generate `coreAuto.yml` with detected settings
-- Create `core.yml` template for manual settings
-- Set up `.env` templates
+**Stage 1: Check** - Discovers all issues without making changes:
+- Scans project structure (Next.js, Expo, tRPC, Prisma)
+- Generates `coreAuto.yml` with detected settings
+- Creates `core.yml` template for manual settings
+- Checks GitHub secrets exist
+- Validates SSH connections to servers
+- **Reports everything that needs fixing**
 
-### 3. Configure
+### 4. Configure
 
 Edit `core.yml` and replace all `EXAMPLE-` values:
 
 ```yaml
 name: my-app                    # Your repo name
-github_repo: myorg/my-app       # GitHub repository
 ssl_email: admin@example.com    # SSL certificate email
 staging_domain: staging.example.com
 prod_domain: app.example.com
 ```
 
-### 4. Fix All Environments
+Create `.env.staging` and `.env.prod` with your environment variables.
+
+### 5. Fix All Issues (Fix Everything)
 
 ```bash
 npx core init fix
 ```
 
-This prepares staging and production servers for deployment.
+**Stage 2: Fix** - Fixes everything in logical order:
+1. **Local:** All configs, dependencies, scripts
+2. **GitHub:** Uploads secrets from `.env` files
+3. **Servers:** Sets up infrastructure via SSH
+4. **Verification:** Triggers workflow to confirm all fixes
 
-### 5. Deploy
+After this command, everything is ready for deployment.
+
+### 6. Deploy
 
 ```bash
 npx core deploy

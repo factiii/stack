@@ -821,6 +821,15 @@ async function init(options = {}) {
     auditResults.coreYml = checkCoreYmlStatus(rootDir, templatePath);
   }
   
+  // Generate coreAuto.yml with auto-detected settings
+  console.log('🔧 Auto-detecting project configuration...\n');
+  try {
+    const { generateCoreAuto } = require('../generators/generate-core-auto');
+    generateCoreAuto(rootDir);
+  } catch (error) {
+    console.log(`⚠️  Warning: Failed to generate coreAuto.yml: ${error.message}\n`);
+  }
+  
   // Validate environment files (after config is available)
   const { validateEnvFiles } = require('../utils/env-validator');
   const loadedConfig = auditResults.coreYml.config || {};
@@ -830,9 +839,15 @@ async function init(options = {}) {
   if (shouldGenerateWorkflows) {
     try {
       generateWorkflows({ output: '.github/workflows' });
-      // Update audit results
+      // Update audit results after generation
       auditResults.workflows = checkWorkflowsStatus(rootDir);
+      
+      // Verify core-init.yml was generated
+      if (!auditResults.workflows.initExists) {
+        console.log('⚠️  Warning: core-init.yml workflow may not have been generated correctly\n');
+      }
     } catch (error) {
+      console.log(`⚠️  Warning: Failed to generate workflows: ${error.message}\n`);
       // Will be shown in audit report
     }
   }
@@ -878,9 +893,28 @@ async function init(options = {}) {
 async function triggerAndWaitForWorkflow(auditResults, options) {
   const { branches, workflows } = auditResults;
   
+  // Ensure workflow file exists locally
   if (!workflows.initExists) {
-    console.log('⚠️  Init workflow not found. Run: npx core generate-workflows\n');
-    return;
+    console.log('⚠️  Init workflow not found locally.');
+    console.log('   Generating workflows...\n');
+    
+    try {
+      const generateWorkflows = require('./generate-workflows');
+      generateWorkflows({ output: '.github/workflows' });
+      // Re-check after generation
+      const rootDir = process.cwd();
+      const initPath = path.join(rootDir, '.github', 'workflows', 'core-init.yml');
+      if (!fs.existsSync(initPath)) {
+        console.log('❌ Failed to generate core-init.yml workflow\n');
+        displayWorkflowInstructions(auditResults);
+        return;
+      }
+      console.log('✅ Workflow generated\n');
+    } catch (error) {
+      console.log(`❌ Failed to generate workflows: ${error.message}\n`);
+      displayWorkflowInstructions(auditResults);
+      return;
+    }
   }
   
   // Get GitHub token
@@ -912,12 +946,34 @@ async function triggerAndWaitForWorkflow(auditResults, options) {
     // Get current branch
     let currentBranch = branches.currentBranch || 'main';
     
-    // Trigger workflow
+    // First, verify the workflow exists in GitHub
+    try {
+      const { data: workflow } = await octokit.rest.actions.getWorkflow({
+        owner: repoInfo.owner,
+        repo: repoInfo.repo,
+        workflow_id: 'core-init.yml'
+      });
+      console.log(`✅ Found workflow: ${workflow.name} (ID: ${workflow.id})\n`);
+    } catch (error) {
+      if (error.status === 404) {
+        console.log('⚠️  Workflow not found in GitHub repository.');
+        console.log('   The workflow file exists locally but may not be committed/pushed.');
+        console.log('   Please commit and push .github/workflows/core-init.yml\n');
+        displayWorkflowInstructions(auditResults);
+        return;
+      }
+      throw error;
+    }
+    
+    // Trigger workflow (check-only mode, not fix mode)
     await octokit.rest.actions.createWorkflowDispatch({
       owner: repoInfo.owner,
       repo: repoInfo.repo,
       workflow_id: 'core-init.yml',
-      ref: currentBranch
+      ref: currentBranch,
+      inputs: {
+        fix: 'false' // Normal init is check-only
+      }
     });
     
     console.log(`✅ Workflow triggered on branch: ${currentBranch}`);
@@ -1059,15 +1115,23 @@ function displayWorkflowInstructions(auditResults) {
         console.log('   Set up a GitHub token to auto-trigger workflows:\n');
         console.log('   1. Generate token: https://github.com/settings/tokens');
         console.log('      → "Generate new token (classic)"');
-        console.log('      → Select: repo + workflow scopes');
+        console.log('      → Select scopes: repo + workflow');
         console.log('');
-        console.log('   2. Add to your shell (~/.zshrc):');
-        console.log('      export GITHUB_TOKEN=ghp_your_token_here');
+        console.log('   2. Add to your shell config (persists across sessions):');
         console.log('');
-        console.log('   With the token set, "npx core init" will automatically:');
-        console.log('   • Trigger the workflow');
+        console.log('      For zsh (macOS default):');
+        console.log('      echo \'export GITHUB_TOKEN=ghp_your_token_here\' >> ~/.zshrc');
+        console.log('      source ~/.zshrc');
+        console.log('');
+        console.log('      For bash:');
+        console.log('      echo \'export GITHUB_TOKEN=ghp_your_token_here\' >> ~/.bashrc');
+        console.log('      source ~/.bashrc');
+        console.log('');
+        console.log('   With the token set, "npx core init" and "npx core init fix" will automatically:');
+        console.log('   • Trigger workflows');
+        console.log('   • Upload secrets');
         console.log('   • Wait for results');
-        console.log('   • Display the outcome');
+        console.log('   • Display outcomes');
         console.log('');
         console.log('═'.repeat(60));
         console.log('');

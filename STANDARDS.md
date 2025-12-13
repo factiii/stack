@@ -97,9 +97,32 @@ For secret keys (e.g., OpenAI API key), adapters can add OAuth flows or CLI comm
 
 ## Commands
 
-Core provides exactly **3 commands**:
+Core provides exactly **3 commands** following a **2-stage process**:
+
+1. **Check** (`init`) - Discover ALL issues
+2. **Fix** (`init fix`) - Fix ALL issues in logical order
+3. **Deploy** (`deploy`) - Deploy containers
+
+## The 2-Stage Process
+
+**Why 2 stages?** 
+
+Single-stage approaches fail because:
+- Fix A fails because B isn't fixed
+- Fix B breaks A
+- Developer confused about state
+
+**2-stage solution:**
+1. Check everything first (discover ALL issues)
+2. Fix in dependency order (each fix enables the next)
+
+See [WORKFLOW.md](WORKFLOW.md) for detailed explanation.
+
+---
 
 ### `npx core init`
+
+**Stage 1: Check Everything**
 
 **Purpose:** Comprehensive check of everything - local, GitHub, and remote servers. Auto-fixes local only.
 
@@ -138,29 +161,56 @@ Core provides exactly **3 commands**:
 
 ### `npx core init fix`
 
+**Stage 2: Fix Everything in Logical Order**
+
 **Purpose:** Fix everything that `init` checks - local, GitHub, and remote servers. Guarantees deploy will work.
 
 **Must be explicitly called** - never runs automatically.
 
+**Fix Order (Dependency Chain):**
+
+```
+1. Local Environment (files, configs)
+   ↓ (must be correct before uploading)
+2. GitHub Secrets (STAGING_ENVS, PROD_ENVS)
+   ↓ (must exist before workflows/deployments)
+3. Remote Servers (infrastructure setup)
+   ↓ (must be set up before deployment)
+4. Verification (workflow confirms fixes)
+```
+
+**Why this order?**
+- Local configs must be correct before uploading to GitHub
+- Secrets must exist in GitHub before servers can deploy
+- Servers need secrets to set up environment
+- Verification confirms everything worked
+
 **What It Fixes:**
 
-**Local Environment:**
-- Everything `init` does (auto-fix enabled)
-- All local configs, dependencies, scripts, files
+**Part 1 - Local Environment:**
+- Generate missing config files
+- Install missing dependencies
+- Fix package.json scripts
+- Update .gitignore
+- Create .env templates
 
-**GitHub:**
-- Upload missing secrets from `.env.staging` → `STAGING_ENVS`
-- Upload missing secrets from `.env.prod` → `PROD_ENVS`
-- Create/update GitHub Secrets as needed
-- Verify all required secrets are present
+**Part 2 - GitHub Secrets:**
+- Upload `STAGING_ENVS` from `.env.staging`
+- Upload `PROD_ENVS` from `.env.prod`
+- Verify all required secrets exist
+- Display verification link
 
-**Remote Servers (Staging/Prod):**
-- SSH to servers and fix infrastructure:
-  - Create missing directories
-  - Fix file permissions
-  - Install missing dependencies
-  - Generate server-side configs
-  - Validate configurations
+**Part 3 - Remote Servers:**
+- SSH to servers (uses secrets from Part 2)
+- Create infrastructure directories
+- Fix file permissions
+- Generate server configs
+- Validate configurations
+
+**Part 4 - Verification:**
+- Trigger `core-init.yml` workflow with `fix=true`
+- Run all checks again
+- Confirm everything is working
 
 **What It Does NOT Do:**
 - Deploy containers (that's what `deploy` is for)
@@ -168,16 +218,36 @@ Core provides exactly **3 commands**:
 - Restart running services
 - Modify application code
 
+**Output:**
+Provides comprehensive report showing what was fixed in each stage:
+```
+Stage 1: Discovering Issues
+   [runs init check, shows all problems]
+
+Stage 2: Fixing Issues
+   Part 1: Local Environment ✅
+   Part 2: GitHub Secrets ✅
+   Part 3: Remote Servers ✅
+   Part 4: Verification ✅
+
+Summary of Fixes:
+   ✅ Local: configs generated
+   ✅ GitHub: STAGING_ENVS (36 vars)
+   ✅ GitHub: PROD_ENVS (36 vars)
+   ✅ Servers: staging ready
+   ✅ Servers: prod ready
+```
+
 **After `init fix`:**
 - Everything is fully prepared for deployment
-- All local configs are correct
-- All GitHub secrets are uploaded
-- All server infrastructure is ready
+- All dependencies resolved in order
+- No "chicken and egg" problems
 - Run `npx core deploy` to actually deploy
 
 **Safety:**
 - Prompts for confirmation before remote changes
 - Supports `--dry-run` to preview changes
+- Comprehensive report of all changes made
 
 **When to Use:**
 - Initial setup of new environments
@@ -185,6 +255,9 @@ Core provides exactly **3 commands**:
 - When `deploy` fails with blocking errors
 - When GitHub secrets are missing
 - To prepare everything for deployment
+
+**Key Principle:**
+Never try to fix issues out of order. Always let `init fix` handle the dependency chain automatically.
 
 ### `npx core deploy`
 
