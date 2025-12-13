@@ -1,549 +1,309 @@
-# Infrastructure Package
+# Core Infrastructure Package
 
-An npm package for managing infrastructure deployments across multiple repositories. Each repo manages its own configuration, and servers automatically discover and merge configs to generate unified docker-compose and nginx configurations.
+An npm package that auto-scans your T3 stack (Next.js, Expo, tRPC, Prisma), detects configuration, and handles deployment to staging and production servers.
 
-## Architecture
+## Philosophy
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    INDIVIDUAL REPOS                         │
-│  (factiii, chop-shop, link3d, tap-track)                    │
-├─────────────────────────────────────────────────────────────┤
-│  core.yml (per repo)                                        │
-│  GitHub Secrets: SSH_STAGING, SSH_PROD, AWS_SECRETS         │
-│  Workflows: CheckConfig, DeployStaging, DeployProd          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      SERVERS                                │
-│  (staging, production)                                      │
-├─────────────────────────────────────────────────────────────┤
-│  ~/infrastructure/                                          │
-│    ├── configs/          # One config per repo              │
-│    │   ├── factiii.yml                                      │
-│    │   ├── chop-shop.yml                                    │
-│    │   └── ...                                              │
-│    ├── docker-compose.yml    # Generated from all configs   │
-│    ├── nginx/nginx.conf      # Generated from all configs  │
-│    └── scripts/              # From package                 │
-└─────────────────────────────────────────────────────────────┘
-```
+**Single approach:** Auto-scanning with adapters.
 
-## Installation
-
-### As an npm Package (Recommended)
-
-```bash
-npm install @factiii/core
-```
-
-### Local Development
-
-```bash
-git clone <infrastructure-repo-url>
-cd infrastructure
-npm install
-npm link  # For local development
-```
+Core scans your repository structure, identifies installed packages, and automatically configures deployment. Manual configuration is only required for settings that cannot be auto-detected (domains, credentials, etc.).
 
 ## Quick Start
 
-### 1. Initialize Your Repo
+### 1. Install
 
-In your repository root:
+```bash
+npm install @factiii/core
+# or use directly with npx
+```
+
+### 2. Initialize
 
 ```bash
 npx core init
 ```
 
-This creates a `core.yml` file. Edit it with your domains and settings:
+This will:
+- Scan your project structure
+- Detect Next.js, Expo, tRPC, Prisma
+- Generate `coreAuto.yml` with detected settings
+- Create `core.yml` template for manual settings
+- Set up `.env` templates
+
+### 3. Configure
+
+Edit `core.yml` and replace all `EXAMPLE-` values:
 
 ```yaml
-name: your-repo-name
-environments:
-  staging:
-    domain: staging-your-repo.yourdomain.com
-    health_check: /health
-  prod:
-    domain: your-repo.yourdomain.com
-    health_check: /health
-
-ssl_email: admin@yourdomain.com
-ecr_registry: 123456789.dkr.ecr.us-east-1.amazonaws.com
-ecr_repository: apps
+name: my-app                    # Your repo name
+github_repo: myorg/my-app       # GitHub repository
+ssl_email: admin@example.com    # SSL certificate email
+staging_domain: staging.example.com
+prod_domain: app.example.com
 ```
 
-### 2. Validate Configuration
+### 4. Fix All Environments
 
 ```bash
-npx core validate
+npx core init fix
 ```
 
-### 3. Generate GitHub Workflows
+This prepares staging and production servers for deployment.
+
+### 5. Deploy
 
 ```bash
-npx core generate-workflows
+npx core deploy
 ```
 
-This creates:
-- `.github/workflows/init.yml` - Deployment readiness checker (validates config, secrets, server state)
-- `.github/workflows/deploy.yml` - Deploys to staging and production (runs init checks first)
-- `.github/workflows/undeploy.yml` - Completely removes repo from staging and prod servers
+---
 
-### 4. Add GitHub Secrets
+## Configuration
 
-#### Environment Variables via .env Files (Recommended)
+### Two Configuration Files
 
-The modern approach uses `.env` files that are automatically synced to GitHub:
+| File | Purpose | Managed By |
+|------|---------|------------|
+| `core.yml` | Manual settings (domains, credentials) | You |
+| `coreAuto.yml` | Auto-detected settings | Core |
 
-1. **Create `.env.example`** (template, committed to git):
-   ```bash
-   # .env.example - Defines all required keys
-   NODE_ENV=development
-   DATABASE_URL=postgresql://EXAMPLE-user:EXAMPLE-pass@localhost:5432/EXAMPLE-myapp
-   JWT_SECRET=EXAMPLE-your-secret-key
-   ```
+### core.yml (Manual Settings)
 
-2. **Create `.env.staging`** (actual staging values):
-   ```bash
-   # .env.staging - Real staging values
-   NODE_ENV=staging
-   DATABASE_URL=postgresql://user:pass@postgres-staging:5432/myapp
-   JWT_SECRET=actual-staging-secret-123
-   ```
-
-3. **Create `.env.prod`** (actual production values):
-   ```bash
-   # .env.prod - Real production values (MUST be gitignored)
-   NODE_ENV=production
-   DATABASE_URL=postgresql://user:pass@postgres-prod:5432/myapp
-   JWT_SECRET=actual-production-secret-456
-   ```
-
-4. **Add to `.gitignore`**:
-   ```
-   .env.prod           # Always gitignore prod
-   # .env.staging      # Optional, based on core.yml auto.isStagingSecret
-   ```
-
-5. **Run `npx core init`** to validate and sync to GitHub
-
-**Benefits:**
-- ✅ `.env.example` acts as template showing required keys
-- ✅ All environments have matching keys (validated)
-- ✅ Auto-synced to GitHub Secrets/Variables
-- ✅ Staging can be public (Variables) or secret based on `core.yml`
-- ✅ Production always secret
-
-#### GitHub Secrets (Manual Method)
-
-Alternatively, add secrets directly in your repository's **Settings → Secrets → Actions**:
-
-- `STAGING_SSH` - SSH private key for staging server
-- `PROD_SSH` - SSH private key for production server
-- `STAGING_HOST` - Staging server hostname/IP
-- `STAGING_USER` - SSH user for staging (default: ubuntu)
-- `PROD_HOST` - Production server hostname/IP
-- `PROD_USER` - SSH user for production (default: ubuntu)
-- `AWS_ACCESS_KEY_ID` - AWS access key ID for ECR
-- `AWS_SECRET_ACCESS_KEY` - AWS secret access key for ECR
-- `AWS_REGION` - AWS region (e.g., us-east-1)
-- `STAGING_ENVS` - Environment variables (newline-separated `key=value` pairs)
-- `PROD_ENVS` - Environment variables (newline-separated `key=value` pairs)
-
-**Note:** ECR registry and repository are read from your `core.yml` config file, not from secrets.
-
-### 5. Verify Deployment Readiness (Optional but Recommended)
-
-Before deploying, run the Init workflow to verify everything is configured correctly:
-
-1. Go to your repository's **Actions** tab in GitHub
-2. Select **"Init Check"** workflow
-3. Click **"Run workflow"**
-4. Review the comprehensive deployment readiness report
-
-This will verify:
-- All GitHub secrets are configured
-- SSH connectivity to servers works
-- Show what's currently deployed and what will change
-
-### 6. Deploy
-
-Push to `main` branch to trigger staging deployment, or manually run the workflows from the Actions tab.
-
-The deploy workflow will automatically run the same init checks before deploying.
-
-## CLI Commands
-
-### `core init`
-
-Initialize `core.yml` config file and perform local validation checks.
-
-```bash
-npx core init
-npx core init --force  # Overwrite existing
-```
-
-**What it does (Local Checks Only):**
-- Creates `core.yml` if missing (from template)
-- Validates `core.yml` has no placeholder values
-- Checks Dockerfile exists
-- Validates git configuration
-- Checks GitHub workflows exist (deploy.yml, undeploy.yml, init.yml)
-- Validates required package.json scripts
-- Checks Prisma configuration (if applicable)
-- Generates missing workflows
-
-**Output:** Local validation report + instructions to run Init workflow in GitHub Actions
-
-**For full deployment readiness check (including GitHub secrets and server state), run the Init workflow in GitHub Actions** (see below)
-
-### `core validate`
-
-Validate your `infrastructure.yml` file.
-
-```bash
-npx core validate
-npx core validate --config path/to/core.yml
-```
-
-### `core check-config`
-
-Check and regenerate configurations on servers.
-
-```bash
-# Check all environments
-npx core check-config
-
-# Check specific environment
-npx core check-config --environment staging
-
-# With explicit credentials
-npx core check-config \
-  --ssh-staging "$SSH_KEY" \
-  --staging-host "192.168.1.100" \
-  --staging-user "admin"
-```
-
-### `core generate-workflows`
-
-Generate GitHub workflow files.
-
-```bash
-npx core generate-workflows
-npx core generate-workflows --output .github/workflows
-```
-
-## Configuration Format
-
-Each repo's `infrastructure.yml`:
+Settings that **cannot** be auto-detected use the `EXAMPLE-` prefix:
 
 ```yaml
-# Repository name (must match GitHub repo name)
-name: factiii
+# Repository name
+name: EXAMPLE-factiii
 
-# Environment configurations
-environments:
-  staging:
-    # Domain for staging
-    domain: staging-factiii.yourdomain.com
-    
-    # Port (optional - auto-assigned if not specified)
-    port: 3001
-    
-    # Health check endpoint
-    health_check: /health
-    
-    # Dependencies (optional)
-    depends_on: [postgres-staging]
-    
-    # Environment file path (optional)
-    env_file: .env.staging
+# SSL email for Let's Encrypt
+ssl_email: EXAMPLE-admin@yourdomain.com
 
-  prod:
-    domain: factiii.yourdomain.com
-    port: 3002
-    health_check: /health
-
-# Global settings
-ssl_email: admin@yourdomain.com
-
-# ECR configuration (used for building and pushing Docker images)
-ecr_registry: 123456789.dkr.ecr.us-east-1.amazonaws.com
-ecr_repository: apps
-
-# Dockerfile path (optional, defaults to Dockerfile)
-# dockerfile: Dockerfile
-# dockerfile: apps/server/Dockerfile  # Example for monorepo
-
-# Auto-detected/configured settings (always at bottom)
-auto:
-  # Whether staging env should be treated as secret
-  # true = GitHub Secret, false = GitHub Variable
-  isStagingSecret: true
-  
-  # Auto-detected Prisma configuration (if present)
-  # prisma_schema: apps/server/prisma/schema.prisma
-  # prisma_version: 5.7.0
+# Domains
+staging_domain: EXAMPLE-staging.yourdomain.com
+prod_domain: EXAMPLE-app.yourdomain.com
 ```
 
-### Auto Section
+**Core blocks deployment if any `EXAMPLE-` values remain.**
 
-The `auto:` section (always at the bottom of `core.yml`) contains auto-detected or default configuration:
+### coreAuto.yml (Auto-Detected Settings)
 
-- **`isStagingSecret`**: Controls whether `.env.staging` is stored as GitHub Secret (true) or Variable (false)
-  - Default: `true` (keep staging secrets private)
-  - Set to `false` if staging environment variables can be public
-  
-- **Prisma settings**: Auto-detected from your project structure
-  - `prisma_schema`: Path to schema.prisma file
-  - `prisma_version`: Version from package.json
-
-**Override Pattern**: To customize auto settings, uncomment and modify:
+Generated by `npx core init`. Contains detected stack configuration:
 
 ```yaml
-auto:
-  isStagingSecret: false  # Make staging variables public
-  # prisma_schema: OVERRIDE custom/path/schema.prisma
+has_nextjs: true
+has_expo: true
+has_trpc: true
+has_prisma: true
+prisma_schema: apps/server/prisma/schema.prisma
+dockerfile: apps/server/Dockerfile
+package_manager: pnpm
 ```
 
-## Server Setup
+**Override Pattern:**
 
-### Initial Server Setup
+To override an auto-detected value:
 
-On each server (staging and production):
+```yaml
+dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
+```
+
+Core warns when auto-detected values change unexpectedly (drift detection).
+
+---
+
+## Environment Files
+
+| File | Required | Git Status | Purpose |
+|------|----------|------------|---------|
+| `.env.dev` | Yes | Committed | Development defaults |
+| `.env.staging` | Optional | Configurable | Staging values |
+| `.env.prod` | Yes | **Gitignored** | Production secrets |
+| `.env.test` | Optional | Committed | Test values |
+
+Core generates `.env.dev` as a template based on detected adapters.
+
+---
+
+## Commands
+
+### `npx core init`
+
+Validate configuration and auto-fix local dev environment.
+
+**Local (dev):**
+- Detects stack (Next.js, Expo, tRPC, Prisma)
+- Generates `coreAuto.yml`
+- Validates `core.yml`
+- Installs missing dependencies
+- Creates missing config files
+- **Can modify files** (developers can git revert)
+
+**Remote (staging/prod):**
+- SSH to servers (read-only)
+- Validates deployed configurations
+- Reports mismatches
+- **No modifications**
+
+### `npx core init fix`
+
+Explicitly fix ALL environments including remote servers.
 
 ```bash
-# Create infrastructure directory
-mkdir -p ~/infrastructure/{configs,scripts,nginx}
-
-# Install Node.js (if not already installed)
-# Install Docker and docker-compose
+npx core init fix           # Fix all environments
+npx core init fix --dry-run # Preview changes only
 ```
 
-**Note:** Secrets are stored securely in root-level files (e.g., `~/infrastructure/<repo-name>-<env>.env`), not in a `secrets/` folder. The `check-config` command handles this automatically.
+**What it does:**
+- Everything `init` does locally
+- SSH to staging/prod and:
+  - Create missing directories
+  - Fix file permissions
+  - Generate server configs
+  - Validate configurations
 
-### Config Discovery
+**What it does NOT do:**
+- Deploy containers
+- Restart services
+- Modify application code
 
-The `CheckConfig` workflow (or manual `core check-config`) will:
+### `npx core deploy`
 
-1. SSH to the server
-2. Scan `~/infrastructure/configs/*.yml` for all repo configs
-3. Merge configs and assign ports (auto-increment from 3001)
-4. Generate unified `docker-compose.yml` and `nginx/nginx.conf`
-5. Validate and reload nginx
-
-### Port Assignment
-
-- Ports auto-assign starting at 3001
-- If a repo specifies a port, it's used (if available)
-- Conflicts are detected and reassigned automatically
-- Port assignments are stored in generated docker-compose
-
-## Deployment Flow
-
-1. **Repo pushes code** → Triggers `DeployStaging` or `DeployProd` workflow
-2. **Workflow builds** Docker image using AWS CLI:
-   - Reads ECR registry from `core.yml`
-   - Uses `aws ecr get-login-password` for authentication
-   - Builds with `--platform linux/amd64` flag
-   - Pushes image with `:latest` tag
-3. **Workflow SSHs** to target server
-4. **Updates config** in `~/infrastructure/configs/<repo-name>.yml`
-5. **Runs deploy.yml workflow** which regenerates nginx/docker-compose from all configs
-6. **Runs** `docker compose pull <service>` and `docker compose up -d <service>`
-
-## Workflows
-
-### Init (Deployment Readiness Check)
-
-**File:** `.github/workflows/init.yml`
-
-**Trigger:** Manual (workflow_dispatch from GitHub Actions tab)
-
-Comprehensive deployment readiness checker that verifies your application is ready to deploy:
-
-**What it checks:**
-1. **Local Configuration**
-   - Validates `core.yml`, Dockerfile, workflows, git setup
-   
-2. **GitHub Secrets**
-   - Uses built-in `GITHUB_TOKEN` to verify all required secrets exist
-   - Lists missing secrets that need to be added
-   - Required secrets: SSH keys, hosts, AWS credentials, environment variables
-
-3. **Server State (Staging & Production)**
-   - Tests SSH connectivity to servers
-   - Discovers ALL currently deployed repos on each server
-   - Compares your local `core.yml` with deployed version (if exists)
-   - Shows what will change when you deploy
-   - Checks Docker container and nginx status
-
-**Output:** Comprehensive report showing:
-- Current deployment state on each server
-- All other repos deployed on same servers
-- What will change after deploy
-- Missing secrets or configuration issues
-
-**How to run:**
-1. Go to GitHub Actions tab
-2. Select "Init Check" workflow
-3. Click "Run workflow"
-4. Review the deployment readiness report
-
-**Example output:**
-```
-🚀 DEPLOYMENT READINESS REPORT - myapp
-
-📡 STAGING SERVER
-   📦 Currently Deployed: factiii, chop-shop, link3d
-   📋 THIS REPO: staging-myapp.domain.com:3004
-   🔄 Changes: domain updated
-
-🌐 PRODUCTION SERVER
-   📦 Currently Deployed: factiii, chop-shop, link3d
-   📋 THIS REPO: NOT DEPLOYED (will be new deployment)
-
-✅ READY TO DEPLOY (check full report for details)
-```
-
-### Deploy
-
-**Trigger:** Push to `main`/`develop`, manual (workflow_dispatch), or daily schedule (2 AM UTC)
-
-Deploys your application to staging or production servers. **Runs the same checks as Init workflow first**, then proceeds with deployment.
-
-**Deploy is idempotent** - can be run multiple times safely. Each run will update configs and restart services.
-
-**For staging:**
-1. Runs all init checks (validates config, secrets, server state)
-2. Builds and tests code
-3. Builds Docker image
-4. Pushes to ECR
-5. SSHs to staging server
-6. Copies `core.yml` to `~/infrastructure/configs/{repo-name}.yml`
-7. Copies environment variables to `~/infrastructure/{repo-name}-staging.env`
-8. Regenerates `docker-compose.yml` and `nginx.conf` from ALL configs on server
-9. Pulls latest image and restarts ALL services
-
-**For prod:**
-1. Runs all init checks (validates config, secrets, server state)
-2. SSHs to prod server (no building - containers already built in staging)
-3. Copies `core.yml` to `~/infrastructure/configs/{repo-name}.yml`
-4. Copies environment variables to `~/infrastructure/{repo-name}-prod.env`
-5. Regenerates `docker-compose.yml` and `nginx.conf` from ALL configs on server
-6. Pulls latest image and restarts ALL services
-
-**⚠️ Important:** Deploy regenerates infrastructure configs and **restarts ALL services** on the server, not just yours. This ensures nginx and docker-compose are always in sync with all deployed repos.
-
-### Undeploy
-
-**Trigger:** Manual (workflow_dispatch)
-
-Completely removes this repository from staging and production servers:
-- Deletes all configs, environment files, containers, and data
-- Regenerates infrastructure configs without the removed repo
-- **This action cannot be undone**
-
-## Adding a New Service
-
-1. In your repo, run `npx core init`
-2. Edit `core.yml` with your domains and ECR settings
-3. Create environment files:
-   - `.env.example` (template with all keys, committed)
-   - `.env.staging` (actual staging values)
-   - `.env.prod` (actual production values, gitignored)
-4. Run `npx core init` to:
-   - Validate all configurations
-   - Generate workflows (init.yml, deploy.yml, undeploy.yml)
-   - Sync .env files to GitHub Secrets/Variables
-5. Add remaining GitHub secrets in Settings → Secrets → Actions:
-   - `STAGING_SSH`, `PROD_SSH`, `STAGING_HOST`, `PROD_HOST`
-   - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
-   - (STAGING_ENVS, PROD_ENVS auto-synced from .env files)
-6. Commit and push workflows to GitHub
-7. Push code to trigger deployment, or manually trigger deploy workflow
-
-The service will automatically appear in the server's docker-compose and nginx configs.
-
-## Removing a Service
-
-Use the `remove` command:
+Run init check, then deploy if checks pass.
 
 ```bash
-npx core remove --environment staging
-npx core remove --environment all
+npx core deploy                    # Deploy to all
+npx core deploy --environment staging
+npx core deploy --environment prod
 ```
 
-Or manually:
-1. Remove the config file from `~/infrastructure/configs/<repo-name>.yml` on the server
-2. Remove the env file `~/infrastructure/<repo-name>-<env>.env` if it exists
-3. Run `core check-config` or trigger `deploy.yml` workflow to regenerate configs
-4. The service will be removed from docker-compose and nginx
-5. All remaining repos will be verified and reconfigured
+**Pre-deployment check:**
+- Runs `init` (not `init fix`)
+- Analyzes any failures
+
+**Non-blocking (proceeds with warning):**
+- Environment variable changes
+- Domain updates with overrides
+- Port reassignments with overrides
+
+**Blocking (stops deployment):**
+- `EXAMPLE-` values still present
+- Invalid YAML syntax
+- Missing critical files
+- SSH connection failures
+- Unexpected configuration drift
+
+---
+
+## GitHub Actions Workflows
+
+### Staging (main branch)
+
+**Trigger:** PR merged to main
+
+```
+init checks → build → test → deploy container
+```
+
+### Production (production branch)
+
+**Trigger:** Merge to production branch
+
+```
+clean repo → pnpm install → test → build → deliver container → deploy → run migrations
+```
+
+---
+
+## Deployment Targets
+
+| Environment | Platform | Server |
+|-------------|----------|--------|
+| Staging | Mac | Development/testing |
+| Production | Ubuntu | Production hosting |
+
+**Stack:**
+- nginx (reverse proxy)
+- Docker containers (application)
+
+**Multi-server support:**
+- `PROD_SSH` - Primary production
+- `PROD_SSH2` - Replica (optional)
+
+---
+
+## GitHub Secrets
+
+Configure in **Settings → Secrets → Actions**:
+
+**SSH Keys:**
+- `STAGING_SSH` - Private key for staging
+- `PROD_SSH` - Private key for production
+
+**AWS Credentials:**
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+
+**Environment Variables:**
+- `STAGING_ENVS` - Staging env vars (newline-separated `key=value`)
+- `PROD_ENVS` - Production env vars (newline-separated `key=value`)
+
+---
 
 ## Troubleshooting
 
-### Config not found on server
+### "EXAMPLE- values found"
 
-Ensure your deployment workflow is copying `core.yml` to `~/infrastructure/configs/<repo-name>.yml` on the server.
+Edit `core.yml` and replace all `EXAMPLE-` prefixed values with actual values.
 
-### Port conflicts
+### "SSH connection failed"
 
-The system auto-assigns ports. If you need a specific port, specify it in your `core.yml`. Conflicts are automatically resolved.
+1. Verify SSH key is in GitHub Secrets
+2. Test manually: `ssh -i ~/.ssh/key user@host`
+3. Check firewall allows port 22
 
-### Nginx not reloading
+### "Configuration drift detected"
 
-Check nginx container logs:
+Auto-detected value changed unexpectedly. Either:
+1. Add an override: `setting: old OVERRIDE new`
+2. Run `npx core init fix` to update deployed config
+
+### "Deployment blocked"
+
+Run `npx core init` to see what's blocking, then `npx core init fix` to resolve.
+
+---
+
+## Future: Adapters
+
+Adapters will be extracted from core as the system matures:
+
+| Phase | Adapter | Status |
+|-------|---------|--------|
+| 1 | Core only | **Current** |
+| 2 | Next.js | Planned |
+| 3 | Expo | Planned |
+| 4 | Prisma/tRPC | Planned |
+
+See [STANDARDS.md](STANDARDS.md) for full architecture details.
+
+---
+
+## Development (This Repository)
+
+**This is the Core package itself.** Do not run `npx core` commands here.
+
+Test changes in a separate application repository:
+
 ```bash
-docker logs infrastructure_nginx
-docker exec infrastructure_nginx nginx -t
+cd /path/to/test-app
+npm link /path/to/infrastructure
+npx core init
 ```
 
-### Service not starting
+See [STANDARDS.md](STANDARDS.md) for development guidelines.
 
-Check service logs:
-```bash
-docker compose logs <service-name>
-docker compose ps
-```
-
-## Programmatic Usage
-
-```javascript
-const infra = require('@factiii/core');
-
-// Merge configs from a directory
-const merged = infra.mergeConfigs('/path/to/configs');
-
-// Generate docker-compose.yml
-infra.generateCompose('/path/to/configs', '/path/to/docker-compose.yml');
-
-// Generate nginx.conf
-infra.generateNginx('/path/to/configs', '/path/to/nginx.conf');
-```
-
-## Legacy Centralized Approach
-
-> **Note:** The centralized `core.yml` approach is still supported for backward compatibility but is not recommended for new setups.
-
-If you're using the legacy centralized approach:
-
-1. Configure `core.yml` with your servers and repos
-2. Store it in the repository root (commit it to the repo)
-3. Use the `setup-infrastructure.yml` workflow for initial setup
-4. Use the `rebuild-service.yml` workflow for deployments
-
-For new repositories, use the decentralized approach described in this README.
-
-## Security Notes
-
-- Never commit SSH keys or AWS credentials
-- Use GitHub Secrets for all sensitive values
-- Rotate SSH keys and AWS credentials regularly
-- Keep Docker images updated
-- Monitor logs for suspicious activity
+---
 
 ## License
 

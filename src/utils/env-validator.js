@@ -308,8 +308,11 @@ function validateEnvFiles(rootDir, config = {}, githubSecrets = null) {
   // Compare staging vs prod values (should be different)
   if (results.staging && prodEnv) {
     const matching = findMatchingValues(results.staging, prodEnv);
-    if (matching.length > 0) {
-      results.warnings.push(`Staging/prod values identical (should differ): ${matching.join(', ')}`);
+    const allowedIdentical = config.auto?.allowIdenticalEnvVars || [];
+    const actualWarnings = matching.filter(key => !allowedIdentical.includes(key));
+    
+    if (actualWarnings.length > 0) {
+      results.warnings.push(`Staging/prod values identical (should differ): ${actualWarnings.join(', ')}`);
     }
   }
   

@@ -509,7 +509,7 @@ function displayAuditReport(auditResults) {
       if (envFiles.stagingGitignored) {
         console.log('      Gitignored: ✅ Yes');
       } else {
-        const isStagingSecret = coreYml.config?.auto?.isStagingSecret !== false;
+        const isStagingSecret = coreYml.config?.auto?.isStagingSecret !== false; // default true
         if (isStagingSecret) {
           console.log('      Gitignored: ⚠️  No (recommended for secrets)');
         } else {
@@ -758,7 +758,8 @@ async function init(options = {}) {
 
   // Determine if we should create/update files
   const shouldCreateCoreYml = !auditResults.coreYml.exists || options.force;
-  const shouldGenerateWorkflows = !auditResults.workflows.allExist || options.force;
+  // Always check workflows for updates (it will detect if no changes needed)
+  const shouldGenerateWorkflows = true;
 
   // Create core.yml if needed
   if (shouldCreateCoreYml) {

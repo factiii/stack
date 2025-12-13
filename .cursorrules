@@ -1,0 +1,184 @@
+# Core Infrastructure Package - Development Rules
+
+## ⚠️ IMPORTANT: This is the CORE package itself
+This repository IS the `@factiii/core` infrastructure management tool.
+**DO NOT run `npx core` commands inside this repository.**
+
+Commands like `npx core init`, `npx core deploy`, etc. should ONLY be run in APPLICATION repositories that consume this package, not here.
+
+## Architecture Overview
+
+**Philosophy:** Auto-scanning T3 stack with adapters.
+
+Core scans application repositories to:
+- Detect stack components (Next.js, Expo, tRPC, Prisma)
+- Auto-configure deployment settings
+- Generate `coreAuto.yml` with detected values
+- Validate `core.yml` manual settings
+- Deploy to staging (Mac) and production (Ubuntu) servers
+
+**Reference:** See [STANDARDS.md](STANDARDS.md) for complete architecture documentation.
+
+## Configuration Pattern
+
+**Two configuration files:**
+- `core.yml` - Manual settings (user edits, `EXAMPLE-` prefix for required values)
+- `coreAuto.yml` - Auto-detected settings (Core generates, override with `OVERRIDE` keyword)
+
+**Example override:**
+```yaml
+# coreAuto.yml
+dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
+```
+
+## Three Commands Only
+
+| Command | Purpose |
+|---------|---------|
+| `npx core init` | Validate + auto-fix local dev, check-only for remote |
+| `npx core init fix` | Explicitly fix ALL environments including remote |
+| `npx core deploy` | Run init check, then deploy if checks pass |
+
+**No separate `validate` command** - `init` handles all validation.
+
+## Project Structure
+```
+/Users/jon/infrastructure/
+├── bin/core                    # CLI entry point (npx core)
+├── src/
+│   ├── cli/                    # Command implementations
+│   │   ├── init.js            # Validate + auto-fix local
+│   │   ├── init-fix.js        # Fix all environments (future)
+│   │   ├── deploy.js          # Deploy to servers
+│   │   ├── undeploy.js        # Remove from servers
+│   │   └── generate-workflows.js  # Generate .github/workflows
+│   ├── generators/            # Config generators
+│   │   ├── generate-compose.js    # Docker compose generation
+│   │   ├── generate-nginx.js      # Nginx config generation
+│   │   ├── generate-core-auto.js  # coreAuto.yml generation (future)
+│   │   └── merge-configs.js       # Multi-repo config merging
+│   ├── utils/                 # Utilities
+│   │   ├── github-secrets.js      # GitHub API integration
+│   │   ├── env-validator.js       # Environment file validation
+│   │   ├── server-check.js        # SSH server checks
+│   │   └── deployment-report.js   # Deployment reporting
+│   └── workflows/             # Workflow templates
+│       ├── init.yml           # Readiness checker
+│       ├── deploy.yml         # Infrastructure deployment
+│       ├── staging.yml        # PR to main → staging deploy
+│       ├── production.yml     # Merge to prod → production deploy
+│       └── undeploy.yml       # Cleanup
+├── scripts/                   # Bash scripts for servers
+├── templates/                 # Config templates
+├── STANDARDS.md               # Architecture standards
+├── README.md                  # User documentation
+└── test/                     # Test suites
+```
+
+## Development Workflow
+
+### Testing Changes
+1. Make changes to source files in `src/`
+2. Test in a SEPARATE application repository:
+   ```bash
+   cd /path/to/test-app
+   npm link /Users/jon/infrastructure  # Link local core package
+   npx core init                       # Test the command
+   ```
+3. Do NOT run `npx core init` inside `/Users/jon/infrastructure`
+
+### Key Files to Edit
+- **CLI Commands**: `src/cli/*.js` - Command implementations
+- **Generators**: `src/generators/*.js` - Config generation
+- **Workflow Templates**: `src/workflows/*.yml` - GitHub Actions
+- **Package Entry**: `bin/core` - Main CLI entry point
+
+## Init Command Behavior
+
+**Local dev (where command runs):**
+- Auto-fix allowed (delete/modify files, install deps)
+- Developers understand git and can revert
+
+**Remote environments (staging/prod):**
+- Check-only mode
+- NO modifications via SSH
+- Only `init fix` can modify remote
+
+## Deploy Command Behavior
+
+**Runs `init` first (not `init fix`):**
+- Non-blocking failures: proceed with warning
+  - Env var changes, domain updates, port changes with overrides
+- Blocking failures: stop deployment
+  - `EXAMPLE-` values present, invalid YAML, missing files, SSH failures
+
+## GitHub Actions Workflows
+
+**Staging (main branch):**
+- PR to main → auto-deploy to staging
+- Flow: init checks → build → test → deploy container
+
+**Production (production branch):**
+- Merge to production triggers full deploy
+- Flow: clean → pnpm install → test → build → deliver → deploy → migrations
+
+## Common Fixes & Patterns
+
+### YAML Syntax in Workflows
+❌ BAD (causes YAML errors):
+```javascript
+console.log(\`Value: \${variable}\`)
+```
+
+✅ GOOD:
+```javascript
+console.log('Value: ' + variable)
+```
+
+### File Generation Pattern
+Always check if content changed before writing:
+```javascript
+const exists = fs.existsSync(outputPath);
+if (exists) {
+  const existingContent = fs.readFileSync(outputPath, 'utf8');
+  if (existingContent === newContent) {
+    console.log('⏭️  Unchanged');
+    return; // Skip write
+  }
+}
+fs.writeFileSync(outputPath, newContent);
+```
+
+### EXAMPLE- Pattern for Required Settings
+```yaml
+# core.yml - user must replace EXAMPLE- values
+name: EXAMPLE-factiii
+ssl_email: EXAMPLE-admin@yourdomain.com
+```
+
+Core blocks deployment if any `EXAMPLE-` values remain.
+
+### OVERRIDE Pattern for Auto-Detected Settings
+```yaml
+# coreAuto.yml - user can override detected values
+dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
+```
+
+Core warns if auto-detected != deployed (unexpected drift).
+
+## Future: Adapter Extraction
+
+Adapters will be extracted from core one by one:
+1. Phase 1: Core only (current)
+2. Phase 2: Next.js adapter
+3. Phase 3: Expo adapter
+4. Phase 4: Prisma/tRPC adapters
+
+## Related Documentation
+- [README.md](README.md) - User-facing documentation
+- [STANDARDS.md](STANDARDS.md) - Complete architecture standards
+
+---
+
+Remember: This is the TOOL, not an app that uses the tool.
+Test all commands in separate application repositories!

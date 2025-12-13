@@ -93,13 +93,13 @@ jobs:
                 const present = required.filter(s => existing.includes(s));
                 
                 console.log('🔑 GitHub Secrets Check:');
-                present.forEach(s => console.log(\`   ✅ \${s} exists\`));
-                missing.forEach(s => console.log(\`   ⚠️  \${s} not found\`));
+                present.forEach(s => console.log('   ✅ ' + s + ' exists'));
+                missing.forEach(s => console.log('   ⚠️  ' + s + ' not found'));
                 
                 fs.writeFileSync(process.env.GITHUB_OUTPUT,
-                  \`all-present=\${missing.length === 0}\\n\` +
-                  \`missing=\${missing.join(',')}\\n\` +
-                  \`present=\${present.join(',')}\\n\`
+                  'all-present=' + (missing.length === 0) + '\\n' +
+                  'missing=' + missing.join(',') + '\\n' +
+                  'present=' + present.join(',') + '\\n'
                 );
                 
                 if (missing.length > 0) {
@@ -192,7 +192,7 @@ jobs:
               console.log('❌ .env.example not found (required as template)');
               hasErrors = true;
             } else {
-              console.log(\`✅ .env.example exists (\${Object.keys(devEnv).length} keys)\`);
+              console.log('✅ .env.example exists (' + Object.keys(devEnv).length + ' keys)');
             }
             
             // Validate .env.staging
@@ -200,14 +200,14 @@ jobs:
               console.log('❌ .env.staging not found (required)');
               hasErrors = true;
             } else {
-              console.log(\`✅ .env.staging exists (\${Object.keys(stagingEnv).length} keys)\`);
+              console.log('✅ .env.staging exists (' + Object.keys(stagingEnv).length + ' keys)');
               
               // Check keys match dev
               const devKeys = Object.keys(devEnv || {});
               const stagingKeys = Object.keys(stagingEnv);
               const missing = devKeys.filter(k => !stagingKeys.includes(k));
               if (missing.length > 0) {
-                console.log(\`⚠️  .env.staging missing keys: \${missing.join(', ')}\`);
+                console.log('⚠️  .env.staging missing keys: ' + missing.join(', '));
                 hasErrors = true;
               }
             }
@@ -216,14 +216,14 @@ jobs:
             if (!prodEnv) {
               console.log('⚠️  .env.prod not found locally (OK if in GitHub Secrets)');
             } else {
-              console.log(\`✅ .env.prod exists locally (\${Object.keys(prodEnv).length} keys)\`);
+              console.log('✅ .env.prod exists locally (' + Object.keys(prodEnv).length + ' keys)');
               
               // Check keys match dev
               const devKeys = Object.keys(devEnv || {});
               const prodKeys = Object.keys(prodEnv);
               const missing = devKeys.filter(k => !prodKeys.includes(k));
               if (missing.length > 0) {
-                console.log(\`⚠️  .env.prod missing keys: \${missing.join(', ')}\`);
+                console.log('⚠️  .env.prod missing keys: ' + missing.join(', '));
                 hasErrors = true;
               }
             }
@@ -236,9 +236,9 @@ jobs:
             
             // Write outputs
             fs.writeFileSync(process.env.GITHUB_OUTPUT,
-              \`staging-exists=\${!!stagingEnv}\\n\` +
-              \`prod-exists=\${!!prodEnv}\\n\` +
-              \`is-staging-secret=\${isStagingSecret}\\n\`
+              'staging-exists=' + (!!stagingEnv) + '\\n' +
+              'prod-exists=' + (!!prodEnv) + '\\n' +
+              'is-staging-secret=' + isStagingSecret + '\\n'
             );
           "
       
@@ -272,12 +272,12 @@ jobs:
                 const hasProd = secretNames.includes('PROD_ENVS');
                 
                 console.log('📊 GitHub Secrets/Variables Status:');
-                console.log(\`   STAGING_ENVS: \${hasStaging ? '✅ Exists' : '⚠️  Not found'}\`);
-                console.log(\`   PROD_ENVS: \${hasProd ? '✅ Exists' : '⚠️  Not found'}\`);
+                console.log('   STAGING_ENVS: ' + (hasStaging ? '✅ Exists' : '⚠️  Not found'));
+                console.log('   PROD_ENVS: ' + (hasProd ? '✅ Exists' : '⚠️  Not found'));
                 
                 fs.writeFileSync(process.env.GITHUB_OUTPUT,
-                  \`staging-exists-gh=\${hasStaging}\\n\` +
-                  \`prod-exists-gh=\${hasProd}\\n\`
+                  'staging-exists-gh=' + hasStaging + '\\n' +
+                  'prod-exists-gh=' + hasProd + '\\n'
                 );
               } catch (error) {
                 console.log('❌ Failed to check existing secrets:', error.message);
@@ -387,7 +387,7 @@ jobs:
           " || echo "   (cannot access configs directory)"
           
           # Check current repo status
-          REPO_NAME=\$(node -e "console.log(require('js-yaml').load(require('fs').readFileSync('core.yml', 'utf8')).name)")
+          REPO_NAME=$(node -e "console.log(require('js-yaml').load(require('fs').readFileSync('core.yml', 'utf8')).name)")
           echo ""
           echo "📋 Checking current repo ($REPO_NAME)..."
           
@@ -414,7 +414,7 @@ jobs:
         
       - name: Generate summary
         run: |
-          REPO_NAME=\$(grep '^name:' core.yml | awk '{print $2}' | tr -d '"' || echo "unknown")
+          REPO_NAME=$(grep '^name:' core.yml | awk '{print $2}' | tr -d '"' || echo "unknown")
           
           echo "# 🚀 Deployment Readiness Report - $REPO_NAME" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

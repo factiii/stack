@@ -20,6 +20,10 @@ function generateWorkflows(options = {}) {
     'production.yml'
   ];
 
+  let updated = 0;
+  let unchanged = 0;
+  let created = 0;
+
   for (const workflow of workflows) {
     const templatePath = path.join(workflowsDir, workflow);
     const outputPath = path.join(outputDir, workflow);
@@ -45,11 +49,32 @@ function generateWorkflows(options = {}) {
       // Ignore errors
     }
 
-    fs.writeFileSync(outputPath, content);
-    console.log(`✅ Generated: ${outputPath}`);
+    // Check if file exists and content differs
+    const exists = fs.existsSync(outputPath);
+    let shouldWrite = true;
+
+    if (exists) {
+      const existingContent = fs.readFileSync(outputPath, 'utf8');
+      if (existingContent === content) {
+        console.log(`⏭️  Unchanged: ${workflow}`);
+        unchanged++;
+        shouldWrite = false;
+      } else {
+        console.log(`🔄 Updated: ${workflow}`);
+        updated++;
+      }
+    } else {
+      console.log(`✅ Created: ${workflow}`);
+      created++;
+    }
+
+    if (shouldWrite) {
+      fs.writeFileSync(outputPath, content);
+    }
   }
 
-  console.log(`\n✅ Workflows generated successfully!`);
+  console.log(`\n✅ Workflow generation complete!`);
+  console.log(`   📊 Summary: ${created} created, ${updated} updated, ${unchanged} unchanged`);
   console.log(`\n📝 Generated workflows:`);
   console.log(`   - init.yml: Deployment readiness checker (verifies secrets and server state)`);
   console.log(`   - deploy.yml: Infrastructure configuration management (triggered by CLI)`);

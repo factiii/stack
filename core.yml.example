@@ -1,145 +1,144 @@
 # ============================================================================
-# Infrastructure Configuration Example
+# Core Configuration (core.yml)
 # ============================================================================
 #
-# This file defines your entire infrastructure setup:
-#   - Which servers you have
-#   - Which repos/services run on each server
-#   - Domain routing and SSL configuration
+# This file contains settings that CANNOT be automatically detected.
+# All settings with EXAMPLE- prefix MUST be replaced with actual values.
 #
-# SETUP:
-# 1. Copy this file to core.yml in the repository root:
-#    cp core.yml.example core.yml
-#    # Then edit core.yml with your actual configuration
-#
-# 2. Create the required secrets (see "Required Secrets" section below)
-#
-# 3. Commit core.yml to the repository
-#
-# 4. Run the "Setup Infrastructure" workflow
+# Auto-detected settings are stored separately in coreAuto.yml
+# See STANDARDS.md for full documentation.
 #
 # ============================================================================
 
-# ------------------------------------------------------------------------------
-# SERVERS
-# ------------------------------------------------------------------------------
-# Define each server that will run your services.
-# Each server needs:
-#   - ssh_key_secret: Name of the GitHub secret containing the SSH private key
-#   - host: Hostname or IP address
-#   - user: SSH username
-#   - repos: List of repos/services to deploy on this server
+# ----------------------------------------------------------------------------
+# REQUIRED SETTINGS
+# ----------------------------------------------------------------------------
+# These must be configured before deployment. Core will block deployment
+# if any EXAMPLE- values remain.
+
+# Repository/Project Name
+# Must match your GitHub repository name exactly
+name: EXAMPLE-factiii
+
+# GitHub Repository
+# Format: owner/repo-name
+github_repo: EXAMPLE-yourorg/factiii
+
+# SSL Email for Let's Encrypt
+# Used for certificate notifications and account recovery
+# This email appears in certificate transparency logs (public)
+ssl_email: EXAMPLE-admin@yourdomain.com
+
+# ----------------------------------------------------------------------------
+# AWS ECR CONFIGURATION
+# ----------------------------------------------------------------------------
+# Container registry for Docker images
+
+# ECR Registry URL
+# Format: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com
+ecr_registry: EXAMPLE-123456789.dkr.ecr.us-east-1.amazonaws.com
+
+# ECR Repository Name
+# The repository within your registry where images are pushed
+ecr_repository: EXAMPLE-apps
+
+# ----------------------------------------------------------------------------
+# DOMAIN CONFIGURATION
+# ----------------------------------------------------------------------------
+# Domains for each environment
+
+# Staging Domain
+# Where your staging environment is accessible
+staging_domain: EXAMPLE-staging-factiii.yourdomain.com
+
+# Production Domain
+# Where your production environment is accessible
+prod_domain: EXAMPLE-factiii.yourdomain.com
+
+# ----------------------------------------------------------------------------
+# SERVER CONFIGURATION
+# ----------------------------------------------------------------------------
+# SSH connection details for deployment targets
+# Actual SSH keys are stored in GitHub Secrets, not here
 
 servers:
-  # Staging server (e.g., local Mac Mini)
-  mac_mini:
-    ssh_key_secret: MAC_MINI_SSH      # GitHub secret name for SSH key
-    host: 192.168.1.100               # IP or hostname
-    user: admin                        # SSH username
-    repos:
-      - name: factiii
-        environment: staging
-        domain: staging-factiii.yourdomain.com
-      
-      - name: chop-shop
-        environment: staging
-        domain: staging-api.yourdomain.com
-      
-      - name: link3d
-        environment: staging
-        domain: staging-link3d.yourdomain.com
-      
-      - name: tap-track
-        environment: staging
-        domain: staging-tap-track.yourdomain.com
+  staging:
+    # GitHub secret name containing SSH private key
+    ssh_key_secret: STAGING_SSH
+    # Server hostname or IP address
+    host: EXAMPLE-192.168.1.100
+    # SSH username
+    user: EXAMPLE-admin
 
-  # Production server (e.g., AWS EC2)
-  ec2:
-    ssh_key_secret: EC2_SSH
-    host: ec2-xx-xx-xx-xx.compute-1.amazonaws.com
-    user: ubuntu
-    repos:
-      - name: factiii
-        environment: prod
-        domain: factiii.yourdomain.com
-      
-      - name: chop-shop
-        environment: prod
-        domain: api.yourdomain.com
-      
-      - name: link3d
-        environment: prod
-        domain: link3d.yourdomain.com
-      
-      - name: tap-track
-        environment: prod
-        domain: tap-track.yourdomain.com
+  production:
+    ssh_key_secret: PROD_SSH
+    host: EXAMPLE-ec2-xx-xx-xx-xx.compute-1.amazonaws.com
+    user: EXAMPLE-ubuntu
 
-# ------------------------------------------------------------------------------
-# GLOBAL CONFIGURATION
-# ------------------------------------------------------------------------------
-# SSL Email: Used by Let's Encrypt for:
-#   - Certificate expiration notifications
-#   - Account recovery
-#   - Important security notices
-# This email is public in certificate transparency logs
-ssl_email: admin@yourdomain.com
-
-# ------------------------------------------------------------------------------
-# REQUIRED SECRETS (create in GitHub Settings → Secrets → Actions)
-# ------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# GITHUB SECRETS REFERENCE
+# ----------------------------------------------------------------------------
+# The following secrets must be configured in GitHub Settings → Secrets:
 #
-# 1. AWS_SECRETS (JSON format):
-#    {
-#      "AWS_ACCESS_KEY_ID": "AKIA...",
-#      "AWS_SECRET_ACCESS_KEY": "...",
-#      "AWS_REGION": "us-east-1",
-#      "ECR_REGISTRY": "123456789.dkr.ecr.us-east-1.amazonaws.com",
-#      "ECR_REPOSITORY": "apps"
-#    }
+# SSH Keys:
+#   - STAGING_SSH: Private SSH key for staging server
+#   - PROD_SSH: Private SSH key for production server
 #
-# 2. SSH Keys (one per server):
-#    - MAC_MINI_SSH: Private SSH key for mac_mini server
-#    - EC2_SSH: Private SSH key for ec2 server
+# AWS Credentials:
+#   - AWS_ACCESS_KEY_ID: AWS access key
+#   - AWS_SECRET_ACCESS_KEY: AWS secret key
+#   - AWS_REGION: AWS region (e.g., us-east-1)
 #
-# 3. Environment Variables (one per repo/environment):
-#    Format: <REPO_NAME>_<ENV>_ENVS (uppercase, hyphens → underscores)
-#    Examples:
-#      - FACTIII_STAGING_ENVS: "DATABASE_URL=...\nAPI_KEY=..."
-#      - FACTIII_PROD_ENVS: "DATABASE_URL=...\nAPI_KEY=..."
-#      - CHOP_SHOP_STAGING_ENVS: "..."
-#      - CHOP_SHOP_PROD_ENVS: "..."
+# Environment Variables:
+#   - STAGING_ENVS: Staging environment variables (newline-separated key=value)
+#   - PROD_ENVS: Production environment variables (newline-separated key=value)
 #
-# ------------------------------------------------------------------------------
-# DOMAIN CONFIGURATION
-# ------------------------------------------------------------------------------
+# ============================================================================
+# AUTO-DETECTED SETTINGS (coreAuto.yml)
+# ============================================================================
+# The following settings are auto-detected by running `npx core init`.
+# They are stored in a separate file: coreAuto.yml
 #
-# Each repo must have an explicit domain set. This makes it clear where
-# each service is deployed and allows full control over domain names.
+# To override an auto-detected value, use:
+#   setting: detected_value OVERRIDE custom_value
 #
-# Examples:
-#   domain: staging-factiii.yourdomain.com
-#   domain: api.yourdomain.com
-#   domain: custom-subdomain.example.com
+# Example coreAuto.yml:
+# ----------------------------------------------------------------------------
+# # Stack detection (auto-detected from package.json and project structure)
+# has_nextjs: true
+# has_expo: true
+# has_trpc: true
+# has_prisma: true
 #
-# ------------------------------------------------------------------------------
-# ADDING A NEW SERVICE
-# ------------------------------------------------------------------------------
+# # Prisma configuration
+# prisma_schema: apps/server/prisma/schema.prisma
+# prisma_version: 5.7.0
 #
-# 1. Add the repo to the appropriate server(s) above
-# 2. Create the environment secret: <REPO>_<ENV>_ENVS
-# 3. Run "Setup Infrastructure" workflow
-# 4. The individual repo needs:
-#    - AWS_SECRETS secret (for ECR push)
-#    - INFRA_DISPATCH_TOKEN secret (to trigger deployments)
-#    - A deploy workflow (see examples/repo-deploy.yml)
+# # Dockerfile location
+# dockerfile: apps/server/Dockerfile
 #
-# ------------------------------------------------------------------------------
-# REMOVING A SERVICE
-# ------------------------------------------------------------------------------
+# # Port assignments (auto-assigned starting at 3001)
+# staging_port: 3001
+# prod_port: 3002
 #
-# 1. Remove the repo entry from the server(s) above
-# 2. Run "Setup Infrastructure" workflow
-# 3. The service will be removed from docker-compose and nginx
+# # Health check endpoint
+# health_check: /api/health
 #
-
+# # Package manager
+# package_manager: pnpm
+#
+# # Build and test commands
+# build_command: pnpm build
+# test_command: pnpm test
+#
+# # Environment secret handling
+# is_staging_secret: true
+# ----------------------------------------------------------------------------
+#
+# Override example:
+#   dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
+#
+# Core will warn if:
+#   - Auto-detected != deployed (unexpected drift)
+#   - Auto-detected != override (acknowledged change)
+#

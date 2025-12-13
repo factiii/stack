@@ -1,65 +1,144 @@
-# Infrastructure Configuration
-# This file defines how your service is deployed to staging and production servers
+# ============================================================================
+# Core Configuration (core.yml)
+# ============================================================================
+#
+# This file contains settings that CANNOT be automatically detected.
+# All settings with EXAMPLE- prefix MUST be replaced with actual values.
+#
+# Auto-detected settings are stored separately in coreAuto.yml
+# See STANDARDS.md for full documentation.
+#
+# ============================================================================
 
-# Repository name (must match GitHub repo name)
-name: your-repo-name
+# ----------------------------------------------------------------------------
+# REQUIRED SETTINGS
+# ----------------------------------------------------------------------------
+# These must be configured before deployment. Core will block deployment
+# if any EXAMPLE- values remain.
 
-# Environment configurations
-environments:
+# Repository/Project Name
+# Must match your GitHub repository name exactly
+name: EXAMPLE-factiii
+
+# GitHub Repository
+# Format: owner/repo-name
+github_repo: EXAMPLE-yourorg/factiii
+
+# SSL Email for Let's Encrypt
+# Used for certificate notifications and account recovery
+# This email appears in certificate transparency logs (public)
+ssl_email: EXAMPLE-admin@yourdomain.com
+
+# ----------------------------------------------------------------------------
+# AWS ECR CONFIGURATION
+# ----------------------------------------------------------------------------
+# Container registry for Docker images
+
+# ECR Registry URL
+# Format: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com
+ecr_registry: EXAMPLE-123456789.dkr.ecr.us-east-1.amazonaws.com
+
+# ECR Repository Name
+# The repository within your registry where images are pushed
+ecr_repository: EXAMPLE-apps
+
+# ----------------------------------------------------------------------------
+# DOMAIN CONFIGURATION
+# ----------------------------------------------------------------------------
+# Domains for each environment
+
+# Staging Domain
+# Where your staging environment is accessible
+staging_domain: EXAMPLE-staging-factiii.yourdomain.com
+
+# Production Domain
+# Where your production environment is accessible
+prod_domain: EXAMPLE-factiii.yourdomain.com
+
+# ----------------------------------------------------------------------------
+# SERVER CONFIGURATION
+# ----------------------------------------------------------------------------
+# SSH connection details for deployment targets
+# Actual SSH keys are stored in GitHub Secrets, not here
+
+servers:
   staging:
-    # Domain for staging environment
-    domain: staging-your-repo.yourdomain.com
-    
-    # Port (optional - will be auto-assigned if not specified)
-    # port: 3001
-    
-    # Health check endpoint (defaults to /health)
-    health_check: /health
-    
-    # Dependencies (optional)
-    # depends_on: [postgres-staging]
-    
-    # Environment file path (optional)
-    # env_file: .env.staging
+    # GitHub secret name containing SSH private key
+    ssh_key_secret: STAGING_SSH
+    # Server hostname or IP address
+    host: EXAMPLE-192.168.1.100
+    # SSH username
+    user: EXAMPLE-admin
 
-  prod:
-    # Domain for production environment
-    domain: your-repo.yourdomain.com
-    
-    # Port (optional - will be auto-assigned if not specified)
-    # port: 3002
-    
-    # Health check endpoint
-    health_check: /health
-    
-    # Dependencies (optional)
-    # depends_on: []
-    
-    # Environment file path (optional)
-    # env_file: .env.prod
+  production:
+    ssh_key_secret: PROD_SSH
+    host: EXAMPLE-ec2-xx-xx-xx-xx.compute-1.amazonaws.com
+    user: EXAMPLE-ubuntu
 
-# Global settings
-ssl_email: admin@yourdomain.com
-
-# ECR configuration (used for building and pushing Docker images)
-ecr_registry: 123456789.dkr.ecr.us-east-1.amazonaws.com
-ecr_repository: apps
-
-# Dockerfile path (optional, defaults to Dockerfile)
-# dockerfile: Dockerfile
-# dockerfile: apps/server/Dockerfile  # Example for monorepo
-
-# Prisma configuration (auto-detected from your project)
-# prisma_schema: prisma/schema.prisma  # Path relative to repository root
-# prisma_schema: apps/server/prisma/schema.prisma  # Example for monorepo
-# prisma_version: 7.1.0  # Detected from package.json, ensures version match
-
-# Auto-detected/configured settings
-auto:
-  # Whether staging env should be treated as secret
-  # true = GitHub Secret, false = GitHub Variable
-  isStagingSecret: true
-  
-  # Auto-detected Prisma configuration (if detected, values shown below)
-  # prisma_schema: apps/server/prisma/schema.prisma
-  # prisma_version: 5.7.0
+# ----------------------------------------------------------------------------
+# GITHUB SECRETS REFERENCE
+# ----------------------------------------------------------------------------
+# The following secrets must be configured in GitHub Settings → Secrets:
+#
+# SSH Keys:
+#   - STAGING_SSH: Private SSH key for staging server
+#   - PROD_SSH: Private SSH key for production server
+#
+# AWS Credentials:
+#   - AWS_ACCESS_KEY_ID: AWS access key
+#   - AWS_SECRET_ACCESS_KEY: AWS secret key
+#   - AWS_REGION: AWS region (e.g., us-east-1)
+#
+# Environment Variables:
+#   - STAGING_ENVS: Staging environment variables (newline-separated key=value)
+#   - PROD_ENVS: Production environment variables (newline-separated key=value)
+#
+# ============================================================================
+# AUTO-DETECTED SETTINGS (coreAuto.yml)
+# ============================================================================
+# The following settings are auto-detected by running `npx core init`.
+# They are stored in a separate file: coreAuto.yml
+#
+# To override an auto-detected value, use:
+#   setting: detected_value OVERRIDE custom_value
+#
+# Example coreAuto.yml:
+# ----------------------------------------------------------------------------
+# # Stack detection (auto-detected from package.json and project structure)
+# has_nextjs: true
+# has_expo: true
+# has_trpc: true
+# has_prisma: true
+#
+# # Prisma configuration
+# prisma_schema: apps/server/prisma/schema.prisma
+# prisma_version: 5.7.0
+#
+# # Dockerfile location
+# dockerfile: apps/server/Dockerfile
+#
+# # Port assignments (auto-assigned starting at 3001)
+# staging_port: 3001
+# prod_port: 3002
+#
+# # Health check endpoint
+# health_check: /api/health
+#
+# # Package manager
+# package_manager: pnpm
+#
+# # Build and test commands
+# build_command: pnpm build
+# test_command: pnpm test
+#
+# # Environment secret handling
+# is_staging_secret: true
+# ----------------------------------------------------------------------------
+#
+# Override example:
+#   dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
+#
+# Core will warn if:
+#   - Auto-detected != deployed (unexpected drift)
+#   - Auto-detected != override (acknowledged change)
+#
