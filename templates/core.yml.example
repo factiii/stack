@@ -1,224 +1,64 @@
-# ============================================================================
-# Core Configuration (core.yml)
-# ============================================================================
-#
-# This file contains settings that CANNOT be automatically detected.
-# All settings with EXAMPLE- prefix MUST be replaced with actual values.
-#
-# Auto-detected settings are stored separately in coreAuto.yml
-# See STANDARDS.md for full documentation.
-#
-# ============================================================================
+# Core Configuration
+# Replace all EXAMPLE- values with your actual settings.
+# See STANDARDS.md for detailed documentation.
 
-# ----------------------------------------------------------------------------
-# REQUIRED SETTINGS
-# ----------------------------------------------------------------------------
-# These must be configured before deployment. Core will block deployment
-# if any EXAMPLE- values remain.
-
-# Repository/Project Name
-# Must match your GitHub repository name exactly
-name: EXAMPLE-factiii
-
-# GitHub Repository
-# Format: owner/repo-name
-github_repo: EXAMPLE-yourorg/factiii
-
-# SSL Email for Let's Encrypt
-# Used for certificate notifications and account recovery
+# Basic Info
+name: EXAMPLE-yourapp
+github_repo: EXAMPLE-yourorg/yourapp
 ssl_email: EXAMPLE-admin@yourdomain.com
 
-# ----------------------------------------------------------------------------
-# AWS CONFIGURATION
-# ----------------------------------------------------------------------------
-# These are NOT secrets - they identify which AWS account/region to use.
-# Only AWS_SECRET_ACCESS_KEY is stored in GitHub Secrets.
-
+# AWS Configuration (non-sensitive)
 aws:
   access_key_id: EXAMPLE-AKIAXXXXXXXXXXXXXXXX
   region: us-east-1
 
-# ----------------------------------------------------------------------------
-# PLUGINS CONFIGURATION
-# ----------------------------------------------------------------------------
-# Global plugin defaults. These can be overridden per environment.
-#
-# Available plugins:
-#   secrets: github (default), aws-sm (coming soon), vault (coming soon)
-#   registry: ecr (default), dockerhub (coming soon), gcr (coming soon)
-
+# Plugins
 plugins:
-  secrets: github       # Where to store secrets (GitHub Actions Secrets)
-  registry: ecr         # Where to push Docker images
+  secrets: github
+  registry: ecr
 
-# ----------------------------------------------------------------------------
-# SERVERS CONFIGURATION
-# ----------------------------------------------------------------------------
-# Define your deployment servers with their plugin types.
-# Each server can be referenced by name in the environments section.
-#
-# ⚠️  IMPORTANT: Only SSH private keys belong in GitHub Secrets!
-# 
-# What goes WHERE:
-# - core.yml: host, aws.access_key_id, aws.region (not sensitive)
-# - coreAuto.yml: ssh_user (defaults to ubuntu)
-# - GitHub Secrets: {ENV}_SSH, AWS_SECRET_ACCESS_KEY (sensitive)
-#
-# Run `npx core init fix` to set up GitHub Secrets interactively.
-
+# Servers
 servers:
   mac-mini:
-    plugin: mac-mini                # Server provider plugin
-    
-  aws-ec2-prod:
-    plugin: aws-ec2                 # AWS EC2 provider
-    region: us-east-1               # AWS region (for auto-provisioning)
-    # instance_type: t3.small       # Optional: instance type for auto-provisioning
-    # auto_provision: false         # Optional: set to true to auto-create EC2 instances
+    plugin: mac-mini
+  # aws-ec2-prod:
+  #   plugin: aws-ec2
+  #   region: us-east-1
 
-# ----------------------------------------------------------------------------
-# ENVIRONMENTS CONFIGURATION
-# ----------------------------------------------------------------------------
-# Define your deployment environments. Each environment maps to a server
-# and can have environment-specific settings.
-
+# Environments
 environments:
   staging:
-    server: mac-mini                # Reference to server defined above
-    domain: EXAMPLE-staging.factiii.com
-    host: EXAMPLE-192.168.1.100     # Server IP or hostname (not a secret)
-    env_file: .env.staging          # Local env file to read from
-    # port is auto-configured by deploy
+    server: mac-mini
+    domain: EXAMPLE-staging.yourapp.com
+    host: EXAMPLE-192.168.1.100
+    env_file: .env.staging
     
-  production:
-    server: aws-ec2-prod            # Reference to server defined above
-    domain: EXAMPLE-factiii.com
-    host: EXAMPLE-prod.example.com  # Server IP or hostname (not a secret)
-    env_file: .env.prod
-    # port is auto-configured by deploy
+  # production:
+  #   server: aws-ec2-prod
+  #   domain: EXAMPLE-yourapp.com
+  #   host: EXAMPLE-prod.yourapp.com
+  #   env_file: .env.prod
 
-  # Example: Additional environments
-  # staging2:
-  #   server: mac-mini              # Same server, different port
-  #   domain: staging2.factiii.com
-  #   port: 3010
-  #
-  # production-west:
-  #   server: aws-ec2-west          # Different server (define in servers section)
-  #   domain: west.factiii.com
-  #   port: 3001
-
-# ----------------------------------------------------------------------------
-# AWS ECR CONFIGURATION
-# ----------------------------------------------------------------------------
-# Container registry for Docker images
-
-# ECR Registry URL
-# Format: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com
+# ECR Configuration
 ecr_registry: EXAMPLE-123456789.dkr.ecr.us-east-1.amazonaws.com
+ecr_repository: EXAMPLE-yourapp
 
-# ECR Repository Name
-ecr_repository: EXAMPLE-apps
-
-# ----------------------------------------------------------------------------
-# APPS CONFIGURATION (Optional)
-# ----------------------------------------------------------------------------
-# Define the applications in your monorepo. Core auto-detects these,
-# but you can override or add custom settings here.
-
-# apps:
-#   - type: nextjs
-#     path: apps/web
-#     port: 3000
-#     health_check: /api/health
-#
-#   - type: expo
-#     path: apps/mobile
-#     # Expo apps don't deploy to servers, but Core can help with builds
-#
-#   - type: node-api
-#     path: apps/server
-#     port: 4000
-
-# ----------------------------------------------------------------------------
-# GITHUB SECRETS REFERENCE (Minimal)
-# ----------------------------------------------------------------------------
-# Only truly sensitive values go in GitHub Secrets.
-# Run `npx core init fix` to set these up interactively.
-#
-# REQUIRED SECRETS:
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ SECRET NAME              │ DESCRIPTION                                  │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │ STAGING_SSH              │ SSH private key for staging server           │
-# │ PROD_SSH                 │ SSH private key for production server        │
-# │ AWS_SECRET_ACCESS_KEY    │ AWS secret key (only secret AWS value)       │
-# └─────────────────────────────────────────────────────────────────────────┘
-#
-# OPTIONAL SECRETS:
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ STAGING_ENVS             │ Staging env vars (from .env.staging)         │
-# │ PROD_ENVS                │ Production env vars (from .env.prod)         │
-# └─────────────────────────────────────────────────────────────────────────┘
-#
-# NOT SECRETS (in core.yml):
-#   - HOST: environments.{env}.host
-#   - AWS_ACCESS_KEY_ID: aws.access_key_id
-#   - AWS_REGION: aws.region
-#
-# NOT SECRETS (in coreAuto.yml):
-#   - ssh_user: defaults to ubuntu
-#
 # ============================================================================
-# AUTO-DETECTED SETTINGS (coreAuto.yml)
+# GitHub Secrets Setup
 # ============================================================================
-# The following settings are auto-detected by running `npx core init`.
-# They are stored in a separate file: coreAuto.yml
+# Run `npx core init fix` to configure these secrets interactively.
 #
-# To override an auto-detected value, use:
-#   setting: detected_value OVERRIDE custom_value
+# Required secrets (sensitive values only):
+#   - STAGING_SSH           SSH private key for staging
+#   - PROD_SSH              SSH private key for production  
+#   - AWS_SECRET_ACCESS_KEY AWS secret key
 #
-# Example coreAuto.yml:
-# ----------------------------------------------------------------------------
-# # Stack detection (auto-detected from package.json and project structure)
-# has_nextjs: true
-# has_expo: true
-# has_trpc: true
-# has_prisma: true
+# Optional secrets:
+#   - STAGING_ENVS          Staging environment variables
+#   - PROD_ENVS             Production environment variables
 #
-# # Prisma configuration
-# prisma_schema: apps/server/prisma/schema.prisma
-# prisma_version: 5.7.0
-#
-# # Dockerfile location
-# dockerfile: apps/server/Dockerfile
-#
-# # Health check endpoint
-# health_check: /api/health
-#
-# # Package manager
-# package_manager: pnpm
-#
-# # Build and test commands
-# build_command: pnpm build
-# test_command: pnpm test
-# ----------------------------------------------------------------------------
-#
-# ============================================================================
-# EXTERNAL PLUGINS (Optional)
-# ============================================================================
-# You can use community plugins from npm:
-#
-# plugins:
-#   external:
-#     - "@factiii/core-plugin-digitalocean"
-#     - "@somedev/core-plugin-hetzner"
-#
-# Then reference them in your servers section:
-#
-# servers:
-#   do-droplet:
-#     plugin: digitalocean
-#     api_key_secret: DO_API_KEY
-#
-
+# Non-secrets (configured above):
+#   - Host addresses (environments.{env}.host)
+#   - AWS access key ID (aws.access_key_id)
+#   - AWS region (aws.region)
+#   - SSH user (auto-detected in coreAuto.yml, defaults to ubuntu)
