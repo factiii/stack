@@ -12,7 +12,7 @@ Core scans your repository, identifies packages (Next.js, Expo, tRPC, Prisma), l
 
 ## Plugin Architecture
 
-Core uses a plugin system with 4 categories:
+Core uses a plugin system with 5 categories:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -30,10 +30,13 @@ Core uses a plugin system with 4 categories:
 │                                                                     │
 │  3. FRAMEWORKS  - What gets deployed (app/service types)            │
 │     ├── Apps: expo, nextjs, static                                  │
-│     ├── Services: prisma-server, trpc-server, express               │
+│     ├── Services: prisma-trpc-server, express                       │
 │     └── Data: postgres, mysql, redis                                │
 │                                                                     │
-│  4. PIPELINES   - How code flows dev → staging → prod               │
+│  4. ADDONS      - Extensions that validate & enhance frameworks     │
+│     └── auth, payments, storage, email, notifications               │
+│                                                                     │
+│  5. PIPELINES   - How code flows dev → staging → prod               │
 │     └── github-actions, gitlab-ci, jenkins, manual                  │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
@@ -253,6 +256,133 @@ Frameworks declare requirements, servers declare capabilities:
 │         best = optimized for this platform                              │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Note:** Addons can further extend compatibility requirements. For example, the `auth` addon requires specific models in the Prisma schema.
+
+---
+
+## Addons (Framework Extensions)
+
+Addons extend base frameworks with validation and enhanced functionality. They don't deploy independently - they validate and enhance the frameworks they attach to.
+
+### How Addons Work
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     FRAMEWORK + ADDON COMPOSITION                   │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  BASE FRAMEWORK: prisma-trpc-server                                 │
+│     └── Scans for: schema.prisma, trpc routes                       │
+│                                                                     │
+│  ADDONS (extend & validate):                                        │
+│     ├── auth      - Validates: User model, Session model, routes    │
+│     ├── payments  - Validates: Subscription model, Stripe config    │
+│     ├── storage   - Validates: File model, upload routes            │
+│     └── email     - Validates: EmailTemplate model, send config     │
+│                                                                     │
+│  ADDON COMPATIBILITY:                                               │
+│     └── auth addon works with: prisma-trpc-server, nextjs, expo     │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Addon Interface
+
+Addons follow the same init/fix/deploy pattern but declare which frameworks they're compatible with:
+
+```javascript
+class AuthAddon extends Addon {
+  static id = 'auth';
+  static category = 'addon';
+  
+  // Which frameworks this addon can extend
+  static compatibleWith = ['prisma-trpc-server', 'nextjs', 'expo'];
+  
+  // Schema requirements (for Prisma-based frameworks)
+  static schemaRequirements = {
+    models: ['User', 'Session'],
+    fields: {
+      User: ['id', 'email', 'passwordHash', 'createdAt'],
+      Session: ['id', 'userId', 'token', 'expiresAt']
+    }
+  };
+  
+  // Route requirements (for tRPC-based frameworks)
+  static routeRequirements = [
+    'auth.login',
+    'auth.logout',
+    'auth.register',
+    'auth.refresh'
+  ];
+  
+  // Secrets this addon needs
+  static requiredSecrets = ['AUTH_SECRET'];
+  
+  // Settings in core.yml
+  static coreYmlSettings = {
+    jwt: {
+      access_expiry: '15m',
+      refresh_expiry: '7d'
+    }
+  };
+  
+  async scanDev(config) {
+    const issues = [];
+    // Validate schema.prisma has required models
+    // Validate trpc has required routes
+    // Check JWT config exists
+    return issues;
+  }
+}
+```
+
+### Deployment Options
+
+Addons can be deployed in different ways:
+
+| Option | Description | Use Case |
+|--------|-------------|----------|
+| **Embedded** | Addon code runs inside the base framework | Simple apps, single container |
+| **Sidecar** | Addon runs as separate container on same server | Microservices, isolation |
+| **Split** | Addon runs on different server entirely | Scale independently |
+
+### core.yml with Addons
+
+```yaml
+apps:
+  # Embedded: auth runs inside the server
+  - framework: prisma-trpc-server
+    path: apps/server
+    addons:
+      - auth
+      - payments
+    auth:
+      jwt:
+        access_expiry: 15m
+        refresh_expiry: 7d
+    
+  # The auth addon also validates these frameworks
+  - framework: nextjs
+    path: apps/web
+    addons:
+      - auth    # Validates auth context, middleware
+    
+  - framework: expo
+    path: apps/mobile
+    addons:
+      - auth    # Validates auth storage, token handling
+```
+
+### Available Addons (Planned)
+
+| Addon | Compatible With | Validates |
+|-------|-----------------|-----------|
+| **auth** | prisma-trpc-server, nextjs, expo | User/Session models, JWT config, auth routes |
+| **payments** | prisma-trpc-server | Subscription model, Stripe config, webhook routes |
+| **storage** | prisma-trpc-server | File model, S3 config, upload routes |
+| **email** | prisma-trpc-server | Email templates, provider config |
+| **notifications** | prisma-trpc-server, expo | Push tokens, notification routes |
 
 ---
 
