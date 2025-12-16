@@ -19,6 +19,32 @@ function validate(options = {}) {
 
     const errors = [];
     const warnings = [];
+    const exampleValues = [];
+
+    // Check for EXAMPLE- placeholder values (recursive scan)
+    function scanForExamples(obj, path = '') {
+      if (typeof obj === 'string' && obj.includes('EXAMPLE-')) {
+        exampleValues.push({ path: path || 'root', value: obj });
+      } else if (typeof obj === 'object' && obj !== null) {
+        for (const [key, value] of Object.entries(obj)) {
+          const newPath = path ? `${path}.${key}` : key;
+          scanForExamples(value, newPath);
+        }
+      }
+    }
+    
+    scanForExamples(config);
+
+    // EXAMPLE- values are blocking errors
+    if (exampleValues.length > 0) {
+      console.error('❌ Configuration contains EXAMPLE- placeholder values:\n');
+      exampleValues.forEach(({ path, value }) => {
+        console.error(`   ${path}: ${value}`);
+      });
+      console.error('\n💡 Please replace all EXAMPLE- values with your actual configuration.');
+      console.error('   Edit core.yml and replace these placeholder values.\n');
+      process.exit(1);
+    }
 
     // Validate required fields
     if (!config.name) {

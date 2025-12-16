@@ -211,40 +211,50 @@ Everything is fully prepared for deployment. Run `npx core deploy` to actually d
 
 ### `npx core deploy`
 
-Run init check, then deploy if checks pass.
+Deploy directly via SSH (no GitHub workflows needed).
 
 ```bash
-npx core deploy                    # Deploy to all
+npx core deploy                    # Deploy to all environments
 npx core deploy --environment staging
 npx core deploy --environment prod
 ```
 
-**Pre-deployment check:**
-- Runs `init` (not `init fix`)
-- Analyzes any failures
-
-**Non-blocking (proceeds with warning):**
-- Environment variable changes
-- Domain updates with overrides
-- Port reassignments with overrides
+**What it does:**
+1. Validates config locally (checks for EXAMPLE- values, etc.)
+2. Builds Docker image and pushes to ECR
+3. SSHs to server and deploys via docker-compose
+4. Runs Prisma migrations if configured
 
 **Blocking (stops deployment):**
 - `EXAMPLE-` values still present
 - Invalid YAML syntax
-- Missing critical files
+- Missing SSH credentials
 - SSH connection failures
-- Unexpected configuration drift
 
 ---
 
-## GitHub Actions Workflows
+## GitHub Actions Workflows (Generated for Repos)
+
+**Key Distinction:** Core GENERATES these workflows for your repo but does NOT use them itself.
+
+- Core deploys directly via SSH (`npx core deploy`)
+- Workflows are for YOUR repo to run its own CI/CD on git events
+- They run independently - Core doesn't trigger or depend on them
+
+### Generated Workflows
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `core-staging.yml` | PR/push to main | Auto-deploy to staging |
+| `core-production.yml` | Merge to production | Auto-deploy to production |
+| `core-undeploy.yml` | Manual | Cleanup/remove deployment |
 
 ### Staging (main branch)
 
 **Trigger:** PR merged to main
 
 ```
-init checks → build → test → deploy container
+test → build → push to ECR → deploy container
 ```
 
 ### Production (production branch)
@@ -252,8 +262,13 @@ init checks → build → test → deploy container
 **Trigger:** Merge to production branch
 
 ```
-clean repo → pnpm install → test → build → deliver container → deploy → run migrations
+test → build → push to ECR → backup DB → deploy → migrations
 ```
+
+### Why Both CLI and Workflows?
+
+- **CLI (`npx core deploy`)**: For manual/immediate deployments from your machine
+- **Workflows**: For automated CI/CD on git events (optional but recommended)
 
 ---
 

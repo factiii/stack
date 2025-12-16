@@ -62,12 +62,10 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 │   │   ├── env-validator.js       # Environment file validation
 │   │   ├── server-check.js        # SSH server checks
 │   │   └── deployment-report.js   # Deployment reporting
-│   └── workflows/             # Workflow templates
-│       ├── init.yml           # Readiness checker
-│       ├── deploy.yml         # Infrastructure deployment
-│       ├── staging.yml        # PR to main → staging deploy
-│       ├── production.yml     # Merge to prod → production deploy
-│       └── undeploy.yml       # Cleanup
+│   └── workflows/             # Workflow templates (generated for repos, not used by Core)
+│       ├── core-staging.yml   # Repo CI/CD: PR to main → staging deploy
+│       ├── core-production.yml # Repo CI/CD: Merge to prod → production deploy
+│       └── core-undeploy.yml  # Manual cleanup trigger
 ├── scripts/                   # Bash scripts for servers
 ├── templates/                 # Config templates
 ├── STANDARDS.md               # Architecture standards
@@ -106,21 +104,37 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 
 ## Deploy Command Behavior
 
-**Runs `init` first (not `init fix`):**
-- Non-blocking failures: proceed with warning
-  - Env var changes, domain updates, port changes with overrides
-- Blocking failures: stop deployment
-  - `EXAMPLE-` values present, invalid YAML, missing files, SSH failures
+**Deploys directly via SSH** (no GitHub workflows needed):
+- Validates config locally first
+- Builds Docker image and pushes to ECR
+- SSHs to server and deploys via docker-compose
+- Runs Prisma migrations if configured
+
+**Blocking failures:**
+- `EXAMPLE-` values present in core.yml
+- Invalid YAML syntax
+- Missing SSH credentials
+- SSH connection failures
 
 ## GitHub Actions Workflows
 
+**Key Distinction:** Core GENERATES workflows for repos but does NOT use them itself.
+- Core deploys directly via SSH (`npx core deploy`)
+- Workflows are for repos to run their own CI/CD on git events
+- Core doesn't trigger or depend on these workflows
+
+**Generated Workflows (for repos):**
+- `core-staging.yml` - Repo's CI/CD: auto-deploy on PR/push to main
+- `core-production.yml` - Repo's CI/CD: auto-deploy on merge to production
+- `core-undeploy.yml` - Manual cleanup trigger (optional)
+
 **Staging (main branch):**
 - PR to main → auto-deploy to staging
-- Flow: init checks → build → test → deploy container
+- Flow: test → build → push to ECR → deploy container
 
 **Production (production branch):**
 - Merge to production triggers full deploy
-- Flow: clean → pnpm install → test → build → deliver → deploy → migrations
+- Flow: test → build → push to ECR → backup DB → deploy → migrations
 
 ## Common Fixes & Patterns
 

@@ -62,24 +62,26 @@ function checkCoreYmlStatus(rootDir, templatePath) {
 
 /**
  * Check GitHub workflows status
+ * Note: Core GENERATES these for repos but does NOT use them itself
+ * These are repo CI/CD workflows that run independently on git events
  */
 function checkWorkflowsStatus(rootDir) {
   const workflowsDir = path.join(rootDir, '.github', 'workflows');
   const result = {
-    deployExists: false,
+    stagingExists: false,
+    productionExists: false,
     undeployExists: false,
-    initExists: false,
-    allExist: false
+    anyExist: false
   };
 
-  const deployPath = path.join(workflowsDir, 'core-deploy.yml');
+  const stagingPath = path.join(workflowsDir, 'core-staging.yml');
+  const productionPath = path.join(workflowsDir, 'core-production.yml');
   const undeployPath = path.join(workflowsDir, 'core-undeploy.yml');
-  const initPath = path.join(workflowsDir, 'core-init.yml');
 
-  result.deployExists = fs.existsSync(deployPath);
+  result.stagingExists = fs.existsSync(stagingPath);
+  result.productionExists = fs.existsSync(productionPath);
   result.undeployExists = fs.existsSync(undeployPath);
-  result.initExists = fs.existsSync(initPath);
-  result.allExist = result.deployExists && result.undeployExists && result.initExists;
+  result.anyExist = result.stagingExists || result.productionExists || result.undeployExists;
 
   return result;
 }
@@ -371,31 +373,26 @@ function displayAuditReport(auditResults) {
     console.log('   ✅ core.yml exists and is customized');
   }
 
-  // 2. GitHub Workflows
-  console.log('\n📝 GitHub Workflows:');
-  if (workflows.allExist) {
-    console.log('   ✅ core-init.yml exists');
-    console.log('   ✅ core-deploy.yml exists');
-    console.log('   ✅ core-undeploy.yml exists');
+  // 2. GitHub Workflows (Generated for Repo CI/CD)
+  console.log('\n📝 GitHub Workflows (Repo CI/CD):');
+  console.log('   ℹ️  Core generates these for your repo - they run independently');
+  if (workflows.stagingExists) {
+    console.log('   ✅ core-staging.yml exists (auto-deploy on push to main)');
   } else {
-    if (!workflows.initExists) {
-      console.log('   ❌ core-init.yml missing');
-    } else {
-      console.log('   ✅ core-init.yml exists');
-    }
-    if (!workflows.deployExists) {
-      console.log('   ❌ core-deploy.yml missing');
-    } else {
-      console.log('   ✅ core-deploy.yml exists');
-    }
-    if (!workflows.undeployExists) {
-      console.log('   ❌ core-undeploy.yml missing');
-    } else {
-      console.log('   ✅ core-undeploy.yml exists');
-    }
-    if (!workflows.allExist) {
-      console.log('      💡 Run: npx core generate-workflows');
-    }
+    console.log('   ⚠️  core-staging.yml missing');
+  }
+  if (workflows.productionExists) {
+    console.log('   ✅ core-production.yml exists (auto-deploy on merge to production)');
+  } else {
+    console.log('   ⚠️  core-production.yml missing');
+  }
+  if (workflows.undeployExists) {
+    console.log('   ✅ core-undeploy.yml exists (manual cleanup)');
+  } else {
+    console.log('   ⚠️  core-undeploy.yml missing (optional)');
+  }
+  if (!workflows.anyExist) {
+    console.log('      💡 Generate: npx core generate-workflows');
   }
 
   // 3. Repository Scripts
@@ -622,10 +619,12 @@ function displayAuditReport(auditResults) {
     critical++;
   }
 
-  if (workflows.allExist) {
+  // Workflows are optional - just informational
+  if (workflows.anyExist) {
     passed++;
   } else {
-    warnings++;
+    // No workflows is fine - Core deploys directly via SSH
+    // Just a note, not a warning
   }
 
   const requiredScriptsAll = repoScripts.hasPackageJson && 
@@ -690,8 +689,8 @@ function displayNextSteps(auditResults) {
     steps.push('Edit core.yml with your actual domains and settings');
   }
 
-  if (!workflows.allExist) {
-    steps.push('Generate workflows: npx core generate-workflows');
+  if (!workflows.anyExist) {
+    steps.push('Generate CI/CD workflows: npx core generate-workflows');
   }
 
   const missingScripts = repoScripts.hasPackageJson && 
@@ -727,8 +726,7 @@ function displayNextSteps(auditResults) {
     steps.push('Initialize git repository: git init');
   }
 
-  steps.push('Add GitHub secrets (see list above)');
-  steps.push('Commit and push changes to trigger deployment');
+  steps.push('Set environment variables with secrets (or use GitHub Secrets if using workflows)');
   steps.push('Test deployment: npx core deploy');
 
   // Display steps
@@ -841,11 +839,6 @@ async function init(options = {}) {
       generateWorkflows({ output: '.github/workflows' });
       // Update audit results after generation
       auditResults.workflows = checkWorkflowsStatus(rootDir);
-      
-      // Verify core-init.yml was generated
-      if (!auditResults.workflows.initExists) {
-        console.log('⚠️  Warning: core-init.yml workflow may not have been generated correctly\n');
-      }
     } catch (error) {
       console.log(`⚠️  Warning: Failed to generate workflows: ${error.message}\n`);
       // Will be shown in audit report
@@ -858,310 +851,20 @@ async function init(options = {}) {
   // Display conditional next steps
   displayNextSteps(auditResults);
 
-  // Final message and auto-trigger workflow if checks pass
+  // Final message
   if (summary.critical === 0 && summary.warnings === 0) {
     console.log('✨ All checks passed! Your infrastructure is ready.\n');
-    
-    // Debug logging
-    if (options.skipWorkflow) {
-      console.log('ℹ️  Skipping workflow trigger (skipWorkflow: true)\n');
-    }
-    
-    // Auto-trigger workflow if --no-remote flag not set AND skipWorkflow not set
-    if (!options.noRemote && !options.skipWorkflow) {
-      await triggerAndWaitForWorkflow(auditResults, options);
-    } else if (!options.skipWorkflow) {
-      displayWorkflowInstructions(auditResults);
-    }
+    console.log('🚀 Next: Run \'npx core deploy\' to deploy directly via SSH.\n');
   } else if (summary.critical === 0) {
     console.log('✨ Setup is functional but some improvements recommended.\n');
     console.log('   💡 Run \'npx core init\' anytime to re-check your setup.\n');
-    
-    // Debug logging
-    console.log(`🚨 DEBUG OPTIONS: noRemote=${options.noRemote}, skipWorkflow=${options.skipWorkflow}`);
-    if (options.skipWorkflow) {
-      console.log('ℹ️  Skipping workflow trigger (skipWorkflow: true)\n');
-    }
-    
-    // Auto-trigger workflow even with warnings if --no-remote flag not set AND skipWorkflow not set
-    if (!options.noRemote && !options.skipWorkflow) {
-      console.log('🚨 DEBUG: Triggering workflow (line 891)');
-      await triggerAndWaitForWorkflow(auditResults, options);
-    } else if (!options.skipWorkflow) {
-      console.log('🚨 DEBUG: Displaying instructions (line 893)');
-      displayWorkflowInstructions(auditResults);
-    } else {
-      console.log('🚨 DEBUG: Both blocks skipped!');
-    }
+    console.log('🚀 You can still deploy: npx core deploy\n');
   } else {
     console.log('⚠️  Please address critical issues before deploying.\n');
     console.log('   💡 Run \'npx core init\' again after making changes.\n');
-    console.log('   Skipping workflow trigger due to critical issues.\n');
   }
 
   // Always exit 0 (permissive mode)
-}
-
-/**
- * Auto-trigger init workflow and wait for results
- */
-async function triggerAndWaitForWorkflow(auditResults, options) {
-  const { branches, workflows } = auditResults;
-  
-  // Ensure workflow file exists locally
-  if (!workflows.initExists) {
-    console.log('⚠️  Init workflow not found locally.');
-    console.log('   Generating workflows...\n');
-    
-    try {
-      const generateWorkflows = require('./generate-workflows');
-      generateWorkflows({ output: '.github/workflows' });
-      // Re-check after generation
-      const rootDir = process.cwd();
-      const initPath = path.join(rootDir, '.github', 'workflows', 'core-init.yml');
-      if (!fs.existsSync(initPath)) {
-        console.log('❌ Failed to generate core-init.yml workflow\n');
-        displayWorkflowInstructions(auditResults);
-        return;
-      }
-      console.log('✅ Workflow generated\n');
-    } catch (error) {
-      console.log(`❌ Failed to generate workflows: ${error.message}\n`);
-      displayWorkflowInstructions(auditResults);
-      return;
-    }
-  }
-  
-  // Get GitHub token
-  const token = options.token || process.env.GITHUB_TOKEN;
-  
-  if (!token) {
-    console.log('ℹ️  No GITHUB_TOKEN - Manual workflow trigger required');
-    console.log('   (With a token, this process is fully automated)\n');
-    displayWorkflowInstructions(auditResults);
-    return;
-  }
-  
-  // Get repo info
-  const { GitHubSecretsStore } = require('../plugins/secrets/github');
-  const repoInfo = GitHubSecretsStore.getRepoInfo();
-  
-  if (!repoInfo) {
-    console.log('⚠️  Could not detect GitHub repository.\n');
-    displayWorkflowInstructions(auditResults);
-    return;
-  }
-  
-  console.log('🚀 Auto-triggering Init Workflow...\n');
-  
-  const { Octokit } = require('@octokit/rest');
-  const octokit = new Octokit({ auth: token });
-  
-  try {
-    // Get current branch
-    let currentBranch = branches.currentBranch || 'main';
-    
-    // First, verify the workflow exists in GitHub
-    try {
-      const { data: workflow } = await octokit.rest.actions.getWorkflow({
-        owner: repoInfo.owner,
-        repo: repoInfo.repo,
-        workflow_id: 'core-init.yml'
-      });
-      console.log(`✅ Found workflow: ${workflow.name} (ID: ${workflow.id})\n`);
-    } catch (error) {
-      if (error.status === 404) {
-        console.log('⚠️  Workflow not found in GitHub repository.');
-        console.log('   The workflow file exists locally but may not be committed/pushed.');
-        console.log('   Please commit and push .github/workflows/core-init.yml\n');
-        displayWorkflowInstructions(auditResults);
-        return;
-      }
-      throw error;
-    }
-    
-    // Trigger workflow (check-only mode, not fix mode)
-    await octokit.rest.actions.createWorkflowDispatch({
-      owner: repoInfo.owner,
-      repo: repoInfo.repo,
-      workflow_id: 'core-init.yml',
-      ref: currentBranch,
-      inputs: {
-        fix: 'false' // Normal init is check-only
-      }
-    });
-    
-    console.log(`✅ Workflow triggered on branch: ${currentBranch}`);
-    console.log(`   Repository: ${repoInfo.owner}/${repoInfo.repo}\n`);
-    
-    // Wait a moment for workflow to be created
-    console.log('⏳ Waiting for workflow to start...');
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    // Find the latest workflow run
-    const { data: runs } = await octokit.rest.actions.listWorkflowRuns({
-      owner: repoInfo.owner,
-      repo: repoInfo.repo,
-      workflow_id: 'core-init.yml',
-      per_page: 1
-    });
-    
-    if (runs.workflow_runs.length === 0) {
-      console.log('⚠️  Could not find workflow run.');
-      console.log(`   View manually: https://github.com/${repoInfo.owner}/${repoInfo.repo}/actions\n`);
-      return;
-    }
-    
-    const run = runs.workflow_runs[0];
-    console.log(`📋 Workflow run: ${run.html_url}\n`);
-    
-    // Poll for completion
-    let status = run.status;
-    let conclusion = run.conclusion;
-    const startTime = Date.now();
-    const timeout = 5 * 60 * 1000; // 5 minutes
-    
-    while (status !== 'completed') {
-      if (Date.now() - startTime > timeout) {
-        console.log('\n⏱️  Workflow is taking longer than expected.');
-        console.log(`   View progress: ${run.html_url}\n`);
-        return;
-      }
-      
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      const { data: updatedRun } = await octokit.rest.actions.getWorkflowRun({
-        owner: repoInfo.owner,
-        repo: repoInfo.repo,
-        run_id: run.id
-      });
-      
-      status = updatedRun.status;
-      conclusion = updatedRun.conclusion;
-      
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      process.stdout.write(`\r⏳ Status: ${status}... (${elapsed}s)`);
-    }
-    
-    console.log('\n');
-    
-    // Display results based on conclusion
-    if (conclusion === 'success') {
-      console.log('✅ Init Workflow Completed Successfully!\n');
-      console.log('📊 RESULTS:');
-      console.log('   ✅ All GitHub secrets are configured');
-      console.log('   ✅ SSH connections successful');
-      console.log('   ✅ Server checks passed\n');
-      console.log('💡 View full report: ' + run.html_url);
-      console.log('\n🚀 Ready to deploy!');
-      console.log('   Run: npx core deploy --environment staging\n');
-    } else if (conclusion === 'failure') {
-      console.log('⚠️  Init Workflow completed with issues\n');
-      console.log('📊 RESULTS:');
-      console.log('   ⚠️  Some secrets may be missing');
-      console.log('   ⚠️  Check the workflow logs for details\n');
-      console.log('💡 View full report: ' + run.html_url);
-      console.log('\n📝 Next Steps:');
-      console.log('   1. Review the workflow results');
-      console.log('   2. Add missing GitHub secrets');
-      console.log('   3. Fill in .env files if generated');
-      console.log('   4. Run: npx core init (to verify fixes)\n');
-    } else {
-      console.log(`⚠️  Workflow completed with status: ${conclusion}\n`);
-      console.log('💡 View details: ' + run.html_url + '\n');
-    }
-    
-  } catch (error) {
-    if (error.status === 401) {
-      console.log('❌ GitHub token is invalid or expired');
-      console.log('   Generate a new token with "repo" and "workflow" scopes\n');
-    } else if (error.status === 403) {
-      console.log('❌ GitHub token does not have permission to trigger workflows');
-      console.log('   Ensure token has "repo" and "workflow" scopes\n');
-    } else if (error.status === 404) {
-      console.log('❌ Workflow not found. Make sure core-init.yml is committed and pushed.\n');
-    } else {
-      console.log(`❌ Failed to trigger workflow: ${error.message}\n`);
-    }
-    
-    // Fall back to manual instructions
-    displayWorkflowInstructions(auditResults);
-  }
-}
-
-/**
- * Display instructions for running the init workflow (fallback for manual trigger)
- */
-function displayWorkflowInstructions(auditResults) {
-  const { branches, workflows } = auditResults;
-  
-  if (!workflows.initExists) {
-    return; // Init workflow not generated yet
-  }
-  
-  console.log('');
-  console.log('═'.repeat(60));
-  console.log('');
-  console.log('📋 MANUAL STEPS TO TRIGGER INIT WORKFLOW\n');
-  
-  if (branches.hasGit) {
-    try {
-      const { execSync } = require('child_process');
-      const repoUrl = execSync('git config --get remote.origin.url', { 
-        encoding: 'utf8',
-        stdio: 'pipe'
-      }).trim();
-      
-      const match = repoUrl.match(/github\.com[:/](.+?)\/(.+?)(?:\.git)?$/);
-      if (match) {
-        const owner = match[1];
-        const repo = match[2];
-        
-        console.log('1️⃣  Commit and push your changes:');
-        console.log('');
-        console.log('    git add . && git commit -m "Configure core" && git push');
-        console.log('');
-        console.log('2️⃣  Go to GitHub Actions and click "Run workflow":');
-        console.log(`    https://github.com/${owner}/${repo}/actions/workflows/core-init.yml`);
-        console.log('');
-        console.log('─'.repeat(60));
-        console.log('');
-        console.log('💡 AUTOMATE THIS (Optional):\n');
-        console.log('   Set up a GitHub token to auto-trigger workflows:\n');
-        console.log('   1. Generate token: https://github.com/settings/tokens');
-        console.log('      → "Generate new token (classic)"');
-        console.log('      → Select scopes: repo + workflow');
-        console.log('');
-        console.log('   2. Add to your shell config (persists across sessions):');
-        console.log('');
-        console.log('      For zsh (macOS default):');
-        console.log('      echo \'export GITHUB_TOKEN=ghp_your_token_here\' >> ~/.zshrc');
-        console.log('      source ~/.zshrc');
-        console.log('');
-        console.log('      For bash:');
-        console.log('      echo \'export GITHUB_TOKEN=ghp_your_token_here\' >> ~/.bashrc');
-        console.log('      source ~/.bashrc');
-        console.log('');
-        console.log('   With the token set, "npx core init" and "npx core init fix" will automatically:');
-        console.log('   • Trigger workflows');
-        console.log('   • Upload secrets');
-        console.log('   • Wait for results');
-        console.log('   • Display outcomes');
-        console.log('');
-        console.log('═'.repeat(60));
-        console.log('');
-      }
-    } catch (e) {
-      // Ignore errors
-    }
-  }
-  
-  // Display secrets checklist
-  console.log('🔑 REQUIRED: Add GitHub Secrets Before Running Workflow\n');
-  console.log('   Location: Repository → Settings → Secrets → Actions\n');
-  const { generateSecretsChecklist } = require('../utils/template-generator');
-  console.log(generateSecretsChecklist());
-  console.log('');
 }
 
 module.exports = init;

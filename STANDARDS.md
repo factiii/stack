@@ -295,28 +295,53 @@ Runs `init` (NOT `init fix`) first. Analyzes failures:
 
 ## GitHub Actions Workflows
 
-### Staging (main branch)
+### Key Distinction: Generated vs Used
+
+**Core GENERATES workflows for repos but does NOT use them itself.**
+
+| Aspect | Core CLI | Generated Workflows |
+|--------|----------|---------------------|
+| **Purpose** | Direct deployment | Repo CI/CD automation |
+| **Triggered by** | `npx core deploy` | Git events (push, PR merge) |
+| **Runs where** | Your machine | GitHub Actions |
+| **Core involvement** | Core runs it | Core is NOT involved |
+
+**Why both?**
+- **CLI**: For manual/immediate deployments from your machine
+- **Workflows**: For automated CI/CD on git events (optional but recommended)
+
+### Generated Workflows
+
+Core generates these workflows via `npx core generate-workflows`:
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `core-staging.yml` | PR/push to main | Auto-deploy to staging |
+| `core-production.yml` | Merge to production | Auto-deploy to production |
+| `core-undeploy.yml` | Manual trigger | Cleanup/remove deployment |
+
+### Staging Workflow (main branch)
 
 **Trigger:** PR merged to main
 
 **Flow:**
-1. Run init checks
-2. Build application
-3. Run tests
+1. Run tests
+2. Build Docker image
+3. Push to ECR
 4. Deploy container to staging server
 
-### Production (production branch)
+### Production Workflow (production branch)
 
 **Trigger:** Merge to production branch
 
 **Flow:**
-1. Clean repository
-2. `pnpm install` (fresh)
-3. Run tests
-4. Build application
-5. Deliver container (push to registry)
-6. Deploy container to production server
-7. Run database migrations
+1. Run tests
+2. Build Docker image
+3. Push to ECR
+4. Backup database
+5. Deploy container to production server
+6. Run database migrations
+7. Health check (rollback on failure)
 
 ---
 
@@ -405,9 +430,17 @@ Adapters will be extracted from core one by one:
 ├── bin/core              # CLI entry point
 ├── src/
 │   ├── cli/              # Command implementations
+│   │   ├── init.js       # Validate + auto-fix local
+│   │   ├── init-fix.js   # Fix all environments
+│   │   ├── deploy.js     # Direct SSH deployment
+│   │   ├── deployer.js   # SSH deployment engine
+│   │   └── generate-workflows.js  # Generate repo CI/CD workflows
 │   ├── generators/       # Config generators
 │   ├── utils/            # Utilities
-│   └── workflows/        # GitHub Actions templates
+│   └── workflows/        # Workflow templates (generated FOR repos, not used BY Core)
+│       ├── core-staging.yml     # Repo CI/CD: auto-deploy on PR/push to main
+│       ├── core-production.yml  # Repo CI/CD: auto-deploy on merge to production
+│       └── core-undeploy.yml    # Manual cleanup trigger
 ├── scripts/              # Bash scripts for servers
 ├── templates/            # Config templates
 └── test/                 # Test suites
