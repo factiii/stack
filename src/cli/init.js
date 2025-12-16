@@ -276,7 +276,6 @@ function validateRepoScripts(rootDir) {
   const results = {
     hasPackageJson: false,
     requiredScripts: {
-      test: false,
       'test:server': false
     },
     optionalScripts: {
@@ -306,7 +305,6 @@ function validateRepoScripts(rootDir) {
 
     // Check for required scripts
     const scripts = pkg.scripts || {};
-    results.requiredScripts.test = !!scripts.test;
     results.requiredScripts['test:server'] = !!scripts['test:server'];
 
     // Check for optional scripts
@@ -420,9 +418,6 @@ function displayAuditReport(auditResults) {
       console.log('\n   💡 Add missing scripts to package.json:');
       console.log('      {');
       console.log('        "scripts": {');
-      if (!repoScripts.requiredScripts.test) {
-        console.log('          "test": "pnpm -r --filter \'./apps/*\' test",  // Run all tests');
-      }
       if (!repoScripts.requiredScripts['test:server']) {
         console.log('          "test:server": "turbo run test --filter=your-server"  // Server tests');
       }
@@ -564,14 +559,19 @@ function displayAuditReport(auditResults) {
   }
 
   // 6. GitHub Secrets
-  console.log('\n🔑 GitHub Secrets (verify in repository Settings → Secrets):');
+  console.log('\n🔑 GitHub Secrets:');
   console.log('   ℹ️  Required secrets for deployment:');
   console.log('      - STAGING_SSH, PROD_SSH (SSH private keys)');
   console.log('      - STAGING_HOST, PROD_HOST (server addresses)');
   console.log('      - STAGING_USER, PROD_USER (SSH users, default: ubuntu)');
   console.log('      - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION');
-  console.log('      - STAGING_ENVS, PROD_ENVS (managed via .env files)');
-  console.log('      💡 Run init workflow to sync .env files to GitHub');
+  console.log('      - STAGING_ENVS, PROD_ENVS (from .env.staging and .env.prod files)');
+  console.log('');
+  console.log('   💡 Manage secrets easily:');
+  console.log('      npx core init fix     # Setup all secrets interactively');
+  console.log('      npx core secrets      # Update specific secrets');
+  console.log('');
+  console.log('   Or manually: Repository Settings → Secrets → Actions');
 
   // 7. Branch Structure
   console.log('\n🌿 Branch Structure:');
@@ -786,7 +786,7 @@ async function init(options = {}) {
     }
 
     // Replace placeholder with actual repo name
-    let config = template.replace(/your-repo-name/g, repoName);
+    let config = template.replace(/EXAMPLE-factiii/g, repoName);
 
     // Auto-detect and append Prisma configuration if found
     if (auditResults.repoScripts.hasPrisma) {
@@ -862,21 +862,36 @@ async function init(options = {}) {
   if (summary.critical === 0 && summary.warnings === 0) {
     console.log('✨ All checks passed! Your infrastructure is ready.\n');
     
-    // Auto-trigger workflow if --no-remote flag not set
-    if (!options.noRemote) {
+    // Debug logging
+    if (options.skipWorkflow) {
+      console.log('ℹ️  Skipping workflow trigger (skipWorkflow: true)\n');
+    }
+    
+    // Auto-trigger workflow if --no-remote flag not set AND skipWorkflow not set
+    if (!options.noRemote && !options.skipWorkflow) {
       await triggerAndWaitForWorkflow(auditResults, options);
-    } else {
+    } else if (!options.skipWorkflow) {
       displayWorkflowInstructions(auditResults);
     }
   } else if (summary.critical === 0) {
     console.log('✨ Setup is functional but some improvements recommended.\n');
     console.log('   💡 Run \'npx core init\' anytime to re-check your setup.\n');
     
-    // Auto-trigger workflow even with warnings if --no-remote flag not set
-    if (!options.noRemote) {
+    // Debug logging
+    console.log(`🚨 DEBUG OPTIONS: noRemote=${options.noRemote}, skipWorkflow=${options.skipWorkflow}`);
+    if (options.skipWorkflow) {
+      console.log('ℹ️  Skipping workflow trigger (skipWorkflow: true)\n');
+    }
+    
+    // Auto-trigger workflow even with warnings if --no-remote flag not set AND skipWorkflow not set
+    if (!options.noRemote && !options.skipWorkflow) {
+      console.log('🚨 DEBUG: Triggering workflow (line 891)');
       await triggerAndWaitForWorkflow(auditResults, options);
-    } else {
+    } else if (!options.skipWorkflow) {
+      console.log('🚨 DEBUG: Displaying instructions (line 893)');
       displayWorkflowInstructions(auditResults);
+    } else {
+      console.log('🚨 DEBUG: Both blocks skipped!');
     }
   } else {
     console.log('⚠️  Please address critical issues before deploying.\n');
@@ -928,8 +943,8 @@ async function triggerAndWaitForWorkflow(auditResults, options) {
   }
   
   // Get repo info
-  const { getGitHubRepoInfo } = require('../utils/github-secrets');
-  const repoInfo = getGitHubRepoInfo();
+  const { GitHubSecretsStore } = require('../plugins/secrets/github');
+  const repoInfo = GitHubSecretsStore.getRepoInfo();
   
   if (!repoInfo) {
     console.log('⚠️  Could not detect GitHub repository.\n');

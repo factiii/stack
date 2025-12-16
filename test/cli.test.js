@@ -60,7 +60,7 @@ describe('CLI Command Tests', () => {
       expect(fs.existsSync(configPath)).toBe(true);
       const content = fs.readFileSync(configPath, 'utf8');
       expect(content).toContain('name:');
-      expect(content).toContain('environments:');
+      expect(content).toContain('servers:');
     });
 
     test('replaces placeholder repo name', async () => {
@@ -329,7 +329,7 @@ describe('CLI Command Tests', () => {
       generateWorkflows({});
 
       expect(consoleOutput.some(o => o[1].includes('Generating GitHub workflows'))).toBe(true);
-      expect(consoleOutput.some(o => o[1].includes('Workflows generated successfully'))).toBe(true);
+      expect(consoleOutput.some(o => o[1].includes('Workflow generation complete'))).toBe(true);
     });
 
     test('handles missing template files gracefully', () => {

@@ -274,22 +274,103 @@ clean repo → pnpm install → test → build → deliver container → deploy 
 
 ---
 
-## GitHub Secrets
+## Managing Secrets
 
-Configure in **Settings → Secrets → Actions**:
+Core provides a unified CLI for managing all GitHub secrets without manually using the GitHub UI.
+
+### First-Time Setup
+
+```bash
+npx core init fix
+```
+
+This command:
+1. ✅ Checks GitHub for missing secrets via API
+2. ✅ Reads `.env.staging` and `.env.prod` files and uploads to GitHub
+3. ✅ Prompts interactively for missing infrastructure secrets (SSH keys, AWS credentials)
+4. ✅ Uploads everything to GitHub via API
+5. 🚀 Offers to deploy immediately
+
+### Update Specific Secrets
+
+```bash
+# Update one or more secrets
+npx core secrets STAGING_SSH PROD_SSH
+
+# Update with inline value (for scripting)
+npx core secrets STAGING_SSH --value "$(cat ~/.ssh/id_ed25519)"
+```
+
+The command will:
+- Prompt for each secret with context and validation
+- Show helpful generation instructions
+- Upload to GitHub immediately
+- Offer to deploy after updating
+
+### Interactive Secret Management
+
+```bash
+npx core secrets
+```
+
+Interactive mode:
+1. Shows status of all secrets (✅ exists / ❌ missing)
+2. Lets you select which to update
+3. Prompts for each selected secret
+4. Uploads all to GitHub
+5. Offers to deploy
+
+### Environment Variables vs Infrastructure Secrets
+
+| Secret Type | Source | Update Command |
+|-------------|--------|----------------|
+| `STAGING_ENVS` | `.env.staging` file | Edit file → `npx core init fix` |
+| `PROD_ENVS` | `.env.prod` file | Edit file → `npx core init fix` |
+| `STAGING_SSH`, `PROD_SSH` | Prompt (never stored locally) | `npx core secrets STAGING_SSH` |
+| `AWS_*` credentials | Prompt (never stored locally) | `npx core secrets AWS_ACCESS_KEY_ID` |
+| `*_HOST`, `*_USER` | Prompt (never stored locally) | `npx core secrets STAGING_HOST` |
+
+**Why two approaches?**
+- **Application env vars** change frequently (developers add/modify config) → file-based workflow
+- **Infrastructure secrets** change rarely (SSH keys, AWS creds) → prompt-based, never committed
+
+### Required GitHub Secrets
 
 **SSH Keys:**
-- `STAGING_SSH` - Private key for staging
-- `PROD_SSH` - Private key for production
+- `STAGING_SSH` - Private key for staging server
+- `STAGING_HOST` - Staging server hostname/IP
+- `STAGING_USER` - SSH username (default: ubuntu)
+- `PROD_SSH` - Private key for production server
+- `PROD_HOST` - Production server hostname/IP
+- `PROD_USER` - SSH username (default: ubuntu)
 
-**AWS Credentials:**
+**AWS Credentials (for ECR):**
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_REGION`
 
 **Environment Variables:**
-- `STAGING_ENVS` - Staging env vars (newline-separated `key=value`)
-- `PROD_ENVS` - Production env vars (newline-separated `key=value`)
+- `STAGING_ENVS` - From `.env.staging` file
+- `PROD_ENVS` - From `.env.prod` file
+
+### Generating SSH Keys
+
+```bash
+# For staging
+ssh-keygen -t ed25519 -C "staging-deploy" -f ~/.ssh/staging_deploy
+
+# For production
+ssh-keygen -t ed25519 -C "production-deploy" -f ~/.ssh/prod_deploy
+
+# Copy public key to server
+cat ~/.ssh/staging_deploy.pub | ssh user@staging-host "cat >> ~/.ssh/authorized_keys"
+```
+
+Then upload with:
+```bash
+npx core secrets STAGING_SSH
+# Paste the PRIVATE key when prompted
+```
 
 ---
 

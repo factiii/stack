@@ -23,6 +23,17 @@ function getGitHubRepo() {
 }
 
 /**
+ * Get current git branch
+ */
+function getCurrentBranch() {
+  try {
+    return execSync('git branch --show-current', { encoding: 'utf8', stdio: 'pipe' }).trim();
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
  * Deploy by validating local config and triggering GitHub workflow
  */
 async function deploy(options = {}) {
@@ -101,38 +112,74 @@ async function deploy(options = {}) {
     process.exit(1);
   }
 
-  console.log(`\n📦 Repository: ${repoInfo.owner}/${repoInfo.repo}`);
-  console.log(`🚀 Deploying ${repoName} to: ${environments.join(', ')}\n`);
-
-  // Step 7: Trigger GitHub workflow
+  // Step 7: Initialize GitHub API client (needed for branch detection)
   const octokit = new Octokit({ auth: token });
 
+  // Step 8: Determine branch to deploy from
+  const currentBranch = getCurrentBranch();
+  let targetBranch = options.branch;
+
+  // If no branch specified, detect the default branch from GitHub
+  if (!targetBranch) {
+    console.log('🔍 Detecting default branch from GitHub...');
+    try {
+      const { data: repo } = await octokit.rest.repos.get({
+        owner: repoInfo.owner,
+        repo: repoInfo.repo
+      });
+      targetBranch = repo.default_branch;
+      console.log(`✅ Using default branch: ${targetBranch}`);
+    } catch (error) {
+      console.log('⚠️  Could not detect default branch, falling back to "main"');
+      targetBranch = 'main';
+    }
+  }
+  
+  if (currentBranch && currentBranch !== targetBranch) {
+    console.log(`\n⚠️  Note: You are on branch "${currentBranch}" but deploying from "${targetBranch}"`);
+    console.log(`   To deploy from current branch, use: npx core deploy --branch ${currentBranch}\n`);
+  }
+
+  console.log(`📦 Repository: ${repoInfo.owner}/${repoInfo.repo}`);
+  console.log(`🌿 Branch: ${targetBranch}`);
+  console.log(`🚀 Deploying ${repoName} to: ${environments.join(', ')}\n`);
+
+  // Step 9: Trigger GitHub workflow
+
   try {
-    // Verify workflow exists in GitHub
+    // Verify workflow exists in GitHub (checks any branch, not just target branch)
     console.log('🔍 Verifying workflow exists in GitHub...');
     try {
-      await octokit.rest.actions.getWorkflow({
+      const workflow = await octokit.rest.actions.getWorkflow({
         owner: repoInfo.owner,
         repo: repoInfo.repo,
         workflow_id: 'core-deploy.yml'
       });
       console.log('✅ Workflow found in GitHub');
+      
+      // Note: getWorkflow finds the workflow if it exists on ANY branch
+      // But workflow_dispatch only works if the workflow exists on the TARGET branch
     } catch (e) {
       if (e.status === 404) {
+        const currentBranch = getCurrentBranch();
         console.error('❌ Workflow not found in GitHub repository');
         console.error('   Make sure .github/workflows/core-deploy.yml is committed and pushed');
+        if (currentBranch) {
+          console.error(`   Current branch: ${currentBranch}`);
+          console.error('   Run: git add .github/workflows && git commit -m "Add workflows" && git push');
+        }
         process.exit(1);
       }
       throw e;
     }
 
     // Trigger workflow
-    console.log('🚀 Triggering deploy workflow...');
+    console.log(`🚀 Triggering deploy workflow on branch: ${targetBranch}...`);
     await octokit.rest.actions.createWorkflowDispatch({
       owner: repoInfo.owner,
       repo: repoInfo.repo,
-      workflow_id: 'deploy.yml',
-      ref: 'main',
+      workflow_id: 'core-deploy.yml',
+      ref: targetBranch,
       inputs: {
         environment: options.environment || 'all'
       }
@@ -150,7 +197,7 @@ async function deploy(options = {}) {
     const { data: runs } = await octokit.rest.actions.listWorkflowRuns({
       owner: repoInfo.owner,
       repo: repoInfo.repo,
-      workflow_id: 'deploy.yml',
+      workflow_id: 'core-deploy.yml',
       per_page: 1
     });
 
@@ -211,6 +258,46 @@ async function deploy(options = {}) {
     } else if (error.status === 403) {
       console.error('❌ GitHub token does not have permission to trigger workflows');
       console.error('   Ensure token has "repo" scope');
+    } else if (error.status === 422) {
+      // 422 errors can mean:
+      // - Branch doesn't exist
+      // - Workflow doesn't have workflow_dispatch
+      // - Workflow doesn't exist on the target branch
+      const targetBranch = options.branch || 'main';
+      const currentBranch = getCurrentBranch();
+      
+      if (error.message.includes('No ref found') || error.message.includes('ref')) {
+        console.error(`❌ Branch "${targetBranch}" does not exist in GitHub repository`);
+        console.error('   The workflow needs to be triggered on an existing branch.');
+        console.error('   Options:');
+        console.error(`   1. Push your code to GitHub: git push -u origin ${targetBranch}`);
+        if (currentBranch && currentBranch !== targetBranch) {
+          console.error(`   2. Or deploy from your current branch: npx core deploy --branch ${currentBranch}`);
+        }
+        console.error('   3. Or change the default branch in GitHub repository settings');
+      } else if (error.message.includes('workflow_dispatch') || error.message.includes('Workflow does not have')) {
+        console.error(`❌ Workflow issue on branch "${targetBranch}"`);
+        console.error('   Possible causes:');
+        console.error('   1. The workflow file does not exist on this branch yet');
+        console.error('   2. The workflow does not have workflow_dispatch trigger');
+        console.error('');
+        console.error('   💡 Solutions:');
+        if (currentBranch && currentBranch !== targetBranch) {
+          console.error(`   • Deploy from current branch: npx core deploy --branch ${currentBranch}`);
+          console.error(`   • Or merge ${currentBranch} to ${targetBranch} first`);
+        } else {
+          console.error(`   • Push .github/workflows/core-deploy.yml to ${targetBranch}`);
+          console.error('   • Or run: npx core generate-workflows && git add .github && git commit && git push');
+        }
+      } else {
+        console.error(`❌ Failed to trigger workflow: ${error.message}`);
+        console.error(`   Error status: ${error.status}`);
+        if (currentBranch && currentBranch !== targetBranch) {
+          console.error('');
+          console.error(`   💡 Tip: You are on "${currentBranch}" but deploying from "${targetBranch}"`);
+          console.error(`   Try: npx core deploy --branch ${currentBranch}`);
+        }
+      }
     } else {
       console.error(`❌ Failed to trigger workflow: ${error.message}`);
     }

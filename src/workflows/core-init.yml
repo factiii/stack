@@ -308,10 +308,11 @@ jobs:
           fi
           
           echo ""
-          echo "📝 Note: GitHub Secrets must be uploaded from local machine using:"
-          echo "   npx core init fix"
+          echo "📝 Note: GitHub Secrets must be uploaded from local machine:"
+          echo "   npx core init fix    # Setup all secrets interactively"
+          echo "   npx core secrets     # Update specific secrets"
           echo ""
-          echo "   This is because .env.prod is gitignored and not available in workflows."
+          echo "   Env files (.env.staging, .env.prod) are gitignored for security."
           echo "   The workflow can verify secrets exist, but cannot upload them."
 
   check-servers:
@@ -468,12 +469,14 @@ jobs:
             
             if [ "$ENV_STATUS" != "success" ]; then
               echo "1. Create missing \`.env.staging\` and \`.env.prod\` files locally" >> $GITHUB_STEP_SUMMARY
-              echo "2. Run: \`npx core init fix\` (uploads secrets to GitHub)" >> $GITHUB_STEP_SUMMARY
+              echo "2. Run: \`npx core init fix\` (uploads all secrets to GitHub)" >> $GITHUB_STEP_SUMMARY
+              echo "   Or: \`npx core secrets\` (interactive secret management)" >> $GITHUB_STEP_SUMMARY
             fi
             
             if [ "$SECRETS_STATUS" != "success" ]; then
-              echo "1. Add missing GitHub secrets (Settings → Secrets → Actions)" >> $GITHUB_STEP_SUMMARY
-              echo "2. Run: \`npx core init fix\` to upload environment secrets" >> $GITHUB_STEP_SUMMARY
+              echo "1. Run: \`npx core init fix\` (setup all secrets interactively)" >> $GITHUB_STEP_SUMMARY
+              echo "   Or: \`npx core secrets\` (manage individual secrets)" >> $GITHUB_STEP_SUMMARY
+              echo "2. Manual option: Settings → Secrets → Actions" >> $GITHUB_STEP_SUMMARY
             fi
             
             if [ "$SERVERS_STATUS" != "success" ] && [ "$SERVERS_STATUS" != "skipped" ]; then

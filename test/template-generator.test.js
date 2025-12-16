@@ -55,7 +55,9 @@ describe('Template Generator', () => {
       expect(checklist).toContain('AWS_ACCESS_KEY_ID');
       expect(checklist).toContain('STAGING_ENVS');
       expect(checklist).toContain('PROD_ENVS');
-      expect(checklist).toContain('How to add secrets:');
+      expect(checklist).toContain('SSH (server access)');
+      expect(checklist).toContain('AWS (Docker registry)');
+      expect(checklist).toContain('Environment (app secrets)');
     });
   });
 

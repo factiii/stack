@@ -2,8 +2,17 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const init = require('./init');
-const { getGitHubRepoInfo, uploadSecret } = require('../utils/github-secrets');
+const { 
+  getPlugin, 
+  createSecretStore
+} = require('../plugins');
+const { GitHubSecretsStore } = require('../plugins/secrets/github');
 const { parseEnvFile } = require('../utils/env-validator');
+const { 
+  confirm, 
+  promptSingleLine, 
+  promptMultiLine 
+} = require('../utils/secret-prompts');
 
 /**
  * Convert env object to newline-separated key=value string
@@ -12,6 +21,234 @@ function envObjectToString(env) {
   return Object.entries(env)
     .map(([key, value]) => `${key}=${value}`)
     .join('\n');
+}
+
+/**
+ * Get secret validation for a given type
+ */
+function getSecretValidation(type) {
+  const validations = {
+    ssh_key: (value) => {
+      if (!value || value.trim().length === 0) {
+        return { valid: false, error: 'SSH key cannot be empty' };
+      }
+      if (!value.includes('BEGIN') || !value.includes('PRIVATE KEY')) {
+        return { valid: false, error: 'Invalid SSH key format (missing BEGIN/PRIVATE KEY markers)' };
+      }
+      return { valid: true };
+    },
+    hostname: (value) => {
+      if (!value || value.trim().length === 0) {
+        return { valid: false, error: 'Hostname cannot be empty' };
+      }
+      if (value.includes(' ')) {
+        return { valid: false, error: 'Hostname cannot contain spaces' };
+      }
+      return { valid: true };
+    },
+    username: (value) => {
+      if (!value || value.trim().length === 0) {
+        return { valid: true, defaultValue: 'ubuntu' };
+      }
+      if (value.includes(' ')) {
+        return { valid: false, error: 'Username cannot contain spaces' };
+      }
+      return { valid: true };
+    },
+    aws_key: (value) => {
+      if (!value || value.trim().length === 0) {
+        return { valid: false, error: 'AWS Access Key ID cannot be empty' };
+      }
+      if (!value.startsWith('AKIA')) {
+        return { valid: false, error: 'AWS Access Key ID should start with AKIA' };
+      }
+      if (value.length !== 20) {
+        return { valid: false, error: 'AWS Access Key ID should be 20 characters long' };
+      }
+      return { valid: true };
+    },
+    aws_secret: (value) => {
+      if (!value || value.trim().length === 0) {
+        return { valid: false, error: 'AWS Secret Access Key cannot be empty' };
+      }
+      if (value.length !== 40) {
+        return { valid: false, error: 'AWS Secret Access Key should be 40 characters long' };
+      }
+      return { valid: true };
+    },
+    aws_region: (value) => {
+      if (!value || value.trim().length === 0) {
+        return { valid: false, error: 'AWS region cannot be empty' };
+      }
+      if (!/^[a-z]{2}-[a-z]+-\d+$/.test(value)) {
+        return { valid: false, error: 'Invalid AWS region format (e.g., us-east-1)' };
+      }
+      return { valid: true };
+    },
+    generic: (value) => {
+      if (!value || value.trim().length === 0) {
+        return { valid: false, error: 'Value cannot be empty' };
+      }
+      return { valid: true };
+    }
+  };
+  
+  return validations[type] || validations.generic;
+}
+
+/**
+ * Prompt for a secret using plugin help text
+ */
+async function promptForPluginSecret(secret, serverPlugin) {
+  const { name, envVar, type, description, default: defaultValue } = secret;
+  
+  // Get help text from plugin if available
+  const helpText = serverPlugin?.helpText?.[name] || `Enter value for ${envVar}:`;
+  
+  console.log(`\n🔑 ${envVar}`);
+  console.log(`   ${description || name}`);
+  console.log(helpText);
+  
+  let value;
+  let isValid = false;
+  let attempts = 0;
+  const maxAttempts = 3;
+  const validate = getSecretValidation(type);
+  
+  while (!isValid && attempts < maxAttempts) {
+    attempts++;
+    
+    // Multi-line input for SSH keys
+    if (type === 'ssh_key') {
+      value = await promptMultiLine('');
+    } else {
+      const prompt = defaultValue ? `   > [${defaultValue}] ` : '   > ';
+      value = await promptSingleLine(prompt);
+    }
+    
+    // Use default if empty and default exists
+    if ((!value || value.trim() === '') && defaultValue) {
+      value = defaultValue;
+      console.log(`   Using default: ${value}`);
+    }
+    
+    // Validate
+    const validation = validate(value);
+    
+    if (validation.valid) {
+      isValid = true;
+      if (validation.defaultValue && (!value || value.trim().length === 0)) {
+        value = validation.defaultValue;
+        console.log(`   Using default: ${value}`);
+      }
+      console.log('   ✅ Valid input\n');
+    } else {
+      console.error(`   ❌ ${validation.error}`);
+      if (attempts < maxAttempts) {
+        console.log(`   Please try again (${attempts}/${maxAttempts})...\n`);
+      } else {
+        throw new Error(`Maximum attempts reached for ${envVar}`);
+      }
+    }
+  }
+  
+  return value;
+}
+
+/**
+ * Parse environments from core.yml config
+ */
+function parseEnvironments(config) {
+  const environments = [];
+  
+  // Check for new environments format
+  if (config.environments) {
+    for (const [envName, envConfig] of Object.entries(config.environments)) {
+      environments.push({
+        name: envName,
+        server: envConfig.server || (envName === 'staging' ? 'mac-mini' : 'aws-ec2'),
+        ...envConfig
+      });
+    }
+  } else {
+    // Legacy format - detect staging and production from config
+    if (config.staging_domain || config.staging_host) {
+      environments.push({
+        name: 'staging',
+        server: 'mac-mini',
+        domain: config.staging_domain,
+        host: config.staging_host
+      });
+    }
+    
+    if (config.prod_domain || config.domain || config.prod_host) {
+      environments.push({
+        name: 'production',
+        server: 'aws-ec2',
+        domain: config.prod_domain || config.domain,
+        host: config.prod_host
+      });
+    }
+  }
+  
+  // Default to staging + production if nothing detected
+  if (environments.length === 0) {
+    environments.push(
+      { name: 'staging', server: 'mac-mini' },
+      { name: 'production', server: 'aws-ec2' }
+    );
+  }
+  
+  return environments;
+}
+
+/**
+ * Collect all required secrets from environments
+ */
+function collectRequiredSecrets(environments) {
+  const secretsMap = new Map();
+  const sharedSecrets = [];
+  
+  for (const env of environments) {
+    const ServerPlugin = getPlugin('server', env.server);
+    
+    if (!ServerPlugin) {
+      console.warn(`⚠️  Unknown server plugin: ${env.server}`);
+      continue;
+    }
+    
+    const envSecrets = ServerPlugin.getSecretsForEnvironment(env.name);
+    
+    for (const secret of envSecrets) {
+      // Check if this is a shared secret (like AWS credentials)
+      const secretDef = ServerPlugin.requiredSecrets.find(s => s.name === secret.name);
+      
+      if (secretDef?.shared) {
+        // Only add once for shared secrets
+        if (!sharedSecrets.find(s => s.name === secretDef.name)) {
+          sharedSecrets.push({
+            ...secret,
+            envVar: secretDef.name, // Use base name, not prefixed
+            server: env.server,
+            environment: null // Shared across all
+          });
+        }
+      } else {
+        secretsMap.set(secret.envVar, {
+          ...secret,
+          server: env.server,
+          environment: env.name
+        });
+      }
+    }
+  }
+  
+  // Add shared secrets at the end
+  for (const shared of sharedSecrets) {
+    secretsMap.set(shared.envVar, shared);
+  }
+  
+  return Array.from(secretsMap.values());
 }
 
 /**
@@ -30,10 +267,7 @@ async function initFix(options = {}) {
   const fixReport = {
     local: [],
     github: [],
-    servers: {
-      staging: [],
-      prod: []
-    },
+    servers: {},
     errors: []
   };
   
@@ -44,7 +278,7 @@ async function initFix(options = {}) {
   console.log('   Running comprehensive check...\n');
   
   // Run init check to discover all issues
-  await init({ ...options, noRemote: true });
+  await init({ ...options, noRemote: true, skipWorkflow: true });
   
   console.log('\n' + '─'.repeat(70));
   console.log('');
@@ -75,10 +309,24 @@ async function initFix(options = {}) {
   }
   
   // Get repo info
-  const repoInfo = getGitHubRepoInfo();
+  const repoInfo = GitHubSecretsStore.getRepoInfo();
   if (!repoInfo) {
     console.error('❌ Could not detect GitHub repository');
     console.error('   Make sure you are in a git repository with a GitHub remote');
+    process.exit(1);
+  }
+  
+  // Create secret store instance
+  const secretStore = createSecretStore('github', {
+    token,
+    owner: repoInfo.owner,
+    repo: repoInfo.repo
+  });
+  
+  // Validate secret store access
+  const storeValid = await secretStore.validate();
+  if (!storeValid.valid) {
+    console.error(`❌ Cannot access GitHub secrets: ${storeValid.error}`);
     process.exit(1);
   }
   
@@ -97,103 +345,188 @@ async function initFix(options = {}) {
   fixReport.local.push('Local environment configured');
   
   // ============================================================
-  // STAGE 2B: GITHUB SECRETS (must happen before servers can deploy)
+  // STAGE 2B: PARSE ENVIRONMENTS AND COLLECT SECRETS
+  // ============================================================
+  const environments = parseEnvironments(config);
+  
+  console.log('🌍 Detected Environments:\n');
+  for (const env of environments) {
+    const ServerPlugin = getPlugin('server', env.server);
+    const serverName = ServerPlugin?.name || env.server;
+    console.log(`   - ${env.name} → ${serverName}`);
+    fixReport.servers[env.name] = [];
+  }
+  console.log('');
+  
+  // Collect all required secrets from plugins
+  const allSecrets = collectRequiredSecrets(environments);
+  
+  // Add environment file secrets
+  allSecrets.unshift(
+    { name: 'STAGING_ENVS', envVar: 'STAGING_ENVS', type: 'env_file' },
+    { name: 'PROD_ENVS', envVar: 'PROD_ENVS', type: 'env_file' }
+  );
+  
+  // ============================================================
+  // STAGE 2C: CHECK WHICH SECRETS ARE MISSING
   // ============================================================
   console.log('🔐 Part 2: GitHub Secrets Upload\n');
+  console.log('   🔍 Checking GitHub for missing secrets...\n');
   
-  // Check for .env files
-  const stagingPath = path.join(rootDir, '.env.staging');
-  const prodPath = path.join(rootDir, '.env.prod');
+  const secretsCheck = await secretStore.checkSecrets(allSecrets.map(s => s.envVar));
   
-  const stagingExists = fs.existsSync(stagingPath);
-  const prodExists = fs.existsSync(prodPath);
-  
-  if (!stagingExists && !prodExists) {
-    console.error('   ❌ No environment files found');
-    console.error('   Create .env.staging and/or .env.prod files');
-    fixReport.errors.push('No environment files found');
-    process.exit(1);
-  }
-  
-  // Upload STAGING_ENVS if .env.staging exists
-  if (stagingExists) {
-    console.log('   📤 Uploading STAGING_ENVS...');
-    const stagingEnv = parseEnvFile(stagingPath);
-    if (!stagingEnv || Object.keys(stagingEnv).length === 0) {
-      console.log('      ⚠️  .env.staging is empty, skipping');
-    } else {
-      const stagingString = envObjectToString(stagingEnv);
-      const result = await uploadSecret(
-        repoInfo.owner,
-        repoInfo.repo,
-        'STAGING_ENVS',
-        stagingString,
-        token
-      );
-      
-      if (result.success) {
-        console.log('      ✅ STAGING_ENVS uploaded successfully');
-        console.log(`      📊 ${Object.keys(stagingEnv).length} environment variables`);
-        fixReport.github.push(`STAGING_ENVS (${Object.keys(stagingEnv).length} vars)`);
-      } else {
-        console.error(`      ❌ Failed: ${result.error}`);
-        fixReport.errors.push(`STAGING_ENVS: ${result.error}`);
-        if (!options.continueOnError) {
-          process.exit(1);
-        }
-      }
-    }
-  } else {
-    console.log('   ⚠️  .env.staging not found, skipping STAGING_ENVS');
-  }
-  
-  // Upload PROD_ENVS if .env.prod exists
-  if (prodExists) {
-    console.log('   📤 Uploading PROD_ENVS...');
-    const prodEnv = parseEnvFile(prodPath);
-    if (!prodEnv || Object.keys(prodEnv).length === 0) {
-      console.log('      ⚠️  .env.prod is empty, skipping');
-    } else {
-      const prodString = envObjectToString(prodEnv);
-      const result = await uploadSecret(
-        repoInfo.owner,
-        repoInfo.repo,
-        'PROD_ENVS',
-        prodString,
-        token
-      );
-      
-      if (result.success) {
-        console.log('      ✅ PROD_ENVS uploaded successfully');
-        console.log(`      📊 ${Object.keys(prodEnv).length} environment variables`);
-        fixReport.github.push(`PROD_ENVS (${Object.keys(prodEnv).length} vars)`);
-      } else {
-        console.error(`      ❌ Failed: ${result.error}`);
-        fixReport.errors.push(`PROD_ENVS: ${result.error}`);
-        if (!options.continueOnError) {
-          process.exit(1);
-        }
-      }
-    }
-  } else {
-    console.error('   ❌ .env.prod not found - REQUIRED');
-    console.error('   Create .env.prod file with production environment variables');
-    fixReport.errors.push('.env.prod not found');
+  if (secretsCheck.error) {
+    console.error(`   ❌ ${secretsCheck.error}`);
+    fixReport.errors.push(secretsCheck.error);
     if (!options.continueOnError) {
       process.exit(1);
+    }
+  }
+  
+  const missing = secretsCheck.missing || [];
+  const present = secretsCheck.present || [];
+  
+  if (present.length > 0) {
+    console.log(`   ✅ ${present.length} secret(s) already exist:`);
+    present.forEach(s => console.log(`      - ${s}`));
+    console.log('');
+  }
+  
+  if (missing.length === 0) {
+    console.log('   ✅ All secrets already exist in GitHub\n');
+  } else {
+    console.log(`   📝 Found ${missing.length} missing secret(s):\n`);
+    missing.forEach(s => console.log(`      - ${s}`));
+    console.log('');
+    
+    // Separate by type
+    const envFileSecrets = missing.filter(s => s.includes('ENVS'));
+    const infraSecrets = missing.filter(s => !s.includes('ENVS'));
+    
+    // ============================================================
+    // Handle env file secrets first (read from files)
+    // ============================================================
+    for (const secretName of envFileSecrets) {
+      const envFileName = secretName === 'STAGING_ENVS' ? '.env.staging' : '.env.prod';
+      const envPath = path.join(rootDir, envFileName);
+      
+      if (!fs.existsSync(envPath)) {
+        console.error(`   ❌ ${envFileName} required but not found`);
+        console.error(`      Create ${envFileName} with your environment variables\n`);
+        fixReport.errors.push(`${envFileName} not found`);
+        if (!options.continueOnError) {
+          process.exit(1);
+        }
+        continue;
+      }
+      
+      console.log(`   📤 Uploading ${secretName} from ${envFileName}...`);
+      const envData = parseEnvFile(envPath);
+      
+      if (!envData || Object.keys(envData).length === 0) {
+        console.log(`      ⚠️  ${envFileName} is empty, skipping`);
+        continue;
+      }
+      
+      const envString = envObjectToString(envData);
+      const result = await secretStore.uploadSecret(secretName, envString);
+      
+      if (result.success) {
+        console.log(`      ✅ ${secretName} uploaded successfully`);
+        console.log(`      📊 ${Object.keys(envData).length} environment variables\n`);
+        fixReport.github.push(`${secretName} (${Object.keys(envData).length} vars)`);
+      } else {
+        console.error(`      ❌ Failed: ${result.error}\n`);
+        fixReport.errors.push(`${secretName}: ${result.error}`);
+        if (!options.continueOnError) {
+          process.exit(1);
+        }
+      }
+    }
+    
+    // ============================================================
+    // Handle infrastructure secrets (prompt interactively)
+    // ============================================================
+    if (infraSecrets.length > 0) {
+      console.log('   🔑 Infrastructure Secrets Setup\n');
+      console.log('      The following secrets need to be configured:\n');
+      infraSecrets.forEach(s => console.log(`         - ${s}`));
+      console.log('');
+      
+      for (const secretName of infraSecrets) {
+        // Find the secret definition
+        const secretDef = allSecrets.find(s => s.envVar === secretName);
+        
+        if (!secretDef) {
+          // Fallback to legacy prompting
+          try {
+            const value = await promptForSecret(secretName, config);
+            
+            console.log(`   📤 Uploading ${secretName}...`);
+            const result = await secretStore.uploadSecret(secretName, value);
+            
+            if (result.success) {
+              console.log(`   ✅ ${secretName} uploaded successfully\n`);
+              fixReport.github.push(secretName);
+            } else {
+              console.error(`   ❌ Failed to upload ${secretName}: ${result.error}\n`);
+              fixReport.errors.push(`${secretName}: ${result.error}`);
+              if (!options.continueOnError) {
+                process.exit(1);
+              }
+            }
+          } catch (error) {
+            console.error(`   ❌ Error prompting for ${secretName}: ${error.message}\n`);
+            fixReport.errors.push(`${secretName}: ${error.message}`);
+            if (!options.continueOnError) {
+              process.exit(1);
+            }
+          }
+          continue;
+        }
+        
+        // Get the server plugin for help text
+        const ServerPlugin = getPlugin('server', secretDef.server);
+        
+        try {
+          const value = await promptForPluginSecret(secretDef, ServerPlugin);
+          
+          console.log(`   📤 Uploading ${secretName}...`);
+          const result = await secretStore.uploadSecret(secretName, value);
+          
+          if (result.success) {
+            console.log(`   ✅ ${secretName} uploaded successfully\n`);
+            fixReport.github.push(secretName);
+          } else {
+            console.error(`   ❌ Failed to upload ${secretName}: ${result.error}\n`);
+            fixReport.errors.push(`${secretName}: ${result.error}`);
+            if (!options.continueOnError) {
+              process.exit(1);
+            }
+          }
+        } catch (error) {
+          console.error(`   ❌ Error prompting for ${secretName}: ${error.message}\n`);
+          fixReport.errors.push(`${secretName}: ${error.message}`);
+          if (!options.continueOnError) {
+            process.exit(1);
+          }
+        }
+      }
     }
   }
   
   console.log('');
   
   // ============================================================
-  // STAGE 2C: REMOTE SERVERS (can only work after secrets exist)
+  // STAGE 2D: REMOTE SERVERS
   // ============================================================
   console.log('🖥️  Part 3: Remote Server Setup\n');
   console.log('   ℹ️  Server fixes will be done by deployment workflows');
   console.log('   ℹ️  SSH checks will run in verification step\n');
-  fixReport.servers.staging.push('Ready for deployment');
-  fixReport.servers.prod.push('Ready for deployment');
+  
+  for (const env of environments) {
+    fixReport.servers[env.name].push('Ready for deployment');
+  }
   
   // ============================================================
   // FINAL REPORT
@@ -216,6 +549,14 @@ async function initFix(options = {}) {
     console.log('');
   }
   
+  if (Object.keys(fixReport.servers).length > 0) {
+    console.log('   Server Environments:');
+    for (const [env, fixes] of Object.entries(fixReport.servers)) {
+      fixes.forEach(fix => console.log(`      ✅ ${env}: ${fix}`));
+    }
+    console.log('');
+  }
+  
   if (fixReport.errors.length > 0) {
     console.log('   ⚠️  Errors:');
     fixReport.errors.forEach(err => console.log(`      ❌ ${err}`));
@@ -226,8 +567,27 @@ async function initFix(options = {}) {
   console.log(`   https://github.com/${repoInfo.owner}/${repoInfo.repo}/settings/secrets/actions`);
   console.log('');
   
+  // Ask about deployment
+  if (fixReport.errors.length === 0 && !options.noRemote) {
+    const shouldDeploy = await confirm('🚀 Deploy now?', true);
+    
+    if (shouldDeploy) {
+      console.log('\n📦 Running deployment...\n');
+      
+      try {
+        const deploy = require('./deploy');
+        await deploy({ token });
+      } catch (error) {
+        console.error(`❌ Deployment failed: ${error.message}`);
+        fixReport.errors.push(`Deployment: ${error.message}`);
+      }
+    } else {
+      console.log('\n💡 Run deployment later with: npx core deploy\n');
+    }
+  }
+  
   // Optionally trigger workflow to verify
-  if (!options.noRemote && token) {
+  if (!options.noRemote && token && fixReport.errors.length === 0) {
     console.log('\n🚀 Triggering workflow to verify fixes...\n');
     try {
       const { Octokit } = require('@octokit/rest');
@@ -271,7 +631,7 @@ async function initFix(options = {}) {
         workflow_id: 'core-init.yml',
         ref: currentBranch,
         inputs: {
-          fix: 'true' // Verify fixes were applied
+          fix: 'true'
         }
       });
       
@@ -293,4 +653,3 @@ async function initFix(options = {}) {
 }
 
 module.exports = initFix;
-

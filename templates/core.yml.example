@@ -26,8 +26,77 @@ github_repo: EXAMPLE-yourorg/factiii
 
 # SSL Email for Let's Encrypt
 # Used for certificate notifications and account recovery
-# This email appears in certificate transparency logs (public)
 ssl_email: EXAMPLE-admin@yourdomain.com
+
+# ----------------------------------------------------------------------------
+# PLUGINS CONFIGURATION
+# ----------------------------------------------------------------------------
+# Global plugin defaults. These can be overridden per environment.
+#
+# Available plugins:
+#   secrets: github (default), aws-sm (coming soon), vault (coming soon)
+#   registry: ecr (default), dockerhub (coming soon), gcr (coming soon)
+
+plugins:
+  secrets: github       # Where to store secrets (GitHub Actions Secrets)
+  registry: ecr         # Where to push Docker images
+
+# ----------------------------------------------------------------------------
+# SERVERS CONFIGURATION
+# ----------------------------------------------------------------------------
+# Define your deployment servers with their plugin types.
+# Each server can be referenced by name in the environments section.
+#
+# ⚠️  IMPORTANT: Never put sensitive values (passwords, keys, hostnames) in this file!
+# All secrets are stored in GitHub Secrets and will be prompted for when you run:
+#   npx core init fix
+#
+# The server plugin automatically determines what secrets it needs:
+# - mac-mini plugin needs: {ENV}_SSH, {ENV}_HOST, {ENV}_USER
+# - aws-ec2 plugin needs: {ENV}_SSH, {ENV}_HOST, {ENV}_USER + AWS credentials
+#
+# Example: "staging" environment using "mac-mini" server will look for:
+#   STAGING_SSH, STAGING_HOST, STAGING_USER in GitHub Secrets
+
+servers:
+  mac-mini:
+    plugin: mac-mini                # Server provider plugin
+    
+  aws-ec2-prod:
+    plugin: aws-ec2                 # AWS EC2 provider
+    region: us-east-1               # AWS region (for auto-provisioning)
+    # instance_type: t3.small       # Optional: instance type for auto-provisioning
+    # auto_provision: false         # Optional: set to true to auto-create EC2 instances
+
+# ----------------------------------------------------------------------------
+# ENVIRONMENTS CONFIGURATION
+# ----------------------------------------------------------------------------
+# Define your deployment environments. Each environment maps to a server
+# and can have environment-specific settings.
+
+environments:
+  staging:
+    server: mac-mini                # Reference to server defined above
+    domain: EXAMPLE-staging.factiii.com
+    port: 3001
+    env_file: .env.staging          # Local env file to read from
+    
+  production:
+    server: aws-ec2-prod            # Reference to server defined above
+    domain: EXAMPLE-factiii.com
+    port: 3001
+    env_file: .env.prod
+
+  # Example: Additional environments
+  # staging2:
+  #   server: mac-mini              # Same server, different port
+  #   domain: staging2.factiii.com
+  #   port: 3010
+  #
+  # production-west:
+  #   server: aws-ec2-west          # Different server (define in servers section)
+  #   domain: west.factiii.com
+  #   port: 3001
 
 # ----------------------------------------------------------------------------
 # AWS ECR CONFIGURATION
@@ -39,59 +108,49 @@ ssl_email: EXAMPLE-admin@yourdomain.com
 ecr_registry: EXAMPLE-123456789.dkr.ecr.us-east-1.amazonaws.com
 
 # ECR Repository Name
-# The repository within your registry where images are pushed
 ecr_repository: EXAMPLE-apps
 
 # ----------------------------------------------------------------------------
-# DOMAIN CONFIGURATION
+# APPS CONFIGURATION (Optional)
 # ----------------------------------------------------------------------------
-# Domains for each environment
+# Define the applications in your monorepo. Core auto-detects these,
+# but you can override or add custom settings here.
 
-# Staging Domain
-# Where your staging environment is accessible
-staging_domain: EXAMPLE-staging-factiii.yourdomain.com
-
-# Production Domain
-# Where your production environment is accessible
-prod_domain: EXAMPLE-factiii.yourdomain.com
-
-# ----------------------------------------------------------------------------
-# SERVER CONFIGURATION
-# ----------------------------------------------------------------------------
-# SSH connection details for deployment targets
-# Actual SSH keys are stored in GitHub Secrets, not here
-
-servers:
-  staging:
-    # GitHub secret name containing SSH private key
-    ssh_key_secret: STAGING_SSH
-    # Server hostname or IP address
-    host: EXAMPLE-192.168.1.100
-    # SSH username
-    user: EXAMPLE-admin
-
-  production:
-    ssh_key_secret: PROD_SSH
-    host: EXAMPLE-ec2-xx-xx-xx-xx.compute-1.amazonaws.com
-    user: EXAMPLE-ubuntu
+# apps:
+#   - type: nextjs
+#     path: apps/web
+#     port: 3000
+#     health_check: /api/health
+#
+#   - type: expo
+#     path: apps/mobile
+#     # Expo apps don't deploy to servers, but Core can help with builds
+#
+#   - type: node-api
+#     path: apps/server
+#     port: 4000
 
 # ----------------------------------------------------------------------------
 # GITHUB SECRETS REFERENCE
 # ----------------------------------------------------------------------------
-# The following secrets must be configured in GitHub Settings → Secrets:
+# The following secrets must be configured in GitHub Settings → Secrets.
+# Run `npx core init fix` to set these up interactively.
 #
-# SSH Keys:
-#   - STAGING_SSH: Private SSH key for staging server
-#   - PROD_SSH: Private SSH key for production server
-#
-# AWS Credentials:
-#   - AWS_ACCESS_KEY_ID: AWS access key
-#   - AWS_SECRET_ACCESS_KEY: AWS secret key
-#   - AWS_REGION: AWS region (e.g., us-east-1)
-#
-# Environment Variables:
-#   - STAGING_ENVS: Staging environment variables (newline-separated key=value)
-#   - PROD_ENVS: Production environment variables (newline-separated key=value)
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ SECRET NAME              │ DESCRIPTION                                  │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │ STAGING_SSH              │ SSH private key for staging server           │
+# │ STAGING_HOST             │ Staging server hostname/IP                   │
+# │ STAGING_USER             │ SSH username for staging                     │
+# │ PROD_SSH                 │ SSH private key for production server        │
+# │ PROD_HOST                │ Production server hostname/IP                │
+# │ PROD_USER                │ SSH username for production                  │
+# │ AWS_ACCESS_KEY_ID        │ AWS access key for ECR                       │
+# │ AWS_SECRET_ACCESS_KEY    │ AWS secret key for ECR                       │
+# │ AWS_REGION               │ AWS region (e.g., us-east-1)                 │
+# │ STAGING_ENVS             │ Staging env vars (newline-separated)         │
+# │ PROD_ENVS                │ Production env vars (newline-separated)      │
+# └─────────────────────────────────────────────────────────────────────────┘
 #
 # ============================================================================
 # AUTO-DETECTED SETTINGS (coreAuto.yml)
@@ -117,10 +176,6 @@ servers:
 # # Dockerfile location
 # dockerfile: apps/server/Dockerfile
 #
-# # Port assignments (auto-assigned starting at 3001)
-# staging_port: 3001
-# prod_port: 3002
-#
 # # Health check endpoint
 # health_check: /api/health
 #
@@ -130,15 +185,23 @@ servers:
 # # Build and test commands
 # build_command: pnpm build
 # test_command: pnpm test
-#
-# # Environment secret handling
-# is_staging_secret: true
 # ----------------------------------------------------------------------------
 #
-# Override example:
-#   dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
+# ============================================================================
+# EXTERNAL PLUGINS (Optional)
+# ============================================================================
+# You can use community plugins from npm:
 #
-# Core will warn if:
-#   - Auto-detected != deployed (unexpected drift)
-#   - Auto-detected != override (acknowledged change)
+# plugins:
+#   external:
+#     - "@factiii/core-plugin-digitalocean"
+#     - "@somedev/core-plugin-hetzner"
 #
+# Then reference them in your servers section:
+#
+# servers:
+#   do-droplet:
+#     plugin: digitalocean
+#     api_key_secret: DO_API_KEY
+#
+
