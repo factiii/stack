@@ -642,91 +642,14 @@ async function initFix(options = {}) {
   console.log(`   https://github.com/${repoInfo.owner}/${repoInfo.repo}/settings/secrets/actions`);
   console.log('');
   
-  // Ask about deployment only if there are no errors
-  if (fixReport.errors.length === 0 && !options.noRemote) {
-    const shouldDeploy = await confirm('🚀 Deploy now?', true);
-    
-    if (shouldDeploy) {
-      console.log('\n📦 Running deployment...\n');
-      
-      try {
-        const deploy = require('./deploy');
-        await deploy({ token });
-      } catch (error) {
-        console.error(`❌ Deployment failed: ${error.message}`);
-        fixReport.errors.push(`Deployment: ${error.message}`);
-      }
-    } else {
-      console.log('\n💡 Run deployment later with: npx factiii deploy\n');
-    }
-  } else if (fixReport.errors.length > 0) {
-    console.log('\n⚠️  Deployment skipped due to errors above.');
-    console.log('   Fix the errors and run: npx factiii init fix\n');
-  }
-  
-  // Optionally trigger workflow to verify
-  if (!options.noRemote && token && fixReport.errors.length === 0) {
-    console.log('\n🚀 Triggering workflow to verify fixes...\n');
-    try {
-      const { Octokit } = require('@octokit/rest');
-      const octokit = new Octokit({ auth: token });
-      const { execSync } = require('child_process');
-      
-      // Get current branch
-      let currentBranch;
-      try {
-        currentBranch = execSync('git branch --show-current', { 
-          encoding: 'utf8',
-          stdio: 'pipe',
-          cwd: rootDir 
-        }).trim();
-      } catch (e) {
-        currentBranch = 'main';
-      }
-      
-      // Verify workflow exists in GitHub before triggering
-      try {
-        const { data: workflow } = await octokit.rest.actions.getWorkflow({
-          owner: repoInfo.owner,
-          repo: repoInfo.repo,
-          workflow_id: 'factiii-init.yml'
-        });
-        console.log(`✅ Found workflow: ${workflow.name}\n`);
-      } catch (error) {
-        if (error.status === 404) {
-          console.log('⚠️  Workflow not found in GitHub repository.');
-          console.log('   Please commit and push .github/workflows/factiii-init.yml');
-          console.log('   Then run: npx factiii init (to verify)\n');
-          return;
-        }
-        throw error;
-      }
-      
-      // Trigger workflow with fix=true to verify
-      await octokit.rest.actions.createWorkflowDispatch({
-        owner: repoInfo.owner,
-        repo: repoInfo.repo,
-        workflow_id: 'factiii-init.yml',
-        ref: currentBranch,
-        inputs: {
-          fix: 'true'
-        }
-      });
-      
-      console.log(`✅ Workflow triggered on branch: ${currentBranch}`);
-      console.log(`   Repository: ${repoInfo.owner}/${repoInfo.repo}`);
-      console.log(`   View: https://github.com/${repoInfo.owner}/${repoInfo.repo}/actions\n`);
-    } catch (error) {
-      if (error.status === 404) {
-        console.log('⚠️  Workflow not found in GitHub.');
-        console.log('   Please commit and push .github/workflows/factiii-init.yml\n');
-      } else {
-        console.log(`⚠️  Could not trigger workflow: ${error.message}`);
-        console.log('   Run: npx factiii init (to verify manually)\n');
-      }
-    }
+  // Show final status
+  if (fixReport.errors.length === 0) {
+    console.log('✅ All issues fixed!\n');
+    console.log('   Next: npx factiii deploy\n');
   } else {
-    console.log('   Run: npx factiii init (to verify)\n');
+    console.log('⚠️  Some issues could not be fixed automatically:\n');
+    fixReport.errors.forEach(err => console.log(`   - ${err}`));
+    console.log('\n   Fix manually, then run: npx factiii init fix\n');
   }
 }
 

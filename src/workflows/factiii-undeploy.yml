@@ -21,9 +21,6 @@ on:
           - prod
           - all
 
-env:
-  NODE_VERSION: '20'
-
 jobs:
   undeploy-staging:
     if: |
@@ -34,10 +31,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read versions from config
+        id: read-versions
+        run: |
+          if [ -f "factiiiAuto.yml" ]; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+            NODE_VERSION=$(yq eval '.node_version // "20"' factiiiAuto.yml)
+          else
+            NODE_VERSION="20"
+          fi
+          echo "node_version=$NODE_VERSION" >> $GITHUB_OUTPUT
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: ${{ steps.read-versions.outputs.node_version }}
 
       - name: Remove from staging server
         env:
@@ -91,10 +100,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read versions from config
+        id: read-versions
+        run: |
+          if [ -f "factiiiAuto.yml" ]; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+            NODE_VERSION=$(yq eval '.node_version // "20"' factiiiAuto.yml)
+          else
+            NODE_VERSION="20"
+          fi
+          echo "node_version=$NODE_VERSION" >> $GITHUB_OUTPUT
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: ${{ steps.read-versions.outputs.node_version }}
 
       - name: Remove from production server
         env:

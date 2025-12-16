@@ -13,24 +13,20 @@ async function deploy(options = {}) {
   const rootDir = process.cwd();
   const configPath = path.resolve(rootDir, options.config || 'factiii.yml');
 
-  console.log('🔍 Validating local repository configuration...\n');
+  console.log('🔍 Running init check before deployment...\n');
 
-  // Step 1: Check factiii.yml exists
-  if (!fs.existsSync(configPath)) {
-    console.error(`❌ Config file not found: ${configPath}`);
-    console.error('   Run: npx factiii init');
+  // Run init in check-only mode
+  const init = require('./init');
+  const initSummary = await init({ skipWorkflow: true, silent: false });
+
+  // If ANY critical issues, show them and abort
+  if (initSummary && initSummary.critical > 0) {
+    console.log('\n❌ Deployment cancelled due to init check failures (see above)\n');
+    console.log('   Run: npx factiii init fix\n');
     process.exit(1);
   }
-  console.log('✅ Found factiii.yml');
 
-  // Step 2: Validate factiii.yml (includes EXAMPLE- check now)
-  console.log('🔍 Validating factiii.yml...');
-  try {
-    validate({ config: configPath });
-  } catch (error) {
-    console.error('❌ Config validation failed. Fix errors before deploying.\n');
-    process.exit(1);
-  }
+  console.log('\n✅ Init check passed. Proceeding with deployment...\n');
 
   // Load config
   const config = yaml.load(fs.readFileSync(configPath, 'utf8'));

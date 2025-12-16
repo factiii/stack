@@ -188,6 +188,63 @@ function detectPackageManager(rootDir) {
 }
 
 /**
+ * Detect Node.js version from package.json
+ */
+function detectNodeVersion(rootDir) {
+  const packageJsonPath = path.join(rootDir, 'package.json');
+  if (!fs.existsSync(packageJsonPath)) {
+    return null;
+  }
+  
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    if (pkg?.engines?.node) {
+      // Handle ranges like ">=18.0.0" or "^20.0.0" or exact "24.11.1"
+      // Extract the version number and keep major.minor or major.minor.patch
+      const cleaned = pkg.engines.node.replace(/[^0-9.]/g, '');
+      // Return the full version string (e.g., "24.11.1" or "20")
+      return cleaned || null;
+    }
+  } catch (e) {
+    // Ignore errors
+  }
+  
+  return null;
+}
+
+/**
+ * Detect pnpm version from package.json
+ */
+function detectPnpmVersion(rootDir) {
+  const packageJsonPath = path.join(rootDir, 'package.json');
+  if (!fs.existsSync(packageJsonPath)) {
+    return null;
+  }
+  
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    
+    // Check packageManager field (e.g., "pnpm@9.1.0")
+    if (pkg?.packageManager?.startsWith('pnpm@')) {
+      const version = pkg.packageManager.split('@')[1];
+      // Return major version for compatibility
+      return version.split('.')[0];
+    }
+    
+    // Check engines.pnpm
+    if (pkg?.engines?.pnpm) {
+      const cleaned = pkg.engines.pnpm.replace(/[^0-9.]/g, '');
+      // Return major version
+      return cleaned.split('.')[0];
+    }
+  } catch (e) {
+    // Ignore errors
+  }
+  
+  return null;
+}
+
+/**
  * Generate factiiiAuto.yml with auto-detected values
  */
 function generateCoreAuto(rootDir, options = {}) {
@@ -201,6 +258,8 @@ function generateCoreAuto(rootDir, options = {}) {
   const prisma = detectPrisma(rootDir);
   const dockerfile = findDockerfile(rootDir);
   const packageManager = detectPackageManager(rootDir);
+  const nodeVersion = detectNodeVersion(rootDir);
+  const pnpmVersion = detectPnpmVersion(rootDir);
   
   // Get Factiii version for tracking
   const factiiiVersion = getFactiiiVersion();
@@ -251,6 +310,15 @@ function generateCoreAuto(rootDir, options = {}) {
     lines.push('# dockerfile: Dockerfile  # Not found - you may need to create one');
   }
   lines.push(`package_manager: ${packageManager}`);
+  
+  // Runtime versions
+  if (nodeVersion) {
+    lines.push(`node_version: ${nodeVersion}`);
+  }
+  if (pnpmVersion && packageManager === 'pnpm') {
+    lines.push(`pnpm_version: ${pnpmVersion}`);
+  }
+  
   lines.push('');
   
   const content = lines.join('\n');
@@ -285,7 +353,10 @@ function generateCoreAuto(rootDir, options = {}) {
     if (prisma.version) console.log(`      Version: ${prisma.version}`);
   }
   if (dockerfile) console.log(`   ✅ Dockerfile: ${dockerfile}`);
-  console.log(`   📦 Package manager: ${packageManager}\n`);
+  console.log(`   📦 Package manager: ${packageManager}`);
+  if (nodeVersion) console.log(`   📦 Node version: ${nodeVersion}`);
+  if (pnpmVersion && packageManager === 'pnpm') console.log(`   📦 pnpm version: ${pnpmVersion}`);
+  console.log('');
 }
 
 module.exports = { generateCoreAuto };

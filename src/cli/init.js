@@ -977,15 +977,15 @@ async function init(options = {}) {
 
   // Final message
   if (summary.critical === 0 && summary.warnings === 0) {
-    console.log('✨ All checks passed! Your infrastructure is ready.\n');
-    console.log('🚀 Next: Run \'npx factiii deploy\' to deploy directly via SSH.\n');
+    console.log('✅ All checks passed! Deploy will work.\n');
+    console.log('   Next: npx factiii deploy\n');
   } else if (summary.critical === 0) {
-    console.log('✨ Setup is functional but some improvements recommended.\n');
-    console.log('   💡 Run \'npx factiii init\' anytime to re-check your setup.\n');
-    console.log('🚀 You can still deploy: npx factiii deploy\n');
+    console.log('✅ No critical issues. Deploy will work.\n');
+    console.log('   💡 Optional improvements recommended (see above)\n');
+    console.log('   Next: npx factiii deploy\n');
   } else {
-    console.log('⚠️  Please address critical issues before deploying.\n');
-    console.log('   💡 Run \'npx factiii init\' again after making changes.\n');
+    console.log('❌ Critical issues found (see above)\n');
+    console.log('   Next: npx factiii init fix\n');
   }
 
   // Return summary for use by other commands (e.g., init-fix)
