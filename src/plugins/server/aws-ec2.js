@@ -17,49 +17,27 @@ class AWSEC2Provider extends ServerProvider {
   static category = 'server';
   static version = '1.0.0';
   
+  // Simplified secrets - only SSH key and AWS_SECRET_ACCESS_KEY are secrets
+  // HOST is in core.yml, USER defaults to ubuntu in coreAuto.yml
+  // AWS_ACCESS_KEY_ID and AWS_REGION are in core.yml (not sensitive)
   static requiredSecrets = [
     { 
-      name: 'SSH_KEY', 
+      name: 'SSH', 
       type: 'ssh_key', 
       description: 'SSH private key for accessing EC2 instance',
       autoGenerate: true  // Can be auto-generated via AWS API
-    },
-    { 
-      name: 'HOST', 
-      type: 'hostname', 
-      description: 'EC2 public IP or hostname',
-      autoDetect: true    // Can be auto-detected from AWS
-    },
-    { 
-      name: 'USER', 
-      type: 'username', 
-      description: 'SSH username',
-      default: 'ubuntu'
-    },
-    {
-      name: 'AWS_ACCESS_KEY_ID',
-      type: 'aws_key',
-      description: 'AWS Access Key ID for ECR and EC2',
-      shared: true  // Shared across environments
     },
     {
       name: 'AWS_SECRET_ACCESS_KEY',
       type: 'aws_secret',
       description: 'AWS Secret Access Key',
       shared: true
-    },
-    {
-      name: 'AWS_REGION',
-      type: 'aws_region',
-      description: 'AWS Region',
-      shared: true,
-      default: 'us-east-1'
     }
   ];
   
   static helpText = {
-    SSH_KEY: `
-   For AWS EC2, you can:
+    SSH: `
+   SSH private key for accessing the EC2 instance.
    
    Option A: Auto-generate via AWS (recommended)
    - Core will create an EC2 Key Pair via AWS API
@@ -68,44 +46,13 @@ class AWSEC2Provider extends ServerProvider {
    Option B: Use existing key
    
    Step 1: Generate a new SSH key pair:
-   ssh-keygen -t ed25519 -C "ec2-deploy" -f ~/.ssh/ec2_deploy
+   ssh-keygen -t ed25519 -C "deploy-key" -f ~/.ssh/deploy_key
    
-   Step 2: Add PUBLIC key to EC2 instance (replace YOUR_HOST):
-   ssh-copy-id -i ~/.ssh/ec2_deploy.pub ubuntu@YOUR_HOST
+   Step 2: Add PUBLIC key to EC2 instance:
+   ssh-copy-id -i ~/.ssh/deploy_key.pub ubuntu@YOUR_HOST
    
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
-   cat ~/.ssh/ec2_deploy`,
-    
-    HOST: `
-   EC2 public IP address or hostname
-   
-   Examples:
-   - Elastic IP: 54.123.45.67
-   - Public DNS: ec2-54-123-45-67.compute-1.amazonaws.com
-   
-   Enter EC2 hostname or IP:`,
-    
-    USER: `
-   SSH username for EC2 instance
-   
-   Common usernames by AMI:
-   - Ubuntu: ubuntu
-   - Amazon Linux: ec2-user
-   - RHEL: ec2-user
-   - Debian: admin
-   
-   Enter SSH username (default: ubuntu):`,
-    
-    AWS_ACCESS_KEY_ID: `
-   AWS Access Key ID
-   
-   Get from AWS Console: IAM → Users → Security credentials
-   
-   Requirements:
-   - Permissions: EC2, ECR, (optionally) Route53
-   - Format: AKIA followed by 16 characters
-   
-   Enter AWS Access Key ID:`,
+   cat ~/.ssh/deploy_key`,
     
     AWS_SECRET_ACCESS_KEY: `
    AWS Secret Access Key
@@ -115,18 +62,9 @@ class AWSEC2Provider extends ServerProvider {
    This is shown only once when you create the key.
    If lost, you must create a new key pair.
    
-   Enter AWS Secret Access Key:`,
-    
-    AWS_REGION: `
-   AWS Region where your EC2 instance is located
+   Note: AWS_ACCESS_KEY_ID and AWS_REGION go in core.yml (not secrets)
    
-   Common regions:
-   - us-east-1 (N. Virginia)
-   - us-west-2 (Oregon)
-   - eu-west-1 (Ireland)
-   - ap-southeast-1 (Singapore)
-   
-   Enter AWS region:`
+   Enter AWS Secret Access Key:`
   };
   
   static capabilities = {

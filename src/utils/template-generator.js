@@ -173,28 +173,26 @@ function createEnvTemplates(rootDir, config) {
  */
 function generateSecretsChecklist() {
   return `
-   SSH (server access):
+   REQUIRED GitHub Secrets (minimal):
    ───────────────────────────────────────────────────────
-   □ STAGING_SSH    - SSH private key (ssh-keygen -t ed25519)
-   □ STAGING_HOST   - Server IP/hostname
-   □ STAGING_USER   - SSH username (default: ubuntu)
-   
-   □ PROD_SSH       - SSH private key (ssh-keygen -t ed25519)
-   □ PROD_HOST      - Server IP/hostname
-   □ PROD_USER      - SSH username (default: ubuntu)
+   □ STAGING_SSH           - SSH private key for staging
+   □ PROD_SSH              - SSH private key for production
+   □ AWS_SECRET_ACCESS_KEY - AWS secret key (only secret AWS value)
 
-   AWS (Docker registry):
+   OPTIONAL GitHub Secrets:
    ───────────────────────────────────────────────────────
-   □ AWS_ACCESS_KEY_ID     - IAM credentials for ECR
-   □ AWS_SECRET_ACCESS_KEY - IAM credentials for ECR
-   □ AWS_REGION            - e.g., us-east-1
+   □ STAGING_ENVS   - Environment vars from .env.staging
+   □ PROD_ENVS      - Environment vars from .env.prod
 
-   Environment (app secrets):
+   NOT SECRETS (in core.yml):
    ───────────────────────────────────────────────────────
-   □ STAGING_ENVS   - .env.staging file contents
-   □ PROD_ENVS      - .env.prod file contents
+   ✓ environments.{env}.host - Server IP/hostname
+   ✓ aws.access_key_id       - AWS access key ID
+   ✓ aws.region              - AWS region (e.g., us-east-1)
 
-   💡 TIP: Keep .env files local instead of adding to GitHub
+   NOT SECRETS (in coreAuto.yml):
+   ───────────────────────────────────────────────────────
+   ✓ ssh_user               - Defaults to ubuntu
 `.trim();
 }
 

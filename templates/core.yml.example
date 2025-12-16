@@ -29,6 +29,16 @@ github_repo: EXAMPLE-yourorg/factiii
 ssl_email: EXAMPLE-admin@yourdomain.com
 
 # ----------------------------------------------------------------------------
+# AWS CONFIGURATION
+# ----------------------------------------------------------------------------
+# These are NOT secrets - they identify which AWS account/region to use.
+# Only AWS_SECRET_ACCESS_KEY is stored in GitHub Secrets.
+
+aws:
+  access_key_id: EXAMPLE-AKIAXXXXXXXXXXXXXXXX
+  region: us-east-1
+
+# ----------------------------------------------------------------------------
 # PLUGINS CONFIGURATION
 # ----------------------------------------------------------------------------
 # Global plugin defaults. These can be overridden per environment.
@@ -47,16 +57,14 @@ plugins:
 # Define your deployment servers with their plugin types.
 # Each server can be referenced by name in the environments section.
 #
-# ⚠️  IMPORTANT: Never put sensitive values (passwords, keys, hostnames) in this file!
-# All secrets are stored in GitHub Secrets and will be prompted for when you run:
-#   npx core init fix
+# ⚠️  IMPORTANT: Only SSH private keys belong in GitHub Secrets!
+# 
+# What goes WHERE:
+# - core.yml: host, aws.access_key_id, aws.region (not sensitive)
+# - coreAuto.yml: ssh_user (defaults to ubuntu)
+# - GitHub Secrets: {ENV}_SSH, AWS_SECRET_ACCESS_KEY (sensitive)
 #
-# The server plugin automatically determines what secrets it needs:
-# - mac-mini plugin needs: {ENV}_SSH, {ENV}_HOST, {ENV}_USER
-# - aws-ec2 plugin needs: {ENV}_SSH, {ENV}_HOST, {ENV}_USER + AWS credentials
-#
-# Example: "staging" environment using "mac-mini" server will look for:
-#   STAGING_SSH, STAGING_HOST, STAGING_USER in GitHub Secrets
+# Run `npx core init fix` to set up GitHub Secrets interactively.
 
 servers:
   mac-mini:
@@ -78,14 +86,16 @@ environments:
   staging:
     server: mac-mini                # Reference to server defined above
     domain: EXAMPLE-staging.factiii.com
-    port: 3001
+    host: EXAMPLE-192.168.1.100     # Server IP or hostname (not a secret)
     env_file: .env.staging          # Local env file to read from
+    # port is auto-configured by deploy
     
   production:
     server: aws-ec2-prod            # Reference to server defined above
     domain: EXAMPLE-factiii.com
-    port: 3001
+    host: EXAMPLE-prod.example.com  # Server IP or hostname (not a secret)
     env_file: .env.prod
+    # port is auto-configured by deploy
 
   # Example: Additional environments
   # staging2:
@@ -131,26 +141,33 @@ ecr_repository: EXAMPLE-apps
 #     port: 4000
 
 # ----------------------------------------------------------------------------
-# GITHUB SECRETS REFERENCE
+# GITHUB SECRETS REFERENCE (Minimal)
 # ----------------------------------------------------------------------------
-# The following secrets must be configured in GitHub Settings → Secrets.
+# Only truly sensitive values go in GitHub Secrets.
 # Run `npx core init fix` to set these up interactively.
 #
+# REQUIRED SECRETS:
 # ┌─────────────────────────────────────────────────────────────────────────┐
 # │ SECRET NAME              │ DESCRIPTION                                  │
 # ├─────────────────────────────────────────────────────────────────────────┤
 # │ STAGING_SSH              │ SSH private key for staging server           │
-# │ STAGING_HOST             │ Staging server hostname/IP                   │
-# │ STAGING_USER             │ SSH username for staging                     │
 # │ PROD_SSH                 │ SSH private key for production server        │
-# │ PROD_HOST                │ Production server hostname/IP                │
-# │ PROD_USER                │ SSH username for production                  │
-# │ AWS_ACCESS_KEY_ID        │ AWS access key for ECR                       │
-# │ AWS_SECRET_ACCESS_KEY    │ AWS secret key for ECR                       │
-# │ AWS_REGION               │ AWS region (e.g., us-east-1)                 │
-# │ STAGING_ENVS             │ Staging env vars (newline-separated)         │
-# │ PROD_ENVS                │ Production env vars (newline-separated)      │
+# │ AWS_SECRET_ACCESS_KEY    │ AWS secret key (only secret AWS value)       │
 # └─────────────────────────────────────────────────────────────────────────┘
+#
+# OPTIONAL SECRETS:
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ STAGING_ENVS             │ Staging env vars (from .env.staging)         │
+# │ PROD_ENVS                │ Production env vars (from .env.prod)         │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# NOT SECRETS (in core.yml):
+#   - HOST: environments.{env}.host
+#   - AWS_ACCESS_KEY_ID: aws.access_key_id
+#   - AWS_REGION: aws.region
+#
+# NOT SECRETS (in coreAuto.yml):
+#   - ssh_user: defaults to ubuntu
 #
 # ============================================================================
 # AUTO-DETECTED SETTINGS (coreAuto.yml)

@@ -12,12 +12,13 @@ function generateWorkflows(options = {}) {
   fs.mkdirSync(outputDir, { recursive: true });
 
   // Copy workflow files (static files, no templates)
-  // Note: Core GENERATES these for repos but does NOT use them itself
-  // These are repo CI/CD workflows that run independently on git events
+  // Note: core-deploy.yml is triggered by npx core deploy
+  // Other workflows are repo CI/CD that run independently on git events
   const workflows = [
-    'core-staging.yml',
-    'core-production.yml',
-    'core-undeploy.yml'
+    'core-deploy.yml',      // Manual deployment (triggered by npx core deploy)
+    'core-staging.yml',     // Auto-deploy on push to main/staging
+    'core-production.yml',  // Auto-deploy on merge to production
+    'core-undeploy.yml'     // Manual cleanup
   ];
 
   let updated = 0;
@@ -76,24 +77,28 @@ function generateWorkflows(options = {}) {
   console.log(`\n✅ Workflow generation complete!`);
   console.log(`   📊 Summary: ${created} created, ${updated} updated, ${unchanged} unchanged`);
   
-  console.log(`\n💡 Key Distinction:`);
-  console.log(`   Core GENERATES these workflows for your repo but does NOT use them itself.`);
-  console.log(`   These are YOUR repo's CI/CD workflows - they run independently on git events.\n`);
+  console.log(`\n💡 How deployments work:`);
+  console.log(`   1. npx core deploy → triggers core-deploy.yml workflow`);
+  console.log(`   2. Workflow has access to GitHub Secrets (secure)`);
+  console.log(`   3. Workflow deploys to your servers via SSH\n`);
   
   console.log(`📝 Generated workflows:`);
-  console.log(`   - core-staging.yml: Auto-deploy on PR/push to main branch`);
-  console.log(`   - core-production.yml: Auto-deploy on merge to production branch`);
+  console.log(`   - core-deploy.yml: Manual deployment (triggered by npx core deploy)`);
+  console.log(`   - core-staging.yml: Auto-deploy on PR/push to main branch (optional)`);
+  console.log(`   - core-production.yml: Auto-deploy on merge to production branch (optional)`);
   console.log(`   - core-undeploy.yml: Manual cleanup trigger (optional)\n`);
   
-  console.log(`📋 How they work:`);
-  console.log(`   1. Workflows run automatically when you push/merge code`);
-  console.log(`   2. They build, test, and deploy your app independently`);
-  console.log(`   3. Core is NOT involved - these are standard GitHub Actions\n`);
+  console.log(`📋 Auto-deploy workflows (optional):`);
+  console.log(`   - Enable by pushing/merging to configured branches`);
+  console.log(`   - They run independently and deploy automatically`);
+  console.log(`   - Uses same secrets as manual deployment\n`);
   
-  console.log(`📋 Required GitHub Secrets:`);
-  console.log(`   - STAGING_SSH, STAGING_HOST, STAGING_USER`);
-  console.log(`   - PROD_SSH, PROD_HOST, PROD_USER`);
-  console.log(`   - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION`);
+  console.log(`📋 Required GitHub Secrets (minimal):`);
+  console.log(`   - STAGING_SSH, PROD_SSH (SSH private keys)`);
+  console.log(`   - AWS_SECRET_ACCESS_KEY`);
+  console.log(`\n📋 Not secrets (in core.yml):`);
+  console.log(`   - aws.access_key_id, aws.region`);
+  console.log(`   - environments.{env}.host`);
   console.log(`\n💡 Run 'npx core init fix' to set up secrets automatically.`);
 }
 

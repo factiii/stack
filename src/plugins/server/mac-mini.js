@@ -16,60 +16,27 @@ class MacMiniProvider extends ServerProvider {
   static category = 'server';
   static version = '1.0.0';
   
+  // Only SSH key is a secret. HOST is in core.yml, USER defaults to ubuntu in coreAuto.yml
   static requiredSecrets = [
     { 
-      name: 'SSH_KEY', 
+      name: 'SSH', 
       type: 'ssh_key', 
-      description: 'SSH private key for accessing Mac Mini'
-    },
-    { 
-      name: 'HOST', 
-      type: 'hostname', 
-      description: 'Mac Mini hostname or IP address'
-    },
-    { 
-      name: 'USER', 
-      type: 'username', 
-      description: 'macOS username with SSH access',
-      default: 'admin'
+      description: 'SSH private key for accessing the server'
     }
   ];
   
   static helpText = {
-    SSH_KEY: `
-   For Mac Mini, use your existing SSH key or generate new:
+    SSH: `
+   SSH private key for accessing the server.
    
-   Step 1: Generate a new SSH key pair:
-   ssh-keygen -t ed25519 -C "mac-mini-deploy" -f ~/.ssh/mac_mini_deploy
+   Step 1: Generate a new SSH key pair (if needed):
+   ssh-keygen -t ed25519 -C "deploy-key" -f ~/.ssh/deploy_key
    
-   Step 2: Enable Remote Login on Mac Mini:
-   System Preferences → Sharing → Remote Login → On
+   Step 2: Add PUBLIC key to server:
+   ssh-copy-id -i ~/.ssh/deploy_key.pub ubuntu@YOUR_HOST
    
-   Step 3: Add PUBLIC key to Mac Mini (replace YOUR_USER and YOUR_HOST):
-   ssh-copy-id -i ~/.ssh/mac_mini_deploy.pub YOUR_USER@YOUR_HOST
-   
-   Or manually:
-   cat ~/.ssh/mac_mini_deploy.pub | ssh YOUR_USER@YOUR_HOST "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
-   
-   Step 4: Paste the PRIVATE key below (multi-line, end with blank line):
-   cat ~/.ssh/mac_mini_deploy`,
-    
-    HOST: `
-   Mac Mini IP address or hostname
-   
-   Examples:
-   - Local network: 192.168.1.100
-   - Tailscale: mac-mini.tail12345.ts.net
-   - mDNS: mac-mini.local
-   
-   Enter Mac Mini hostname or IP:`,
-    
-    USER: `
-   macOS username with SSH access
-   
-   Common usernames: admin, deploy, your-username
-   
-   Enter SSH username (default: admin):`
+   Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
+   cat ~/.ssh/deploy_key`
   };
   
   static capabilities = {

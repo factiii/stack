@@ -7,10 +7,15 @@ async function checkSecrets() {
   const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
   const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
   
+  // Simplified secrets - only truly sensitive values
+  // HOST is in core.yml, USER defaults to ubuntu, AWS_ACCESS_KEY_ID and AWS_REGION are in core.yml
   const required = [
-    'STAGING_SSH', 'STAGING_HOST', 'STAGING_USER',
-    'PROD_SSH', 'PROD_HOST', 'PROD_USER',
-    'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
+    'STAGING_SSH', 'PROD_SSH',           // SSH private keys
+    'AWS_SECRET_ACCESS_KEY'              // Only secret AWS value
+  ];
+  
+  // Optional secrets (env files)
+  const optional = [
     'STAGING_ENVS', 'PROD_ENVS'
   ];
   
@@ -43,6 +48,7 @@ async function checkSecrets() {
 }
 
 checkSecrets();
+
 
 
 

@@ -46,8 +46,19 @@ name: EXAMPLE-factiii
 # SSL email for Let's Encrypt certificates
 ssl_email: EXAMPLE-admin@yourdomain.com
 
-# Staging domain for your application
-staging_domain: EXAMPLE-staging.yourdomain.com
+# AWS configuration (not secrets - just identifies the account)
+aws:
+  access_key_id: AKIAXXXXXXXXXXXXXXXX
+  region: us-east-1
+
+# Environments with host configuration
+environments:
+  staging:
+    domain: staging.factiii.com
+    host: 192.168.1.100  # Not a secret
+  production:
+    domain: factiii.com
+    host: prod.example.com
 ```
 
 ### coreAuto.yml (Auto-Detected Settings)
@@ -61,6 +72,9 @@ setting_name: detected_value OVERRIDE custom_value
 
 **Example:**
 ```yaml
+# SSH user (defaults to ubuntu)
+ssh_user: ubuntu
+
 # Auto-detected, using default
 prisma_schema: apps/server/prisma/schema.prisma
 
@@ -73,6 +87,39 @@ Core warns when:
 - Auto-detected value != deployed value (unexpected drift)
 - Auto-detected value != override value (intentional change acknowledged)
 - Deployed value changed without corresponding override
+
+---
+
+## Secrets vs Configuration
+
+Core minimizes secrets by putting non-sensitive values in config files.
+
+### What Goes Where
+
+| Setting | Location | Why |
+|---------|----------|-----|
+| `{ENV}_SSH` | GitHub Secrets | SSH private keys are sensitive |
+| `AWS_SECRET_ACCESS_KEY` | GitHub Secrets | AWS secret is sensitive |
+| `{ENV}_ENVS` | GitHub Secrets (optional) | App environment variables |
+| `aws.access_key_id` | core.yml | Identifies AWS user, not secret |
+| `aws.region` | core.yml | Not secret |
+| `environments.{env}.host` | core.yml | Server IP/hostname, not secret |
+| `ssh_user` | coreAuto.yml | Defaults to ubuntu |
+
+### Required GitHub Secrets (Minimal)
+
+| Secret | Description |
+|--------|-------------|
+| `STAGING_SSH` | SSH private key for staging server |
+| `PROD_SSH` | SSH private key for production server |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key (only secret AWS value) |
+
+### Optional GitHub Secrets
+
+| Secret | Description |
+|--------|-------------|
+| `STAGING_ENVS` | Environment variables from .env.staging |
+| `PROD_ENVS` | Environment variables from .env.prod |
 
 ---
 
@@ -143,9 +190,9 @@ See [WORKFLOW.md](WORKFLOW.md) for detailed explanation.
 - **Can delete/modify files** - developers understand git
 
 **GitHub (Check-Only):**
-- Verify required secrets exist (STAGING_ENVS, PROD_ENVS, SSH keys, etc.)
+- Verify required secrets exist (`{ENV}_SSH`, `AWS_SECRET_ACCESS_KEY`)
 - Check workflow files are present
-- Report missing or misconfigured secrets
+- Report missing secrets
 - **NO modifications** - use `init fix` to upload secrets
 
 **Remote Environments (Staging/Prod) - Check-Only:**
@@ -195,8 +242,8 @@ See [WORKFLOW.md](WORKFLOW.md) for detailed explanation.
 - Create .env templates
 
 **Part 2 - GitHub Secrets:**
-- Upload `STAGING_ENVS` from `.env.staging`
-- Upload `PROD_ENVS` from `.env.prod`
+- Prompt for missing secrets only (`{ENV}_SSH`, `AWS_SECRET_ACCESS_KEY`)
+- Optionally upload `STAGING_ENVS`/`PROD_ENVS` if .env files exist
 - Verify all required secrets exist
 - Display verification link
 

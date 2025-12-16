@@ -3,9 +3,11 @@ const path = require('path');
 const yaml = require('js-yaml');
 const validate = require('./validate');
 const Deployer = require('./deployer');
+const { GitHubSecretsStore } = require('../utils/github-secrets');
 
 /**
- * Deploy by validating local config and deploying directly via SSH
+ * Deploy by triggering GitHub Actions workflow
+ * Validates config and GitHub secrets, then triggers workflow
  */
 async function deploy(options = {}) {
   const rootDir = process.cwd();
@@ -52,21 +54,61 @@ async function deploy(options = {}) {
   console.log(`\n📦 Repository: ${repoName}`);
   console.log(`🌍 Environments: ${environments.join(', ')}\n`);
 
-  // Check for required secrets
-  const missingSecrets = checkRequiredSecrets(environments[0] === 'all' ? Object.keys(config.environments) : environments);
+  // Step 3: Check GitHub secrets exist
+  console.log('🔍 Checking GitHub secrets...\n');
   
-  if (missingSecrets.length > 0) {
-    console.error('❌ Missing required secrets:\n');
-    missingSecrets.forEach(secret => console.error(`   - ${secret}`));
-    console.error('\n💡 Set secrets as environment variables or run: npx core init fix\n');
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    console.error('❌ GITHUB_TOKEN required for deployment');
+    console.error('');
+    console.error('   Generate token: https://github.com/settings/tokens');
+    console.error('   → Select scopes: repo + workflow');
+    console.error('');
+    console.error('   Add to your shell config:');
+    console.error('   export GITHUB_TOKEN=ghp_your_token_here');
+    console.error('');
     process.exit(1);
   }
 
-  // Create deployer instance
+  const secretStore = new GitHubSecretsStore(token);
+  const envsToCheck = environments[0] === 'all' ? Object.keys(config.environments) : environments;
+  
+  // Build required secrets list (minimal - only truly secret values)
+  // HOST is in core.yml, USER defaults to ubuntu in coreAuto.yml
+  // AWS_ACCESS_KEY_ID and AWS_REGION are in core.yml (not secret)
+  const requiredSecrets = [];
+  for (const env of envsToCheck) {
+    const prefix = env.toUpperCase();
+    requiredSecrets.push(`${prefix}_SSH`);  // SSH private key only
+  }
+  
+  // Only AWS_SECRET_ACCESS_KEY needs to be a secret
+  requiredSecrets.push('AWS_SECRET_ACCESS_KEY');
+
+  // Check secrets
+  const check = await secretStore.checkSecrets(requiredSecrets);
+  
+  if (check.error) {
+    console.error(`❌ Failed to check GitHub secrets: ${check.error}\n`);
+    process.exit(1);
+  }
+
+  if (check.missing.length > 0) {
+    console.error('❌ Missing required GitHub secrets:\n');
+    check.missing.forEach(name => console.error(`   - ${name}`));
+    console.error('');
+    console.error('💡 Run: npx core init fix');
+    console.error('   This will prompt for missing secrets and upload them to GitHub.\n');
+    process.exit(1);
+  }
+
+  console.log('✅ All required secrets exist in GitHub\n');
+
+  // Create deployer instance (triggers workflow)
   const deployer = new Deployer(config, options);
 
   console.log('══════════════════════════════════════════════════════════════════════');
-  console.log('🚀 Starting Direct Deployment');
+  console.log('🚀 Starting Workflow-Based Deployment');
   console.log('══════════════════════════════════════════════════════════════════════\n');
 
   try {
@@ -105,31 +147,6 @@ async function deploy(options = {}) {
     console.error('');
     process.exit(1);
   }
-}
-
-/**
- * Check if required secrets are available
- */
-function checkRequiredSecrets(environments) {
-  const missing = [];
-
-  for (const env of environments) {
-    const prefix = env.toUpperCase();
-    
-    // Check SSH credentials
-    if (!process.env[`${prefix}_SSH_KEY`] && !process.env[`${prefix}_SSH`]) {
-      missing.push(`${prefix}_SSH_KEY (or ${prefix}_SSH)`);
-    }
-    
-    if (!process.env[`${prefix}_HOST`]) {
-      missing.push(`${prefix}_HOST`);
-    }
-
-    // USER is optional (defaults to ubuntu)
-    // ENVS is optional but recommended
-  }
-
-  return missing;
 }
 
 module.exports = deploy;

@@ -2,6 +2,15 @@ const readline = require('readline');
 
 /**
  * Secret metadata with help text and validation
+ * 
+ * Simplified secrets (per architecture):
+ * - {ENV}_SSH: SSH private key for each environment
+ * - AWS_SECRET_ACCESS_KEY: Only truly secret AWS value
+ * 
+ * Not secrets (in core.yml):
+ * - HOST: environments.{env}.host
+ * - AWS_ACCESS_KEY_ID: aws.access_key_id
+ * - AWS_REGION: aws.region
  */
 const SECRET_METADATA = {
   STAGING_SSH: {
@@ -11,11 +20,10 @@ const SECRET_METADATA = {
    Step 1: Generate a new SSH key pair:
    ssh-keygen -t ed25519 -C "staging-deploy" -f ~/.ssh/staging_deploy
    
-   Step 2: Add PUBLIC key to your staging server (replace YOUR_USER and YOUR_HOST):
-   ssh-copy-id -i ~/.ssh/staging_deploy.pub YOUR_USER@YOUR_HOST
+   Step 2: Add PUBLIC key to your staging server:
+   ssh-copy-id -i ~/.ssh/staging_deploy.pub ubuntu@YOUR_HOST
    
-   Or manually:
-   cat ~/.ssh/staging_deploy.pub | ssh YOUR_USER@YOUR_HOST "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+   (HOST is configured in core.yml → environments.staging.host)
    
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
    cat ~/.ssh/staging_deploy`,
@@ -37,11 +45,10 @@ const SECRET_METADATA = {
    Step 1: Generate a new SSH key pair:
    ssh-keygen -t ed25519 -C "production-deploy" -f ~/.ssh/prod_deploy
    
-   Step 2: Add PUBLIC key to your production server (replace YOUR_USER and YOUR_HOST):
-   ssh-copy-id -i ~/.ssh/prod_deploy.pub YOUR_USER@YOUR_HOST
+   Step 2: Add PUBLIC key to your production server:
+   ssh-copy-id -i ~/.ssh/prod_deploy.pub ubuntu@YOUR_HOST
    
-   Or manually:
-   cat ~/.ssh/prod_deploy.pub | ssh YOUR_USER@YOUR_HOST "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+   (HOST is configured in core.yml → environments.production.host)
    
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
    cat ~/.ssh/prod_deploy`,
@@ -56,120 +63,16 @@ const SECRET_METADATA = {
     }
   },
   
-  STAGING_HOST: {
-    type: 'hostname',
-    description: 'Hostname or IP address of staging server',
-    helpText: `
-   Examples:
-   - staging.example.com
-   - 192.168.1.100
-   - ec2-xx-xx-xx-xx.compute-1.amazonaws.com
-   
-   Enter staging server hostname or IP:`,
-    validation: (value) => {
-      if (!value || value.trim().length === 0) {
-        return { valid: false, error: 'Hostname cannot be empty' };
-      }
-      // Basic validation - not empty and no spaces
-      if (value.includes(' ')) {
-        return { valid: false, error: 'Hostname cannot contain spaces' };
-      }
-      return { valid: true };
-    }
-  },
-  
-  PROD_HOST: {
-    type: 'hostname',
-    description: 'Hostname or IP address of production server',
-    helpText: `
-   Examples:
-   - production.example.com
-   - 192.168.1.200
-   - ec2-xx-xx-xx-xx.compute-1.amazonaws.com
-   
-   Enter production server hostname or IP:`,
-    validation: (value) => {
-      if (!value || value.trim().length === 0) {
-        return { valid: false, error: 'Hostname cannot be empty' };
-      }
-      if (value.includes(' ')) {
-        return { valid: false, error: 'Hostname cannot contain spaces' };
-      }
-      return { valid: true };
-    }
-  },
-  
-  STAGING_USER: {
-    type: 'username',
-    description: 'SSH username for staging server',
-    helpText: `
-   Common usernames: ubuntu, admin, deploy, ec2-user
-   
-   Enter SSH username for staging server (default: ubuntu):`,
-    validation: (value) => {
-      // Allow empty (will default to ubuntu)
-      if (!value || value.trim().length === 0) {
-        return { valid: true, defaultValue: 'ubuntu' };
-      }
-      if (value.includes(' ')) {
-        return { valid: false, error: 'Username cannot contain spaces' };
-      }
-      return { valid: true };
-    }
-  },
-  
-  PROD_USER: {
-    type: 'username',
-    description: 'SSH username for production server',
-    helpText: `
-   Common usernames: ubuntu, admin, deploy, ec2-user
-   
-   Enter SSH username for production server (default: ubuntu):`,
-    validation: (value) => {
-      // Allow empty (will default to ubuntu)
-      if (!value || value.trim().length === 0) {
-        return { valid: true, defaultValue: 'ubuntu' };
-      }
-      if (value.includes(' ')) {
-        return { valid: false, error: 'Username cannot contain spaces' };
-      }
-      return { valid: true };
-    }
-  },
-  
-  AWS_ACCESS_KEY_ID: {
-    type: 'aws_key',
-    description: 'AWS Access Key ID for ECR (Docker registry)',
-    helpText: `
-   Get from AWS Console: IAM → Users → Security credentials
-   
-   Requirements:
-   - Permissions: ecr:GetAuthorizationToken, ecr:BatchGetImage, ecr:PushImage
-   - Format: AKIA followed by 16 characters
-   
-   Enter AWS Access Key ID:`,
-    validation: (value) => {
-      if (!value || value.trim().length === 0) {
-        return { valid: false, error: 'AWS Access Key ID cannot be empty' };
-      }
-      if (!value.startsWith('AKIA')) {
-        return { valid: false, error: 'AWS Access Key ID should start with AKIA' };
-      }
-      if (value.length !== 20) {
-        return { valid: false, error: 'AWS Access Key ID should be 20 characters long' };
-      }
-      return { valid: true };
-    }
-  },
-  
   AWS_SECRET_ACCESS_KEY: {
     type: 'aws_secret',
-    description: 'AWS Secret Access Key for ECR',
+    description: 'AWS Secret Access Key (the only secret AWS value)',
     helpText: `
    Get from AWS Console: IAM → Users → Security credentials
    
    This is shown only once when you create the key.
    If lost, you must create a new key pair.
+   
+   Note: AWS_ACCESS_KEY_ID and AWS_REGION go in core.yml (not secrets)
    
    Enter AWS Secret Access Key:`,
     validation: (value) => {
@@ -178,29 +81,6 @@ const SECRET_METADATA = {
       }
       if (value.length !== 40) {
         return { valid: false, error: 'AWS Secret Access Key should be 40 characters long' };
-      }
-      return { valid: true };
-    }
-  },
-  
-  AWS_REGION: {
-    type: 'aws_region',
-    description: 'AWS Region where your ECR repository is located',
-    helpText: `
-   Common regions:
-   - us-east-1 (N. Virginia)
-   - us-west-2 (Oregon)
-   - eu-west-1 (Ireland)
-   - ap-southeast-1 (Singapore)
-   
-   Enter AWS region:`,
-    validation: (value) => {
-      if (!value || value.trim().length === 0) {
-        return { valid: false, error: 'AWS region cannot be empty' };
-      }
-      // Basic region format check
-      if (!/^[a-z]{2}-[a-z]+-\d+$/.test(value)) {
-        return { valid: false, error: 'Invalid AWS region format (e.g., us-east-1)' };
       }
       return { valid: true };
     }

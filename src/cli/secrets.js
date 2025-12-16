@@ -17,32 +17,35 @@ function envObjectToString(env) {
 
 /**
  * Get required secrets based on environments in config
+ * 
+ * Simplified secrets (per architecture):
+ * - {ENV}_SSH: SSH private key for each environment
+ * - AWS_SECRET_ACCESS_KEY: Only truly secret AWS value
+ * - {ENV}_ENVS: Optional, environment variables
+ * 
+ * Not secrets (in core.yml):
+ * - HOST: environments.{env}.host
+ * - AWS_ACCESS_KEY_ID: aws.access_key_id
+ * - AWS_REGION: aws.region
  */
 function getRequiredSecrets(config) {
   const required = new Set([
-    'STAGING_ENVS',
-    'PROD_ENVS',
-    'AWS_ACCESS_KEY_ID',
-    'AWS_SECRET_ACCESS_KEY',
-    'AWS_REGION'
+    'AWS_SECRET_ACCESS_KEY'  // Only secret AWS value
   ]);
   
   // Add environment-specific secrets
   if (config.environments) {
     for (const [envName, envConfig] of Object.entries(config.environments)) {
       const prefix = envName.toUpperCase();
-      required.add(`${prefix}_SSH`);
-      required.add(`${prefix}_HOST`);
-      required.add(`${prefix}_USER`);
+      required.add(`${prefix}_SSH`);  // SSH key only
+      required.add(`${prefix}_ENVS`); // Optional but included in list
     }
   } else {
     // Default staging + production
     required.add('STAGING_SSH');
-    required.add('STAGING_HOST');
-    required.add('STAGING_USER');
+    required.add('STAGING_ENVS');
     required.add('PROD_SSH');
-    required.add('PROD_HOST');
-    required.add('PROD_USER');
+    required.add('PROD_ENVS');
   }
   
   return Array.from(required);

@@ -219,6 +219,12 @@ function generateCoreAuto(rootDir, options = {}) {
     lines.push('');
   }
   
+  // SSH configuration (defaults)
+  lines.push('# SSH configuration');
+  lines.push('# Default SSH user for all environments (override with: ubuntu OVERRIDE admin)');
+  lines.push('ssh_user: ubuntu');
+  lines.push('');
+  
   // Build configuration
   lines.push('# Build configuration');
   if (dockerfile) {

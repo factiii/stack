@@ -271,6 +271,70 @@ function detectPrismaVersion(rootDir, schemaPath = null) {
 }
 
 /**
+ * Validate GitHub secrets exist (no local comparison - GitHub is source of truth)
+ * 
+ * Required secrets (minimal):
+ * - {ENV}_SSH: SSH private key for each environment
+ * - AWS_SECRET_ACCESS_KEY: AWS secret (only truly secret AWS value)
+ * 
+ * Not secrets (in core.yml):
+ * - HOST: in environments.{env}.host
+ * - AWS_ACCESS_KEY_ID: in aws.access_key_id
+ * - AWS_REGION: in aws.region
+ * 
+ * Not secrets (in coreAuto.yml):
+ * - USER: defaults to ubuntu
+ */
+async function validateGitHubSecrets(config) {
+  const { GitHubSecretsStore } = require('../utils/github-secrets');
+  const environments = Object.keys(config.environments || {});
+  const results = {
+    missing: [],
+    present: [],
+    error: null,
+    tokenAvailable: false
+  };
+
+  // Check if GITHUB_TOKEN is available
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    results.error = 'GITHUB_TOKEN not set';
+    return results;
+  }
+
+  results.tokenAvailable = true;
+
+  // Build list of required secrets (minimal - only truly secret values)
+  const requiredSecrets = [];
+  for (const env of environments) {
+    const prefix = env.toUpperCase();
+    requiredSecrets.push(`${prefix}_SSH`);  // SSH private key only
+  }
+  
+  // Only AWS_SECRET_ACCESS_KEY needs to be a secret
+  requiredSecrets.push('AWS_SECRET_ACCESS_KEY');
+
+  // Use GitHub API to check which secrets exist
+  try {
+    const secretStore = new GitHubSecretsStore(token);
+    const check = await secretStore.checkSecrets(requiredSecrets);
+    
+    if (check.error) {
+      results.error = check.error;
+      return results;
+    }
+
+    results.present = check.present || [];
+    results.missing = check.missing || [];
+
+  } catch (error) {
+    results.error = error.message;
+  }
+
+  return results;
+}
+
+/**
  * Validate repository scripts and Prisma configuration
  */
 function validateRepoScripts(rootDir) {
@@ -557,15 +621,57 @@ function displayAuditReport(auditResults) {
 
   // 6. GitHub Secrets
   console.log('\n🔑 GitHub Secrets:');
-  console.log('   ℹ️  Required secrets for deployment:');
-  console.log('      - STAGING_SSH, PROD_SSH (SSH private keys)');
-  console.log('      - STAGING_HOST, PROD_HOST (server addresses)');
-  console.log('      - STAGING_USER, PROD_USER (SSH users, default: ubuntu)');
-  console.log('      - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION');
-  console.log('      - STAGING_ENVS, PROD_ENVS (from .env.staging and .env.prod files)');
+  
+  if (!auditResults.githubSecrets) {
+    console.log('   ℹ️  Required secrets (minimal):');
+    console.log('      - STAGING_SSH, PROD_SSH (SSH private keys)');
+    console.log('      - AWS_SECRET_ACCESS_KEY (AWS secret key)');
+    console.log('');
+    console.log('   ℹ️  Optional secrets:');
+    console.log('      - STAGING_ENVS, PROD_ENVS (environment variables)');
+    console.log('');
+    console.log('   ℹ️  Not secrets (in core.yml):');
+    console.log('      - HOST: environments.{env}.host');
+    console.log('      - AWS_ACCESS_KEY_ID: aws.access_key_id');
+    console.log('      - AWS_REGION: aws.region');
+  } else if (auditResults.githubSecrets.error) {
+    if (auditResults.githubSecrets.error === 'GITHUB_TOKEN not set') {
+      console.log('   ⚠️  GITHUB_TOKEN not set - cannot validate secrets');
+      console.log('');
+      console.log('   💡 Set GITHUB_TOKEN to check secrets:');
+      console.log('      export GITHUB_TOKEN=ghp_your_token_here');
+      console.log('');
+      console.log('   ℹ️  Required secrets (minimal):');
+      console.log('      - STAGING_SSH, PROD_SSH (SSH private keys)');
+      console.log('      - AWS_SECRET_ACCESS_KEY (AWS secret key)');
+    } else {
+      console.log(`   ⚠️  Error checking secrets: ${auditResults.githubSecrets.error}`);
+    }
+  } else {
+    // Show validation results
+    const { missing, present } = auditResults.githubSecrets;
+    
+    if (missing.length === 0) {
+      console.log('   ✅ All required secrets exist in GitHub');
+      if (present.length > 0) {
+        console.log(`   📋 Found ${present.length} secret(s):`);
+        present.forEach(name => console.log(`      - ${name}`));
+      }
+    } else {
+      if (missing.length > 0) {
+        console.log('   ❌ Missing required secrets in GitHub:');
+        missing.forEach(name => console.log(`      - ${name}`));
+      }
+      
+      if (present.length > 0) {
+        console.log(`   ✅ ${present.length} secret(s) exist in GitHub`);
+      }
+    }
+  }
+  
   console.log('');
-  console.log('   💡 Manage secrets easily:');
-  console.log('      npx core init fix     # Setup all secrets interactively');
+  console.log('   💡 Manage secrets:');
+  console.log('      npx core init fix     # Setup missing secrets interactively');
   console.log('      npx core secrets      # Update specific secrets');
   console.log('');
   console.log('   Or manually: Repository Settings → Secrets → Actions');
@@ -665,6 +771,18 @@ function displayAuditReport(auditResults) {
     }
   }
 
+  // GitHub secrets check
+  if (auditResults.githubSecrets) {
+    if (auditResults.githubSecrets.error) {
+      // Token not available or API error - warning
+      warnings++;
+    } else if (auditResults.githubSecrets.missing.length > 0) {
+      critical++; // Missing secrets are critical
+    } else {
+      passed++; // All secrets present
+    }
+  }
+
   console.log(`   ✅ ${passed} checks passed`);
   console.log(`   ⚠️  ${warnings} items need attention`);
   console.log(`   ❌ ${critical} critical issues`);
@@ -751,7 +869,8 @@ async function init(options = {}) {
     workflows: checkWorkflowsStatus(rootDir),
     repoScripts: validateRepoScripts(rootDir),
     branches: checkBranchStatus(rootDir),
-    envFiles: null // Will be added after config is loaded
+    envFiles: null, // Will be added after config is loaded
+    githubSecrets: null // Will be added after config is loaded
   };
 
   // Determine if we should create/update files
@@ -832,6 +951,11 @@ async function init(options = {}) {
   const { validateEnvFiles } = require('../utils/env-validator');
   const loadedConfig = auditResults.coreYml.config || {};
   auditResults.envFiles = validateEnvFiles(rootDir, loadedConfig);
+
+  // Validate GitHub secrets (after config is available)
+  if (loadedConfig.environments) {
+    auditResults.githubSecrets = await validateGitHubSecrets(loadedConfig);
+  }
 
   // Generate workflows if needed
   if (shouldGenerateWorkflows) {

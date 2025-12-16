@@ -1,0 +1,247 @@
+name: Core Deploy
+
+# Manual deployment workflow triggered by npx core deploy command
+# Deploys to specified environment using GitHub Secrets
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run tests
+        run: pnpm run test:server
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Read config
+        id: read-config
+        run: |
+          if [ -f "core.yml" ]; then
+            # Required settings
+            REPO_NAME=$(yq eval '.name' core.yml)
+            
+            # AWS settings from core.yml (not secrets)
+            AWS_ACCESS_KEY_ID=$(yq eval '.aws.access_key_id' core.yml)
+            AWS_REGION=$(yq eval '.aws.region // "us-east-1"' core.yml)
+            
+            # Host from environments section
+            STAGING_HOST=$(yq eval '.environments.staging.host // ""' core.yml)
+            PROD_HOST=$(yq eval '.environments.production.host // ""' core.yml)
+            
+            # SSH user from coreAuto.yml (defaults to ubuntu)
+            if [ -f "coreAuto.yml" ]; then
+              SSH_USER=$(yq eval '.ssh_user // "ubuntu"' coreAuto.yml | cut -d' ' -f1)
+            else
+              SSH_USER="ubuntu"
+            fi
+            
+            # Dockerfile from coreAuto.yml
+            if [ -f "coreAuto.yml" ]; then
+              DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' coreAuto.yml | cut -d' ' -f1)
+            else
+              DOCKERFILE="Dockerfile"
+            fi
+            
+            # ECR settings
+            ECR_REGISTRY=$(yq eval '.ecr_registry // ""' core.yml)
+            ECR_REPOSITORY=$(yq eval '.ecr_repository // "apps"' core.yml)
+            
+            echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+            echo "aws_access_key_id=$AWS_ACCESS_KEY_ID" >> $GITHUB_OUTPUT
+            echo "aws_region=$AWS_REGION" >> $GITHUB_OUTPUT
+            echo "staging_host=$STAGING_HOST" >> $GITHUB_OUTPUT
+            echo "prod_host=$PROD_HOST" >> $GITHUB_OUTPUT
+            echo "ssh_user=$SSH_USER" >> $GITHUB_OUTPUT
+            echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
+            echo "ecr_registry=$ECR_REGISTRY" >> $GITHUB_OUTPUT
+            echo "ecr_repository=$ECR_REPOSITORY" >> $GITHUB_OUTPUT
+          else
+            echo "❌ core.yml not found"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ steps.read-config.outputs.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ steps.read-config.outputs.aws_region }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ steps.read-config.outputs.ecr_repository }}
+          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
+          DOCKERFILE: ${{ steps.read-config.outputs.dockerfile }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          echo "🔨 Building Docker image from $DOCKERFILE..."
+          docker build --platform linux/amd64 -f $DOCKERFILE -t $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-${ENVIRONMENT} .
+          
+          echo "📤 Pushing to ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-${ENVIRONMENT}
+          
+          echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-${ENVIRONMENT}"
+
+      - name: Deploy to server
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          SSH_USER: ${{ steps.read-config.outputs.ssh_user }}
+          STAGING_HOST: ${{ steps.read-config.outputs.staging_host }}
+          PROD_HOST: ${{ steps.read-config.outputs.prod_host }}
+        run: |
+          # Get SSH key from secrets, host from config
+          if [ "$ENVIRONMENT" = "staging" ]; then
+            SSH_KEY="${{ secrets.STAGING_SSH }}"
+            SSH_HOST="$STAGING_HOST"
+          else
+            SSH_KEY="${{ secrets.PROD_SSH }}"
+            SSH_HOST="$PROD_HOST"
+          fi
+          
+          # Validate required values
+          if [ -z "$SSH_KEY" ]; then
+            echo "❌ Missing SSH key secret: ${ENVIRONMENT^^}_SSH"
+            exit 1
+          fi
+          
+          if [ -z "$SSH_HOST" ]; then
+            echo "❌ Missing host in core.yml: environments.${ENVIRONMENT}.host"
+            exit 1
+          fi
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          SERVICE_KEY="${{ steps.read-config.outputs.repo_name }}-${ENVIRONMENT}"
+          
+          echo "🚀 Deploying to $ENVIRONMENT server ($SSH_HOST)..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "cd ~/infrastructure && \
+             docker compose pull ${SERVICE_KEY} && \
+             docker compose up -d ${SERVICE_KEY}"
+          
+          echo "✅ Deployment complete!"
+          
+          rm -f ~/.ssh/deploy_key
+
+      - name: Run Prisma migrations (if configured)
+        if: inputs.environment == 'production'
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          SSH_USER: ${{ steps.read-config.outputs.ssh_user }}
+          PROD_HOST: ${{ steps.read-config.outputs.prod_host }}
+        run: |
+          SSH_KEY="${{ secrets.PROD_SSH }}"
+          SSH_HOST="$PROD_HOST"
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          SERVICE_KEY="${{ steps.read-config.outputs.repo_name }}-${ENVIRONMENT}"
+          
+          # Read Prisma config from coreAuto.yml
+          if [ -f "coreAuto.yml" ]; then
+            PRISMA_SCHEMA=$(yq eval '.prisma_schema // "prisma/schema.prisma"' coreAuto.yml | cut -d' ' -f1)
+            PRISMA_VERSION=$(yq eval '.prisma_version // "latest"' coreAuto.yml | cut -d' ' -f1)
+          else
+            PRISMA_SCHEMA="prisma/schema.prisma"
+            PRISMA_VERSION="latest"
+          fi
+          
+          echo "🔄 Running database migrations..."
+          echo "   Schema: $PRISMA_SCHEMA"
+          echo "   Version: $PRISMA_VERSION"
+          
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "cd ~/infrastructure && \
+             docker compose run --rm --no-deps ${SERVICE_KEY} \
+             npx -y prisma@${PRISMA_VERSION} migrate deploy --schema=${PRISMA_SCHEMA}" || true
+          
+          rm -f ~/.ssh/deploy_key
+
+      - name: Run health check
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          SSH_USER: ${{ steps.read-config.outputs.ssh_user }}
+          STAGING_HOST: ${{ steps.read-config.outputs.staging_host }}
+          PROD_HOST: ${{ steps.read-config.outputs.prod_host }}
+        run: |
+          # Get SSH key from secrets, host from config
+          if [ "$ENVIRONMENT" = "staging" ]; then
+            SSH_KEY="${{ secrets.STAGING_SSH }}"
+            SSH_HOST="$STAGING_HOST"
+          else
+            SSH_KEY="${{ secrets.PROD_SSH }}"
+            SSH_HOST="$PROD_HOST"
+          fi
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          echo "🏥 Running health check..."
+          HEALTH_CHECK_PASSED=false
+          
+          for i in {1..10}; do
+            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+              "$SSH_USER@$SSH_HOST" \
+              "curl -f -s http://localhost:3000/health > /dev/null 2>&1"; then
+              echo "✅ Health check passed!"
+              HEALTH_CHECK_PASSED=true
+              break
+            fi
+            echo "⏳ Waiting for service to be ready (attempt $i/10)..."
+            sleep 5
+          done
+          
+          rm -f ~/.ssh/deploy_key
+          
+          if [ "$HEALTH_CHECK_PASSED" = false ]; then
+            echo "⚠️  Health check failed, but deployment completed"
+            echo "   Check server logs for details"
+          fi

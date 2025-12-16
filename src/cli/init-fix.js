@@ -204,51 +204,46 @@ function parseEnvironments(config) {
 
 /**
  * Collect all required secrets from environments
+ * 
+ * Simplified secrets (per plan):
+ * - {ENV}_SSH: SSH private key for each environment
+ * - AWS_SECRET_ACCESS_KEY: Only truly secret AWS value
+ * 
+ * Not secrets (in core.yml):
+ * - HOST: environments.{env}.host
+ * - AWS_ACCESS_KEY_ID: aws.access_key_id  
+ * - AWS_REGION: aws.region
+ * 
+ * Not secrets (in coreAuto.yml):
+ * - USER: defaults to ubuntu
  */
 function collectRequiredSecrets(environments) {
-  const secretsMap = new Map();
-  const sharedSecrets = [];
+  const secrets = [];
   
+  // Add SSH key for each environment
   for (const env of environments) {
-    const ServerPlugin = getPlugin('server', env.server);
-    
-    if (!ServerPlugin) {
-      console.warn(`⚠️  Unknown server plugin: ${env.server}`);
-      continue;
-    }
-    
-    const envSecrets = ServerPlugin.getSecretsForEnvironment(env.name);
-    
-    for (const secret of envSecrets) {
-      // Check if this is a shared secret (like AWS credentials)
-      const secretDef = ServerPlugin.requiredSecrets.find(s => s.name === secret.name);
-      
-      if (secretDef?.shared) {
-        // Only add once for shared secrets
-        if (!sharedSecrets.find(s => s.name === secretDef.name)) {
-          sharedSecrets.push({
-            ...secret,
-            envVar: secretDef.name, // Use base name, not prefixed
-            server: env.server,
-            environment: null // Shared across all
-          });
-        }
-      } else {
-        secretsMap.set(secret.envVar, {
-          ...secret,
-          server: env.server,
-          environment: env.name
-        });
-      }
-    }
+    const prefix = env.name.toUpperCase();
+    secrets.push({
+      name: 'SSH',
+      envVar: `${prefix}_SSH`,
+      type: 'ssh_key',
+      description: `SSH private key for ${env.name} server`,
+      server: env.server,
+      environment: env.name
+    });
   }
   
-  // Add shared secrets at the end
-  for (const shared of sharedSecrets) {
-    secretsMap.set(shared.envVar, shared);
-  }
+  // Add AWS_SECRET_ACCESS_KEY (shared across all environments)
+  secrets.push({
+    name: 'AWS_SECRET_ACCESS_KEY',
+    envVar: 'AWS_SECRET_ACCESS_KEY',
+    type: 'aws_secret',
+    description: 'AWS Secret Access Key',
+    shared: true,
+    environment: null
+  });
   
-  return Array.from(secretsMap.values());
+  return secrets;
 }
 
 /**
@@ -358,14 +353,19 @@ async function initFix(options = {}) {
   }
   console.log('');
   
-  // Collect all required secrets from plugins
+  // Collect all required secrets (simplified: only SSH keys + AWS_SECRET_ACCESS_KEY)
   const allSecrets = collectRequiredSecrets(environments);
   
-  // Add environment file secrets
-  allSecrets.unshift(
-    { name: 'STAGING_ENVS', envVar: 'STAGING_ENVS', type: 'env_file' },
-    { name: 'PROD_ENVS', envVar: 'PROD_ENVS', type: 'env_file' }
-  );
+  // Add environment file secrets (optional - only if .env files exist)
+  const stagingEnvPath = path.join(rootDir, '.env.staging');
+  const prodEnvPath = path.join(rootDir, '.env.prod');
+  
+  if (fs.existsSync(stagingEnvPath)) {
+    allSecrets.push({ name: 'STAGING_ENVS', envVar: 'STAGING_ENVS', type: 'env_file', optional: true });
+  }
+  if (fs.existsSync(prodEnvPath)) {
+    allSecrets.push({ name: 'PROD_ENVS', envVar: 'PROD_ENVS', type: 'env_file', optional: true });
+  }
   
   // ============================================================
   // STAGE 2C: CHECK WHICH SECRETS ARE MISSING
