@@ -1,5 +1,5 @@
 /**
- * Core Infrastructure Package
+ * Factiii Stack Infrastructure Package
  * Main entry point for programmatic usage
  */
 

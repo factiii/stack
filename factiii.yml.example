@@ -1,11 +1,11 @@
 # ============================================================================
-# Core Configuration (core.yml)
+# Factiii Configuration (factiii.yml)
 # ============================================================================
 #
 # This file contains settings that CANNOT be automatically detected.
 # All settings with EXAMPLE- prefix MUST be replaced with actual values.
 #
-# Auto-detected settings are stored separately in coreAuto.yml
+# Auto-detected settings are stored separately in factiiiAuto.yml
 # See STANDARDS.md for full documentation.
 #
 # ============================================================================
@@ -13,7 +13,7 @@
 # ----------------------------------------------------------------------------
 # REQUIRED SETTINGS
 # ----------------------------------------------------------------------------
-# These must be configured before deployment. Core will block deployment
+# These must be configured before deployment. Factiii will block deployment
 # if any EXAMPLE- values remain.
 
 # Repository/Project Name
@@ -49,7 +49,7 @@ plugins:
 #
 # ⚠️  IMPORTANT: Never put sensitive values (passwords, keys, hostnames) in this file!
 # All secrets are stored in GitHub Secrets and will be prompted for when you run:
-#   npx core init fix
+#   npx factiii init fix
 #
 # The server plugin automatically determines what secrets it needs:
 # - mac-mini plugin needs: {ENV}_SSH, {ENV}_HOST, {ENV}_USER
@@ -113,7 +113,7 @@ ecr_repository: EXAMPLE-apps
 # ----------------------------------------------------------------------------
 # APPS CONFIGURATION (Optional)
 # ----------------------------------------------------------------------------
-# Define the applications in your monorepo. Core auto-detects these,
+# Define the applications in your monorepo. Factiii auto-detects these,
 # but you can override or add custom settings here.
 
 # apps:
@@ -124,7 +124,7 @@ ecr_repository: EXAMPLE-apps
 #
 #   - type: expo
 #     path: apps/mobile
-#     # Expo apps don't deploy to servers, but Core can help with builds
+#     # Expo apps don't deploy to servers, but Factiii can help with builds
 #
 #   - type: node-api
 #     path: apps/server
@@ -134,7 +134,7 @@ ecr_repository: EXAMPLE-apps
 # GITHUB SECRETS REFERENCE
 # ----------------------------------------------------------------------------
 # The following secrets must be configured in GitHub Settings → Secrets.
-# Run `npx core init fix` to set these up interactively.
+# Run `npx factiii init fix` to set these up interactively.
 #
 # ┌─────────────────────────────────────────────────────────────────────────┐
 # │ SECRET NAME              │ DESCRIPTION                                  │
@@ -153,15 +153,15 @@ ecr_repository: EXAMPLE-apps
 # └─────────────────────────────────────────────────────────────────────────┘
 #
 # ============================================================================
-# AUTO-DETECTED SETTINGS (coreAuto.yml)
+# AUTO-DETECTED SETTINGS (factiiiAuto.yml)
 # ============================================================================
-# The following settings are auto-detected by running `npx core init`.
-# They are stored in a separate file: coreAuto.yml
+# The following settings are auto-detected by running `npx factiii init`.
+# They are stored in a separate file: factiiiAuto.yml
 #
 # To override an auto-detected value, use:
 #   setting: detected_value OVERRIDE custom_value
 #
-# Example coreAuto.yml:
+# Example factiiiAuto.yml:
 # ----------------------------------------------------------------------------
 # # Stack detection (auto-detected from package.json and project structure)
 # has_nextjs: true
@@ -194,8 +194,8 @@ ecr_repository: EXAMPLE-apps
 #
 # plugins:
 #   external:
-#     - "@factiii/core-plugin-digitalocean"
-#     - "@somedev/core-plugin-hetzner"
+#     - "@factiii/stack-plugin-digitalocean"
+#     - "@somedev/factiii-plugin-hetzner"
 #
 # Then reference them in your servers section:
 #

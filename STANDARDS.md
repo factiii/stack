@@ -1,18 +1,18 @@
-# Core Standards
+# Factiii Stack Standards
 
-This document defines the architecture, plugin system, and development standards for the Core infrastructure package.
+This document defines the architecture, plugin system, and development standards for the Factiii Stack infrastructure package.
 
 ## Philosophy
 
-**Single Approach:** Base core with auto-scanning plugins.
+**Single Approach:** Base package with auto-scanning plugins.
 
-Core scans your repository, identifies packages (Next.js, Expo, tRPC, Prisma), loads appropriate plugins, and handles deployment. Manual configuration is only required for settings that cannot be auto-detected.
+Factiii scans your repository, identifies packages (Next.js, Expo, tRPC, Prisma), loads appropriate plugins, and handles deployment. Manual configuration is only required for settings that cannot be auto-detected.
 
 ---
 
 ## Plugin Architecture
 
-Core uses a plugin system with 5 categories:
+Factiii uses a plugin system with 5 categories:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -74,7 +74,7 @@ class Plugin {
 
 ## Init/Fix/Deploy Pattern
 
-### The Core Principle
+### The Fundamental Principle
 
 For **every issue** a plugin can detect, it MUST provide:
 
@@ -393,7 +393,7 @@ apps:
 | File | Purpose | Editable By |
 |------|---------|-------------|
 | `factiii.yml` | Settings that **cannot** be auto-detected | User (manual) |
-| `factiiiAuto.yml` | Settings that **are** auto-detected | Core (automatic) |
+| `factiiiAuto.yml` | Settings that **are** auto-detected | Factiii (automatic) |
 
 ### factiii.yml (Manual Settings)
 
@@ -413,7 +413,7 @@ environments:
     host: EXAMPLE-192.168.1.100
 ```
 
-**Core blocks deployment if any `EXAMPLE-` values remain.**
+**Factiii blocks deployment if any `EXAMPLE-` values remain.**
 
 ### factiiiAuto.yml (Auto-Detected Settings)
 
@@ -432,7 +432,7 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 
 ## Secrets vs Configuration
 
-Core minimizes secrets by putting non-sensitive values in config files.
+Factiii minimizes secrets by putting non-sensitive values in config files.
 
 ### What Goes Where
 
@@ -511,7 +511,7 @@ The `github-actions` pipeline (default) generates these workflows:
 
 ### Currently Implemented
 
-- Core engine with init/init fix/deploy commands
+- Factiii engine with init/init fix/deploy commands
 - Secrets plugin: `github`
 - Server plugins: `mac-mini`, `aws-ec2` (partial)
 - Pipeline: `github-actions` (hardcoded)
@@ -521,7 +521,7 @@ The `github-actions` pipeline (default) generates these workflows:
 
 | Phase | Plugin | Description |
 |-------|--------|-------------|
-| 1 | **Core** | Stabilize plugin architecture (Current) |
+| 1 | **Factiii Stack** | Stabilize plugin architecture (Current) |
 | 2 | **Expo** | Mobile app builds (iOS + Android) |
 | 3 | **Prisma/tRPC Server** | API server framework |
 | 4 | **AWS Free Tier** | Bundled EC2 + RDS + ECR + S3 |
@@ -539,7 +539,7 @@ The `github-actions` pipeline (default) generates these workflows:
 
 ## Development in This Repository
 
-**Important:** This repository IS the Core package itself.
+**Important:** This repository IS the Factiii Stack package itself.
 
 **DO NOT** run `npx factiii` commands inside this repository.
 

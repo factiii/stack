@@ -1,4 +1,4 @@
-# Core Infrastructure Package
+# Factiii Stack Infrastructure Package
 
 An npm package that auto-scans your T3 stack (Next.js, Expo, tRPC, Prisma), detects configuration, and handles deployment to staging and production servers.
 
@@ -6,7 +6,7 @@ An npm package that auto-scans your T3 stack (Next.js, Expo, tRPC, Prisma), dete
 
 **Single approach:** Auto-scanning with adapters.
 
-Core scans your repository structure, identifies installed packages, and automatically configures deployment. Manual configuration is only required for settings that cannot be auto-detected (domains, credentials, etc.).
+Factiii scans your repository structure, identifies installed packages, and automatically configures deployment. Manual configuration is only required for settings that cannot be auto-detected (domains, credentials, etc.).
 
 ## Quick Start
 
@@ -84,7 +84,7 @@ npx factiii deploy
 | File | Purpose | Managed By |
 |------|---------|------------|
 | `factiii.yml` | Manual settings (domains, credentials) | You |
-| `factiiiAuto.yml` | Auto-detected settings | Core |
+| `factiiiAuto.yml` | Auto-detected settings | Factiii |
 
 ### factiii.yml (Manual Settings)
 
@@ -102,7 +102,7 @@ staging_domain: EXAMPLE-staging.yourdomain.com
 prod_domain: EXAMPLE-app.yourdomain.com
 ```
 
-**Core blocks deployment if any `EXAMPLE-` values remain.**
+**Factiii blocks deployment if any `EXAMPLE-` values remain.**
 
 ### factiiiAuto.yml (Auto-Detected Settings)
 
@@ -126,7 +126,7 @@ To override an auto-detected value:
 dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 ```
 
-Core warns when auto-detected values change unexpectedly (drift detection).
+Factiii warns when auto-detected values change unexpectedly (drift detection).
 
 ---
 
@@ -139,7 +139,7 @@ Core warns when auto-detected values change unexpectedly (drift detection).
 | `.env.prod` | Yes | **Gitignored** | Production secrets |
 | `.env.test` | Optional | Committed | Test values |
 
-Core generates `.env.dev` as a template based on detected adapters.
+Factiii generates `.env.dev` as a template based on detected adapters.
 
 ---
 
@@ -234,11 +234,11 @@ npx factiii deploy --environment prod
 
 ## GitHub Actions Workflows (Generated for Repos)
 
-**Key Distinction:** Core GENERATES these workflows for your repo but does NOT use them itself.
+**Key Distinction:** Factiii GENERATES these workflows for your repo but does NOT use them itself.
 
-- Core deploys directly via SSH (`npx factiii deploy`)
+- Factiii deploys directly via SSH (`npx factiii deploy`)
 - Workflows are for YOUR repo to run its own CI/CD on git events
-- They run independently - Core doesn't trigger or depend on them
+- They run independently - Factiii doesn't trigger or depend on them
 
 ### Generated Workflows
 
@@ -290,7 +290,7 @@ test → build → push to ECR → backup DB → deploy → migrations
 
 ## Managing Secrets
 
-Core provides a unified CLI for managing all GitHub secrets without manually using the GitHub UI.
+Factiii provides a unified CLI for managing all GitHub secrets without manually using the GitHub UI.
 
 ### First-Time Setup
 
@@ -418,7 +418,7 @@ Run `npx factiii init` to see what's blocking, then `npx factiii init fix` to re
 
 ## Versioning & Upgrades
 
-Core uses semantic versioning. Check your version:
+Factiii uses semantic versioning. Check your version:
 
 ```bash
 npx factiii --version
@@ -457,11 +457,11 @@ Always check the [CHANGELOG](CHANGELOG.md) before upgrading.
 
 ## Roadmap
 
-Plugins will be extracted from core as the system matures:
+Plugins will be extracted from the base package as the system matures:
 
 | Phase | Plugin | Status |
 |-------|--------|--------|
-| 1 | Core | **Current** |
+| 1 | Factiii Stack | **Current** |
 | 2 | Expo | Planned |
 | 3 | Prisma/tRPC Server | Planned |
 | 4 | AWS Free Tier | Planned |
@@ -473,7 +473,7 @@ See [STANDARDS.md](STANDARDS.md) for full architecture details.
 
 ## Development (This Repository)
 
-**This is the Core package itself.** Do not run `npx factiii` commands here.
+**This is the Factiii Stack package itself.** Do not run `npx factiii` commands here.
 
 Test changes in a separate application repository:
 

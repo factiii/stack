@@ -62,7 +62,7 @@ function checkCoreYmlStatus(rootDir, templatePath) {
 
 /**
  * Check GitHub workflows status
- * Note: Core GENERATES these for repos but does NOT use them itself
+ * Note: Factiii GENERATES these for repos but does NOT use them itself
  * These are repo CI/CD workflows that run independently on git events
  */
 function checkWorkflowsStatus(rootDir) {
@@ -439,7 +439,7 @@ function displayAuditReport(auditResults) {
 
   // 2. GitHub Workflows (Generated for Repo CI/CD)
   console.log('\n📝 GitHub Workflows (Repo CI/CD):');
-  console.log('   ℹ️  Core generates these for your repo - they run independently');
+  console.log('   ℹ️  Factiii generates these for your repo - they run independently');
   if (workflows.stagingExists) {
     console.log('   ✅ factiii-staging.yml exists (auto-deploy on push to main)');
   } else {
@@ -729,7 +729,7 @@ function displayAuditReport(auditResults) {
   if (workflows.anyExist) {
     passed++;
   } else {
-    // No workflows is fine - Core deploys directly via SSH
+    // No workflows is fine - Factiii deploys directly via SSH
     // Just a note, not a warning
   }
 

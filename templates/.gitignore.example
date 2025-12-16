@@ -1,7 +1,7 @@
 # Environment files - production secrets must be gitignored
 .env.prod
 
-# Optional: Gitignore staging if sensitive (controlled by auto.isStagingSecret in core.yml)
+# Optional: Gitignore staging if sensitive (controlled by auto.isStagingSecret in factiii.yml)
 # .env.staging
 
 # Keep .env.example committed as template

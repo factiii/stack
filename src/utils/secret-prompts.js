@@ -179,7 +179,7 @@ function promptMultiLine(prompt) {
 /**
  * Prompt for a secret with validation
  * @param {string} secretName - Name of the secret
- * @param {object} config - Core configuration (optional)
+ * @param {object} config - Factiii configuration (optional)
  * @returns {Promise<string>} - Secret value
  */
 async function promptForSecret(secretName, config = {}) {

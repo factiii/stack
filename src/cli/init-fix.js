@@ -562,7 +562,7 @@ async function initFix(options = {}) {
       // Write SSH key to temporary file
       const { execSync } = require('child_process');
       const os = require('os');
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'core-'));
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factiii-'));
       const keyPath = path.join(tmpDir, 'deploy_key');
       
       fs.writeFileSync(keyPath, sshCredentials[sshKeyName], { mode: 0o600 });

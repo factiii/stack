@@ -236,8 +236,8 @@ Factiii warns if auto-detected != deployed (unexpected drift).
 
 ## Future: Plugin Roadmap
 
-Plugins will be extracted from core one by one:
-1. Phase 1: Core only (current)
+Plugins will be extracted from the base package one by one:
+1. Phase 1: Base Factiii Stack only (current)
 2. Phase 2: Expo plugin
 3. Phase 3: Prisma/tRPC plugin
 4. Phase 4: AWS Free Tier plugin

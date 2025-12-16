@@ -40,7 +40,7 @@ class AWSEC2Provider extends ServerProvider {
    SSH private key for accessing the EC2 instance.
    
    Option A: Auto-generate via AWS (recommended)
-   - Core will create an EC2 Key Pair via AWS API
+   - Factiii will create an EC2 Key Pair via AWS API
    - The private key will be saved and uploaded to GitHub
    
    Option B: Use existing key
@@ -334,7 +334,7 @@ class AWSEC2Provider extends ServerProvider {
     
     const region = this.secrets.AWS_REGION || envConfig.region || 'us-east-1';
     const instanceType = envConfig.instanceType || AWSEC2Provider.defaults.instanceType;
-    const keyName = `${envConfig.name || 'core'}-${envConfig.environment || 'prod'}-${Date.now()}`;
+    const keyName = `${envConfig.name || 'factiii'}-${envConfig.environment || 'prod'}-${Date.now()}`;
     
     try {
       // Step 1: Create EC2 Key Pair
@@ -371,7 +371,7 @@ class AWSEC2Provider extends ServerProvider {
         `--instance-type ${instanceType} ` +
         `--key-name ${keyName} ` +
         `--security-group-ids ${sgId} ` +
-        `--tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=${envConfig.name || 'core'}-${envConfig.environment || 'prod'}},{Key=Environment,Value=${envConfig.environment || 'prod'}},{Key=ManagedBy,Value=core}]' ` +
+        `--tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=${envConfig.name || 'factiii'}-${envConfig.environment || 'prod'}},{Key=Environment,Value=${envConfig.environment || 'prod'}},{Key=ManagedBy,Value=factiii}]' ` +
         `--block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":${AWSEC2Provider.defaults.volumeSize}}}]' ` +
         `--output json --region ${region}`,
         { encoding: 'utf8', stdio: 'pipe', env: this._getAWSEnv() }
@@ -432,7 +432,7 @@ class AWSEC2Provider extends ServerProvider {
    */
   async _getOrCreateSecurityGroup(region, envConfig) {
     const { execSync } = require('child_process');
-    const sgName = `core-${envConfig.environment || 'prod'}-sg`;
+    const sgName = `factiii-${envConfig.environment || 'prod'}-sg`;
     
     try {
       // Check if security group exists
@@ -455,7 +455,7 @@ class AWSEC2Provider extends ServerProvider {
     const createOutput = execSync(
       `aws ec2 create-security-group ` +
       `--group-name ${sgName} ` +
-      `--description "Security group for Core managed instances" ` +
+      `--description "Security group for Factiii managed instances" ` +
       `--output text --region ${region}`,
       { encoding: 'utf8', stdio: 'pipe', env: this._getAWSEnv() }
     ).trim();
