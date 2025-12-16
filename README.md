@@ -223,7 +223,6 @@ npx core deploy --environment prod
 1. Validates config locally (checks for EXAMPLE- values, etc.)
 2. Builds Docker image and pushes to ECR
 3. SSHs to server and deploys via docker-compose
-4. Runs Prisma migrations if configured
 
 **Blocking (stops deployment):**
 - `EXAMPLE-` values still present
@@ -351,22 +350,26 @@ Interactive mode:
 
 ### Required GitHub Secrets
 
+Only truly sensitive values go in GitHub Secrets:
+
 **SSH Keys:**
 - `STAGING_SSH` - Private key for staging server
-- `STAGING_HOST` - Staging server hostname/IP
-- `STAGING_USER` - SSH username (default: ubuntu)
 - `PROD_SSH` - Private key for production server
-- `PROD_HOST` - Production server hostname/IP
-- `PROD_USER` - SSH username (default: ubuntu)
 
-**AWS Credentials (for ECR):**
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_REGION`
+**AWS Credentials:**
+- `AWS_SECRET_ACCESS_KEY` - AWS secret key (only secret AWS value)
 
-**Environment Variables:**
+**Environment Variables (optional):**
 - `STAGING_ENVS` - From `.env.staging` file
 - `PROD_ENVS` - From `.env.prod` file
+
+**Not Secrets (in core.yml):**
+- `environments.{env}.host` - Server hostname/IP
+- `aws.access_key_id` - AWS access key ID
+- `aws.region` - AWS region
+
+**Not Secrets (in coreAuto.yml):**
+- `ssh_user` - SSH username (defaults to ubuntu)
 
 ### Generating SSH Keys
 
@@ -413,16 +416,56 @@ Run `npx core init` to see what's blocking, then `npx core init fix` to resolve.
 
 ---
 
-## Future: Adapters
+## Versioning & Upgrades
 
-Adapters will be extracted from core as the system matures:
+Core uses semantic versioning. Check your version:
 
-| Phase | Adapter | Status |
-|-------|---------|--------|
-| 1 | Core only | **Current** |
-| 2 | Next.js | Planned |
-| 3 | Expo | Planned |
-| 4 | Prisma/tRPC | Planned |
+```bash
+npx core --version
+```
+
+### Upgrading
+
+```bash
+# Check for updates
+npx core upgrade --check
+
+# Upgrade to latest
+npm update @factiii/core
+
+# Regenerate configs for new version
+npx core upgrade
+```
+
+### Version Compatibility
+
+Your `coreAuto.yml` tracks which version generated it:
+
+```yaml
+core_version: 1.0.0      # Version that generated this
+core_min_version: 1.0.0  # Minimum compatible version
+```
+
+If you see version warnings, run `npx core upgrade` to migrate.
+
+### Breaking Changes
+
+Major version bumps (1.x → 2.x) may require config changes.
+Always check the [CHANGELOG](CHANGELOG.md) before upgrading.
+
+---
+
+## Roadmap
+
+Plugins will be extracted from core as the system matures:
+
+| Phase | Plugin | Status |
+|-------|--------|--------|
+| 1 | Core | **Current** |
+| 2 | Expo | Planned |
+| 3 | Prisma/tRPC Server | Planned |
+| 4 | AWS Free Tier | Planned |
+| 5 | Next.js/Vercel | Planned |
 
 See [STANDARDS.md](STANDARDS.md) for full architecture details.
 

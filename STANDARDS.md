@@ -1,17 +1,258 @@
 # Core Standards
 
-This document defines the architecture, configuration patterns, and development standards for the Core infrastructure package.
+This document defines the architecture, plugin system, and development standards for the Core infrastructure package.
 
 ## Philosophy
 
-**Single Approach:** Base core with auto-scanning adapters.
+**Single Approach:** Base core with auto-scanning plugins.
 
-- Scans T3 project structure automatically
-- Detects stack components and pulls appropriate adapters
-- Auto-configures based on detected setup
-- No manual repo consolidation or centralized config management
+Core scans your repository, identifies packages (Next.js, Expo, tRPC, Prisma), loads appropriate plugins, and handles deployment. Manual configuration is only required for settings that cannot be auto-detected.
 
-The system scans your repository, identifies packages (Next.js, Expo, tRPC, Prisma), assigns adapters, and consolidates everything into configuration files.
+---
+
+## Plugin Architecture
+
+Core uses a plugin system with 4 categories:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     PLUGIN CATEGORIES                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. SECRETS     - Where credentials are stored                      │
+│     └── github, aws-sm, vault, 1password                            │
+│                                                                     │
+│  2. SERVERS     - Where code runs (compute targets)                 │
+│     ├── Simple: mac-mini, ubuntu-server                             │
+│     ├── Bundled: aws-free-tier (EC2+RDS+ECR+S3)                     │
+│     ├── Managed: vercel, fly-io, railway                            │
+│     └── Kubernetes: aws-kubernetes, gke, self-hosted-k8s            │
+│                                                                     │
+│  3. FRAMEWORKS  - What gets deployed (app/service types)            │
+│     ├── Apps: expo, nextjs, static                                  │
+│     ├── Services: prisma-server, trpc-server, express               │
+│     └── Data: postgres, mysql, redis                                │
+│                                                                     │
+│  4. PIPELINES   - How code flows dev → staging → prod               │
+│     └── github-actions, gitlab-ci, jenkins, manual                  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### All Plugins Follow the Same Pattern
+
+Every plugin implements the **init → init fix → deploy** pattern:
+
+```javascript
+class Plugin {
+  // ============ INIT (scan) ============
+  async scanDev(config)      // Check local requirements
+  async scanGitHub(config)   // Check GitHub secrets exist
+  async scanServer(config)   // Check server state
+  
+  // ============ INIT FIX ============
+  async fixDev(issues)       // Fix local issues
+  async fixGitHub(issues)    // Upload secrets to GitHub
+  // NOTE: fixServer() is reserved for deploy
+  
+  // ============ DEPLOY ============
+  async deploy(config)       // Deploy to server
+  async undeploy(config)     // Remove from server
+  
+  // ============ METADATA ============
+  static requiredSecrets     // What secrets this plugin needs
+  static coreYmlSettings     // Manual settings (user configures)
+  static coreAutoSettings    // Auto-detected settings
+  static capabilities        // What this plugin provides
+}
+```
+
+---
+
+## Init/Fix/Deploy Pattern
+
+### The Core Principle
+
+For **every issue** a plugin can detect, it MUST provide:
+
+1. **SCAN function** - Detects the issue
+2. **FIX function** - Resolves the issue (or `null` if manual fix required)
+3. **EXPLANATION** - How to fix manually if no auto-fix
+4. **STAGE** - Which stage this applies to (dev/github/staging/prod)
+
+### Issue Structure
+
+```javascript
+{
+  id: 'missing-ssh-key',
+  stage: 'github',           // dev | github | staging | prod
+  severity: 'critical',      // critical | warning | info
+  description: 'STAGING_SSH secret not found in GitHub',
+  canAutoFix: true,
+  fix: async () => { /* upload secret */ },
+  manualFix: 'Go to GitHub Settings → Secrets → Add STAGING_SSH'
+}
+```
+
+### Command Behavior by Stage
+
+| Command | Dev | GitHub | Staging/Prod |
+|---------|-----|--------|--------------|
+| `init` | Scan + auto-fix minor | Scan only | Scan only |
+| `init fix` | Fix all | Fix all | WARN only (shows pending) |
+| `deploy` | Scan | Scan | Fix + Deploy |
+
+### Stage Progression
+
+Plugins must understand what's required to reach the next stage:
+
+```
+DEV → GITHUB → STAGING → PROD
+ │       │         │        │
+ │       │         │        └── Requires: PROD_SSH
+ │       │         └── Requires: STAGING_SSH  
+ │       └── Requires: GITHUB_TOKEN, workflows pushed
+ └── Requires: core.yml, coreAuto.yml
+```
+
+### What Each Stage Can Fix
+
+**Dev (local):**
+- Generate coreAuto.yml
+- Generate workflows
+- Update .gitignore
+- Create env templates
+- Install dependencies
+
+**GitHub (via API):**
+- Upload secrets (SSH keys, env vars)
+- Cannot: modify workflows (must be pushed via git)
+
+**Staging/Prod (via workflow/SSH):**
+- Upload core.yml as {repo}.yml
+- Regenerate docker-compose.yml
+- Regenerate nginx.conf
+- Deploy containers
+- Run migrations
+
+---
+
+## Universal Interfaces
+
+Plugins can implement **universal interfaces** for interoperability. If two plugins implement the same interface, they use the same config and can work together.
+
+### Universal Environment Variables
+
+```javascript
+// Plugins MUST use these if they provide the capability
+
+// ============ DATABASE ============
+DATABASE_URL        // Primary connection string
+DATABASE_URL_READ   // Read replica (optional)
+DATABASE_POOL_SIZE  // Connection pool size
+
+// ============ STORAGE ============
+STORAGE_URL         // Object storage endpoint
+STORAGE_BUCKET      // Default bucket name
+STORAGE_ACCESS_KEY  // Access key (secret)
+STORAGE_SECRET_KEY  // Secret key (secret)
+
+// ============ CACHE ============
+CACHE_URL           // Cache connection string (redis://host:6379)
+
+// ============ EMAIL ============
+EMAIL_FROM          // Default from address
+EMAIL_PROVIDER_URL  // Email API endpoint
+EMAIL_API_KEY       // Email service API key (secret)
+
+// ============ SITE ============
+SITE_URL            // Public URL of the site
+API_URL             // API endpoint URL
+CDN_URL             // CDN URL for assets
+
+// ============ AUTH ============
+AUTH_SECRET         // Secret for signing tokens (secret)
+AUTH_URL            // Auth callback URL
+```
+
+### Universal Settings
+
+Standard settings that plugins can implement:
+
+```yaml
+# REPLICATION - For databases that support it
+replication:
+  enabled: true
+  mode: async           # async | sync | semi-sync
+  replicas:
+    - target: production-replica
+      role: read        # read | failover | backup
+
+# BACKUP - For databases and storage
+backup:
+  enabled: true
+  schedule: daily       # hourly | daily | weekly
+  retention_days: 7
+  storage: s3-backup    # Reference to storage plugin
+
+# SCALING - For servers that support it
+scaling:
+  enabled: false
+  min_instances: 1
+  max_instances: 3
+  target_cpu: 70
+  target_memory: 80
+
+# HEALTH CHECK - For all deployable apps
+healthCheck:
+  endpoint: /health
+  interval_seconds: 30
+  timeout_seconds: 5
+  healthy_threshold: 2
+  unhealthy_threshold: 3
+
+# LOGGING - All frameworks should support
+logging:
+  level: info           # debug | info | warn | error
+  format: json          # json | text
+  destination: stdout   # stdout | file | service
+```
+
+### Interface Compatibility
+
+Plugins that implement the same interface can work together:
+
+| Interface | Env Vars | Settings | Implemented By |
+|-----------|----------|----------|----------------|
+| **Database** | DATABASE_URL | replication, backup | postgres, mysql, aws-rds |
+| **Storage** | STORAGE_URL, STORAGE_BUCKET | backup, lifecycle | s3, gcs, minio |
+| **Cache** | CACHE_URL | clustering, eviction | redis, memcached |
+| **Email** | EMAIL_FROM, EMAIL_API_KEY | templates, rate_limit | ses, sendgrid, postmark |
+
+---
+
+## Framework/Server Compatibility
+
+Frameworks declare requirements, servers declare capabilities:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                     FRAMEWORK / SERVER COMPATIBILITY                     │
+├────────────────┬─────────┬────────┬──────────────┬────────┬─────────────┤
+│                │mac-mini │ ubuntu │aws-free-tier │ vercel │ aws-k8s     │
+├────────────────┼─────────┼────────┼──────────────┼────────┼─────────────┤
+│ expo           │  ✓ full │ ✓ droid│      ✓       │   ✗    │     ✓       │
+│ nextjs         │    ✓    │   ✓    │      ✓       │ ✓ best │     ✓       │
+│ prisma-server  │  ✓ ext  │ ✓ ext  │    ✓ rds     │   ✗    │   ✓ ext     │
+│ postgres       │    ✓    │   ✓    │    ✓ rds     │   ✗    │     ✓       │
+│ static         │    ✓    │   ✓    │      ✓       │   ✓    │     ✓       │
+├────────────────┴─────────┴────────┴──────────────┴────────┴─────────────┤
+│ Legend: ✓ = supported, ✗ = not supported                                │
+│         full = full iOS+Android, droid = Android only                   │
+│         ext = external DB required, rds = managed DB included           │
+│         best = optimized for this platform                              │
+└──────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -26,67 +267,36 @@ The system scans your repository, identifies packages (Next.js, Expo, tRPC, Pris
 
 ### core.yml (Manual Settings)
 
-For settings the user MUST configure manually, use the pattern:
+Use the `EXAMPLE-` prefix for settings that need user input:
 
 ```yaml
-# Description of what this setting does
-setting_name: EXAMPLE-actual-value-format
-```
+name: EXAMPLE-myapp
+ssl_email: EXAMPLE-admin@example.com
 
-**Rules:**
-- All manual settings use `EXAMPLE-` prefix to indicate they need user input
-- Each setting has a comment above explaining its purpose
-- Core will block deployment if any `EXAMPLE-` values remain
-
-**Example:**
-```yaml
-# Repository name - must match your GitHub repository
-name: EXAMPLE-factiii
-
-# SSL email for Let's Encrypt certificates
-ssl_email: EXAMPLE-admin@yourdomain.com
-
-# AWS configuration (not secrets - just identifies the account)
 aws:
-  access_key_id: AKIAXXXXXXXXXXXXXXXX
+  access_key_id: EXAMPLE-AKIAXXXXXXXXXXXXXXXX
   region: us-east-1
 
-# Environments with host configuration
 environments:
   staging:
-    domain: staging.factiii.com
-    host: 192.168.1.100  # Not a secret
-  production:
-    domain: factiii.com
-    host: prod.example.com
+    domain: EXAMPLE-staging.myapp.com
+    host: EXAMPLE-192.168.1.100
 ```
+
+**Core blocks deployment if any `EXAMPLE-` values remain.**
 
 ### coreAuto.yml (Auto-Detected Settings)
 
-For settings that Core detects automatically. Generated by running `npx core init`.
+Generated by `npx core init`. Override with the `OVERRIDE` keyword:
 
-**Override Pattern:**
 ```yaml
-setting_name: detected_value OVERRIDE custom_value
-```
-
-**Example:**
-```yaml
-# SSH user (defaults to ubuntu)
+# Auto-detected
 ssh_user: ubuntu
-
-# Auto-detected, using default
 prisma_schema: apps/server/prisma/schema.prisma
 
-# Auto-detected, but user overrode
+# User override
 dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 ```
-
-**Warning System:**
-Core warns when:
-- Auto-detected value != deployed value (unexpected drift)
-- Auto-detected value != override value (intentional change acknowledged)
-- Deployed value changed without corresponding override
 
 ---
 
@@ -114,343 +324,86 @@ Core minimizes secrets by putting non-sensitive values in config files.
 | `PROD_SSH` | SSH private key for production server |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key (only secret AWS value) |
 
-### Optional GitHub Secrets
-
-| Secret | Description |
-|--------|-------------|
-| `STAGING_ENVS` | Environment variables from .env.staging |
-| `PROD_ENVS` | Environment variables from .env.prod |
-
----
-
-## Environment Standards
-
-### Environment Files
-
-| File | Required | Git Status | Purpose |
-|------|----------|------------|---------|
-| `.env.dev` | Mandatory | Committed | Development defaults, safe values |
-| `.env.staging` | Optional | Configurable | Staging environment values |
-| `.env.prod` | Mandatory | **Gitignored** | Production secrets |
-| `.env.test` | Optional | Committed | Test environment values |
-
-### Adapter Environment Reporting
-
-All adapters report any environment variables they require. Core consolidates these into `.env.dev` as a template with example values.
-
-For secret keys (e.g., OpenAI API key), adapters can add OAuth flows or CLI commands to auto-pull necessary credentials.
-
 ---
 
 ## Commands
 
-Core provides exactly **3 commands** following a **2-stage process**:
-
-1. **Check** (`init`) - Discover ALL issues
-2. **Fix** (`init fix`) - Fix ALL issues in logical order
-3. **Deploy** (`deploy`) - Deploy containers
-
-## The 2-Stage Process
-
-**Why 2 stages?** 
-
-Single-stage approaches fail because:
-- Fix A fails because B isn't fixed
-- Fix B breaks A
-- Developer confused about state
-
-**2-stage solution:**
-1. Check everything first (discover ALL issues)
-2. Fix in dependency order (each fix enables the next)
-
-See [WORKFLOW.md](WORKFLOW.md) for detailed explanation.
-
----
-
 ### `npx core init`
 
-**Stage 1: Check Everything**
+**Purpose:** Scan everything, auto-fix dev only, report all issues.
 
-**Purpose:** Comprehensive check of everything - local, GitHub, and remote servers. Auto-fixes local only.
+**What it does:**
+- **Dev:** Scan + auto-fix (generate configs, install deps)
+- **GitHub:** Scan only (check secrets exist)
+- **Servers:** Scan only (check deployment state)
 
-**What It Checks:**
-- **Local environment:** All files, configs, dependencies, scripts
-- **GitHub:** Secrets, workflows, repository settings
-- **Remote servers:** Deployed configurations (read-only via SSH)
-
-**Local Dev Environment (Auto-Fix Enabled):**
-- Run package detection (Next.js, Expo, tRPC, Prisma)
-- Generate/update `coreAuto.yml`
-- Validate `core.yml` (check for EXAMPLE- values)
-- Auto-install missing dependencies
-- Generate missing config files
-- Create .env templates if missing
-- Fix package.json scripts
-- Update .gitignore if needed
-- **Can delete/modify files** - developers understand git
-
-**GitHub (Check-Only):**
-- Verify required secrets exist (`{ENV}_SSH`, `AWS_SECRET_ACCESS_KEY`)
-- Check workflow files are present
-- Report missing secrets
-- **NO modifications** - use `init fix` to upload secrets
-
-**Remote Environments (Staging/Prod) - Check-Only:**
-- SSH to servers (read-only)
-- Validate deployed configurations
-- Compare deployed vs local configs
-- Report mismatches and drift
-- **NO modifications allowed** - use `init fix` for server-side fixes
-
-**Exit Codes:**
-- Exit 0: Success (permissive, even with warnings)
-- Exit non-zero: Critical local errors only
+**Output:** Full report of all issues with what `init fix` would change.
 
 ### `npx core init fix`
 
-**Stage 2: Fix Everything in Logical Order**
+**Purpose:** Fix dev + GitHub issues, warn about server issues.
 
-**Purpose:** Fix everything that `init` checks - local, GitHub, and remote servers. Guarantees deploy will work.
+**What it does:**
+1. Runs `init` first to discover all issues
+2. Fixes all dev issues
+3. Uploads missing secrets to GitHub
+4. Reports pending server changes (for deploy to handle)
 
-**Must be explicitly called** - never runs automatically.
-
-**Fix Order (Dependency Chain):**
-
-```
-1. Local Environment (files, configs)
-   ↓ (must be correct before uploading)
-2. GitHub Secrets (STAGING_ENVS, PROD_ENVS)
-   ↓ (must exist before workflows/deployments)
-3. Remote Servers (infrastructure setup)
-   ↓ (must be set up before deployment)
-4. Verification (workflow confirms fixes)
-```
-
-**Why this order?**
-- Local configs must be correct before uploading to GitHub
-- Secrets must exist in GitHub before servers can deploy
-- Servers need secrets to set up environment
-- Verification confirms everything worked
-
-**What It Fixes:**
-
-**Part 1 - Local Environment:**
-- Generate missing config files
-- Install missing dependencies
-- Fix package.json scripts
-- Update .gitignore
-- Create .env templates
-
-**Part 2 - GitHub Secrets:**
-- Prompt for missing secrets only (`{ENV}_SSH`, `AWS_SECRET_ACCESS_KEY`)
-- Optionally upload `STAGING_ENVS`/`PROD_ENVS` if .env files exist
-- Verify all required secrets exist
-- Display verification link
-
-**Part 3 - Remote Servers:**
-- SSH to servers (uses secrets from Part 2)
-- Create infrastructure directories
-- Fix file permissions
-- Generate server configs
-- Validate configurations
-
-**Part 4 - Verification:**
-- Trigger `core-init.yml` workflow with `fix=true`
-- Run all checks again
-- Confirm everything is working
-
-**What It Does NOT Do:**
-- Deploy containers (that's what `deploy` is for)
-- Update server deployment configs (nginx, docker-compose on servers)
-- Restart running services
-- Modify application code
-
-**Output:**
-Provides comprehensive report showing what was fixed in each stage:
-```
-Stage 1: Discovering Issues
-   [runs init check, shows all problems]
-
-Stage 2: Fixing Issues
-   Part 1: Local Environment ✅
-   Part 2: GitHub Secrets ✅
-   Part 3: Remote Servers ✅
-   Part 4: Verification ✅
-
-Summary of Fixes:
-   ✅ Local: configs generated
-   ✅ GitHub: STAGING_ENVS (36 vars)
-   ✅ GitHub: PROD_ENVS (36 vars)
-   ✅ Servers: staging ready
-   ✅ Servers: prod ready
-```
-
-**After `init fix`:**
-- Everything is fully prepared for deployment
-- All dependencies resolved in order
-- No "chicken and egg" problems
-- Run `npx core deploy` to actually deploy
-
-**Safety:**
-- Prompts for confirmation before remote changes
-- Supports `--dry-run` to preview changes
-- Comprehensive report of all changes made
-
-**When to Use:**
-- Initial setup of new environments
-- After major configuration changes
-- When `deploy` fails with blocking errors
-- When GitHub secrets are missing
-- To prepare everything for deployment
-
-**Key Principle:**
-Never try to fix issues out of order. Always let `init fix` handle the dependency chain automatically.
+**Does NOT:** Deploy containers, modify nginx/docker-compose on servers.
 
 ### `npx core deploy`
 
-**Purpose:** Run init check, then deploy if checks pass.
+**Purpose:** Run init, then fix servers and deploy.
 
-**Pre-deployment Check:**
-Runs `init` (NOT `init fix`) first. Analyzes failures:
-
-**Non-Blocking Failures (proceed with warning):**
-- Environment variable changes (intentional rekey)
-- Domain updates
-- Port reassignments
-- Auto-detected changes with explicit overrides
-
-**Blocking Failures (stop deployment):**
-- Missing required settings (EXAMPLE- values present)
-- Invalid YAML syntax
-- Missing critical files (Dockerfile, package.json)
-- SSH connection failures
-- Invalid domain formats
-- Conflicting configurations
-- Auto-detected changes WITHOUT overrides (unexpected drift)
-
-**On Blocking Failure:**
-```
-❌ Deployment blocked: Missing required setting
-   Setting: ssl_email
-   Current: EXAMPLE-admin@yourdomain.com
-   
-   Fix: Update core.yml with actual value
-   Then: npx core init fix
-```
+**What it does:**
+1. Runs `init` - blocks if critical issues
+2. Uploads core.yml to servers
+3. Regenerates nginx/docker-compose
+4. Deploys containers
+5. Runs migrations (production only)
 
 ---
 
-## GitHub Actions Workflows
+## Pipeline Configuration
 
-### Key Distinction: Generated vs Used
-
-**Core GENERATES workflows for repos but does NOT use them itself.**
-
-| Aspect | Core CLI | Generated Workflows |
-|--------|----------|---------------------|
-| **Purpose** | Direct deployment | Repo CI/CD automation |
-| **Triggered by** | `npx core deploy` | Git events (push, PR merge) |
-| **Runs where** | Your machine | GitHub Actions |
-| **Core involvement** | Core runs it | Core is NOT involved |
-
-**Why both?**
-- **CLI**: For manual/immediate deployments from your machine
-- **Workflows**: For automated CI/CD on git events (optional but recommended)
-
-### Generated Workflows
-
-Core generates these workflows via `npx core generate-workflows`:
+The `github-actions` pipeline (default) generates these workflows:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
+| `core-deploy.yml` | Manual (npx core deploy) | Direct deployment |
 | `core-staging.yml` | PR/push to main | Auto-deploy to staging |
 | `core-production.yml` | Merge to production | Auto-deploy to production |
-| `core-undeploy.yml` | Manual trigger | Cleanup/remove deployment |
-
-### Staging Workflow (main branch)
-
-**Trigger:** PR merged to main
-
-**Flow:**
-1. Run tests
-2. Build Docker image
-3. Push to ECR
-4. Deploy container to staging server
-
-### Production Workflow (production branch)
-
-**Trigger:** Merge to production branch
-
-**Flow:**
-1. Run tests
-2. Build Docker image
-3. Push to ECR
-4. Backup database
-5. Deploy container to production server
-6. Run database migrations
-7. Health check (rollback on failure)
+| `core-undeploy.yml` | Manual | Cleanup/remove deployment |
 
 ---
 
-## Current Stack
+## Current Status & Roadmap
 
-Core currently supports the T3 + Expo stack:
+### Currently Implemented
 
-| Component | Purpose |
-|-----------|---------|
-| Next.js | Web application |
-| Expo | Mobile application |
-| tRPC | Type-safe API layer |
-| Prisma | Database ORM |
+- Core engine with init/init fix/deploy commands
+- Secrets plugin: `github`
+- Server plugins: `mac-mini`, `aws-ec2` (partial)
+- Pipeline: `github-actions` (hardcoded)
+- Framework detection: Prisma only
 
----
+### Roadmap
 
-## Future: Adapter Roadmap
+| Phase | Plugin | Description |
+|-------|--------|-------------|
+| 1 | **Core** | Stabilize plugin architecture (Current) |
+| 2 | **Expo** | Mobile app builds (iOS + Android) |
+| 3 | **Prisma/tRPC Server** | API server framework |
+| 4 | **AWS Free Tier** | Bundled EC2 + RDS + ECR + S3 |
+| 5 | **Next.js/Vercel** | Managed Next.js hosting |
+| 6 | **Next.js/Server** | Self-hosted Next.js |
 
-Adapters will be extracted from core one by one:
+### Future Universal Interfaces
 
-| Phase | Adapter | Status |
-|-------|---------|--------|
-| 1 | Core only | **Current** |
-| 2 | Next.js | Planned |
-| 3 | Expo | Planned |
-| 4 | Prisma/tRPC | Planned |
-
-### Adapter Types (Future)
-
-**Stack Adapters** - Detect and configure stack components:
-- Next.js adapter
-- Expo adapter
-- tRPC adapter
-- Prisma adapter
-
-**CLI Adapters** - Shared utilities for other adapters:
-- AWS adapter (ECR, S3, CLI auth)
-- GitHub adapter (API, Actions, Secrets)
-- Azure adapter
-
-**Infrastructure Adapters** - Deployment and hosting:
-- Docker adapter
-- nginx adapter
-- CICD adapter
-
----
-
-## Deployment Targets
-
-| Environment | Platform | Details |
-|-------------|----------|---------|
-| Staging | Any Mac | Development/testing server |
-| Production | Any Ubuntu | Production hosting |
-
-**Container Stack:**
-- nginx (reverse proxy)
-- Docker containers (application)
-
-**Multi-Server Support:**
-- `PROD_SSH` - Primary production server
-- `PROD_SSH2` - Replica server (optional)
-- Additional replicas as needed
+- Database replication across clouds (postgres ↔ aws-rds)
+- Cross-platform storage (S3-compatible everywhere)
+- Unified logging and monitoring
+- Multi-cloud deployments
 
 ---
 
@@ -458,17 +411,15 @@ Adapters will be extracted from core one by one:
 
 **Important:** This repository IS the Core package itself.
 
-**DO NOT** run `npx core` commands inside this repository. These commands should only be run in APPLICATION repositories that consume this package.
+**DO NOT** run `npx core` commands inside this repository.
 
 ### Testing Changes
 
-1. Make changes to source files in `src/`
-2. Test in a SEPARATE application repository:
-   ```bash
-   cd /path/to/test-app
-   npm link /path/to/infrastructure
-   npx core init
-   ```
+```bash
+cd /path/to/test-app
+npm link /path/to/infrastructure
+npx core init
+```
 
 ### Key Directories
 
@@ -477,19 +428,95 @@ Adapters will be extracted from core one by one:
 ├── bin/core              # CLI entry point
 ├── src/
 │   ├── cli/              # Command implementations
-│   │   ├── init.js       # Validate + auto-fix local
-│   │   ├── init-fix.js   # Fix all environments
-│   │   ├── deploy.js     # Direct SSH deployment
-│   │   ├── deployer.js   # SSH deployment engine
-│   │   └── generate-workflows.js  # Generate repo CI/CD workflows
+│   ├── plugins/          # Plugin implementations
+│   │   ├── secrets/      # Secrets plugins (github, etc.)
+│   │   ├── server/       # Server plugins (mac-mini, etc.)
+│   │   └── interfaces/   # Plugin interfaces
 │   ├── generators/       # Config generators
+│   ├── universal/        # Universal interfaces & env vars
 │   ├── utils/            # Utilities
-│   └── workflows/        # Workflow templates (generated FOR repos, not used BY Core)
-│       ├── core-staging.yml     # Repo CI/CD: auto-deploy on PR/push to main
-│       ├── core-production.yml  # Repo CI/CD: auto-deploy on merge to production
-│       └── core-undeploy.yml    # Manual cleanup trigger
-├── scripts/              # Bash scripts for servers
+│   └── workflows/        # Workflow templates
 ├── templates/            # Config templates
 └── test/                 # Test suites
 ```
 
+---
+
+## Writing Plugins
+
+### Plugin Checklist
+
+Every plugin MUST:
+
+1. Implement `scanDev()`, `scanGitHub()`, `scanServer()`
+2. Implement `fixDev()`, `fixGitHub()`
+3. Implement `deploy()`, `undeploy()`
+4. Define `requiredSecrets` - what secrets it needs
+5. Define `coreYmlSettings` - manual settings
+6. Define `coreAutoSettings` - auto-detected settings
+7. For every issue it can detect, provide a fix or explanation
+
+### Plugin Template
+
+```javascript
+const { Plugin } = require('@factiii/core');
+
+class MyPlugin extends Plugin {
+  static id = 'my-plugin';
+  static category = 'framework';  // secrets | server | framework | pipeline
+  
+  static requiredSecrets = ['MY_API_KEY'];
+  
+  static coreYmlSettings = {
+    my_setting: 'EXAMPLE-value'
+  };
+  
+  static coreAutoSettings = {
+    detected_setting: null  // Will be auto-detected
+  };
+  
+  async scanDev(config) {
+    const issues = [];
+    // Check for issues, add to array
+    return issues;
+  }
+  
+  async fixDev(issues) {
+    for (const issue of issues) {
+      if (issue.canAutoFix) {
+        await issue.fix();
+      }
+    }
+  }
+  
+  async deploy(config) {
+    // Deploy logic
+  }
+}
+
+module.exports = MyPlugin;
+```
+
+### Using Universal Interfaces
+
+If your plugin provides a universal capability, use the standard env vars:
+
+```javascript
+class PostgresPlugin extends Plugin {
+  static implements = ['database', 'replication', 'backup'];
+  
+  // Use universal env vars
+  static envVars = {
+    DATABASE_URL: { required: true },
+    DATABASE_URL_READ: { required: false }
+  };
+  
+  // Use universal settings
+  static settings = {
+    replication: UniversalSettings.replication,
+    backup: UniversalSettings.backup
+  };
+}
+```
+
+This ensures your plugin is compatible with any other plugin that uses the database interface.

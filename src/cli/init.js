@@ -988,7 +988,8 @@ async function init(options = {}) {
     console.log('   💡 Run \'npx core init\' again after making changes.\n');
   }
 
-  // Always exit 0 (permissive mode)
+  // Return summary for use by other commands (e.g., init-fix)
+  return summary;
 }
 
 module.exports = init;

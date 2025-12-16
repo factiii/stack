@@ -11,6 +11,7 @@ const deploy = require('../src/cli/deploy');
 const undeploy = require('../src/cli/undeploy');
 const generateWorkflows = require('../src/cli/generate-workflows');
 const secrets = require('../src/cli/secrets');
+const upgrade = require('../src/cli/upgrade');
 
 program
   .name('core')
@@ -109,6 +110,14 @@ program
   .option('--token <token>', 'GitHub token (or use GITHUB_TOKEN env var)')
   .action(async (names, options) => {
     await secrets(names, options);
+  });
+
+program
+  .command('upgrade')
+  .description('Check for updates and regenerate configs for new version')
+  .option('--check', 'Only check for updates, do not upgrade')
+  .action(async (options) => {
+    await upgrade(options);
   });
 
 program.parse();

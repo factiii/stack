@@ -273,10 +273,17 @@ async function initFix(options = {}) {
   console.log('   Running comprehensive check...\n');
   
   // Run init check to discover all issues
-  await init({ ...options, noRemote: true, skipWorkflow: true });
+  const initSummary = await init({ ...options, noRemote: true, skipWorkflow: true });
   
   console.log('\n' + '─'.repeat(70));
   console.log('');
+  
+  // Check if init found critical issues - if so, exit before attempting fixes
+  if (initSummary && initSummary.critical > 0) {
+    console.error('❌ Init found critical issues that must be fixed manually.');
+    console.error('   Please address the issues shown above before running init fix.');
+    process.exit(1);
+  }
   
   // Check if we have a config
   if (!fs.existsSync(configPath)) {
@@ -521,11 +528,79 @@ async function initFix(options = {}) {
   // STAGE 2D: REMOTE SERVERS
   // ============================================================
   console.log('🖥️  Part 3: Remote Server Setup\n');
-  console.log('   ℹ️  Server fixes will be done by deployment workflows');
-  console.log('   ℹ️  SSH checks will run in verification step\n');
   
+  // Copy core.yml and coreAuto.yml to servers
   for (const env of environments) {
-    fixReport.servers[env.name].push('Ready for deployment');
+    const envName = env.name.toUpperCase();
+    const sshKeyName = `${envName}_SSH`;
+    const hostKey = `${envName}_HOST`;
+    const userKey = `${envName}_USER`;
+    
+    try {
+      console.log(`   📤 Uploading config to ${env.name} server...`);
+      
+      // Get SSH credentials from secret store
+      const sshCredentials = await secretStore.getSecrets([sshKeyName]);
+      
+      if (!sshCredentials[sshKeyName]) {
+        console.log(`   ⚠️  ${sshKeyName} not found in GitHub, skipping server setup`);
+        console.log(`      Config will be uploaded during first deployment\n`);
+        fixReport.servers[env.name].push('Ready for deployment');
+        continue;
+      }
+      
+      // Get host and user from core.yml
+      const host = env.config.host;
+      const user = env.config.ssh_user || 'ubuntu';
+      
+      if (!host) {
+        console.log(`   ⚠️  No host configured for ${env.name}, skipping server setup\n`);
+        fixReport.servers[env.name].push('Ready for deployment (no host configured)');
+        continue;
+      }
+      
+      // Write SSH key to temporary file
+      const { execSync } = require('child_process');
+      const os = require('os');
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'core-'));
+      const keyPath = path.join(tmpDir, 'deploy_key');
+      
+      fs.writeFileSync(keyPath, sshCredentials[sshKeyName], { mode: 0o600 });
+      
+      // Create infrastructure directory on server
+      try {
+        execSync(
+          `ssh -i "${keyPath}" -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${user}@${host}" "mkdir -p ~/infrastructure/configs"`,
+          { stdio: 'pipe' }
+        );
+        
+        // Copy core.yml to server as {repo_name}.yml
+        const repoConfigName = `${config.name}.yml`;
+        execSync(
+          `scp -i "${keyPath}" -o StrictHostKeyChecking=no "${configPath}" "${user}@${host}:~/infrastructure/configs/${repoConfigName}"`,
+          { stdio: 'pipe' }
+        );
+        
+        console.log(`   ✅ Config uploaded to ${env.name} server\n`);
+        fixReport.servers[env.name].push('Config uploaded');
+      } catch (sshError) {
+        console.log(`   ⚠️  Could not upload to ${env.name} server: ${sshError.message}`);
+        console.log(`      Config will be uploaded during deployment\n`);
+        fixReport.servers[env.name].push('Ready for deployment');
+      } finally {
+        // Clean up temp directory
+        try {
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+      
+    } catch (error) {
+      console.log(`   ⚠️  Error setting up ${env.name} server: ${error.message}`);
+      console.log(`      Config will be uploaded during deployment\n`);
+      fixReport.servers[env.name].push('Ready for deployment');
+    }
   }
   
   // ============================================================
@@ -567,7 +642,7 @@ async function initFix(options = {}) {
   console.log(`   https://github.com/${repoInfo.owner}/${repoInfo.repo}/settings/secrets/actions`);
   console.log('');
   
-  // Ask about deployment
+  // Ask about deployment only if there are no errors
   if (fixReport.errors.length === 0 && !options.noRemote) {
     const shouldDeploy = await confirm('🚀 Deploy now?', true);
     
@@ -584,6 +659,9 @@ async function initFix(options = {}) {
     } else {
       console.log('\n💡 Run deployment later with: npx core deploy\n');
     }
+  } else if (fixReport.errors.length > 0) {
+    console.log('\n⚠️  Deployment skipped due to errors above.');
+    console.log('   Fix the errors and run: npx core init fix\n');
   }
   
   // Optionally trigger workflow to verify
