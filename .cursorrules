@@ -1,36 +1,52 @@
-# Core Infrastructure Package - Development Rules
+# Factiii Stack Infrastructure Package - Development Rules
 
-## ⚠️ IMPORTANT: This is the CORE package itself
-This repository IS the `@factiii/core` infrastructure management tool.
-**DO NOT run `npx core` commands inside this repository.**
+## ⚠️ IMPORTANT: This is the FACTIII STACK package itself
+This repository IS the `@factiii/stack` infrastructure management tool.
+**DO NOT run `npx factiii` commands inside this repository.**
 
-Commands like `npx core init`, `npx core deploy`, etc. should ONLY be run in APPLICATION repositories that consume this package, not here.
+Commands like `npx factiii init`, `npx factiii deploy`, etc. should ONLY be run in APPLICATION repositories that consume this package, not here.
 
 ## Architecture Overview
 
-**Philosophy:** Auto-scanning T3 stack with adapters.
+**Philosophy:** Auto-scanning T3 stack with plugins.
 
-Core scans application repositories to:
+Factiii Stack scans application repositories to:
 - Detect stack components (Next.js, Expo, tRPC, Prisma)
 - Auto-configure deployment settings
-- Generate `coreAuto.yml` with detected values
-- Validate `core.yml` manual settings
+- Generate `factiiiAuto.yml` with detected values
+- Validate `factiii.yml` manual settings
 - Deploy to staging (Mac) and production (Ubuntu) servers
 
 **Reference:** See [STANDARDS.md](STANDARDS.md) for complete architecture documentation.
 
+## Plugin Architecture
+
+**5 Plugin Categories:**
+1. **SECRETS** - Where credentials are stored (github, aws-sm, vault)
+2. **SERVERS** - Where code runs (mac-mini, ubuntu-server, aws-free-tier, vercel)
+3. **FRAMEWORKS** - What gets deployed (expo, nextjs, prisma-trpc-server, postgres)
+4. **ADDONS** - Extensions to frameworks (auth, payments, storage)
+5. **PIPELINES** - How code flows (github-actions, gitlab-ci)
+
+**Plugin Interfaces:** `src/plugins/interfaces/`
+- `server-provider.js` - Base class for server plugins
+- `secret-store.js` - Base class for secret plugins
+- `app-framework.js` - Base class for framework plugins
+- `addon.js` - Base class for addon plugins
+- `pipeline.js` - Base class for pipeline plugins
+
 ## Configuration Pattern
 
 **Two configuration files:**
-- `core.yml` - Manual settings (user edits, `EXAMPLE-` prefix for required values)
-- `coreAuto.yml` - Auto-detected settings (Core generates, override with `OVERRIDE` keyword)
+- `factiii.yml` - Manual settings (user edits, `EXAMPLE-` prefix for required values)
+- `factiiiAuto.yml` - Auto-detected settings (Factiii generates, override with `OVERRIDE` keyword)
 
 **Secrets vs Config (Minimal Secrets):**
 - GitHub Secrets: Only `{ENV}_SSH` and `AWS_SECRET_ACCESS_KEY`
-- core.yml: `aws.access_key_id`, `aws.region`, `environments.{env}.host`
-- coreAuto.yml: `ssh_user` (defaults to ubuntu)
+- factiii.yml: `aws.access_key_id`, `aws.region`, `environments.{env}.host`
+- factiiiAuto.yml: `ssh_user` (defaults to ubuntu)
 
-**Example core.yml:**
+**Example factiii.yml:**
 ```yaml
 name: factiii
 aws:
@@ -42,7 +58,7 @@ environments:
     host: 192.168.1.100
 ```
 
-**Example coreAuto.yml override:**
+**Example factiiiAuto.yml override:**
 ```yaml
 ssh_user: ubuntu OVERRIDE admin
 dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
@@ -52,37 +68,43 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 
 | Command | Purpose |
 |---------|---------|
-| `npx core init` | Validate + auto-fix local dev, check-only for remote |
-| `npx core init fix` | Explicitly fix ALL environments including remote |
-| `npx core deploy` | Run init check, then deploy if checks pass |
+| `npx factiii init` | Validate + auto-fix local dev, check-only for remote |
+| `npx factiii init fix` | Explicitly fix ALL environments including remote |
+| `npx factiii deploy` | Run init check, then deploy if checks pass |
 
 **No separate `validate` command** - `init` handles all validation.
 
 ## Project Structure
 ```
 /Users/jon/infrastructure/
-├── bin/core                    # CLI entry point (npx core)
+├── bin/factiii                 # CLI entry point (npx factiii)
 ├── src/
 │   ├── cli/                    # Command implementations
 │   │   ├── init.js            # Validate + auto-fix local
-│   │   ├── init-fix.js        # Fix all environments (future)
+│   │   ├── init-fix.js        # Fix all environments
 │   │   ├── deploy.js          # Deploy to servers
 │   │   ├── undeploy.js        # Remove from servers
 │   │   └── generate-workflows.js  # Generate .github/workflows
 │   ├── generators/            # Config generators
 │   │   ├── generate-compose.js    # Docker compose generation
 │   │   ├── generate-nginx.js      # Nginx config generation
-│   │   ├── generate-core-auto.js  # coreAuto.yml generation (future)
+│   │   ├── generate-factiii-auto.js  # factiiiAuto.yml generation
 │   │   └── merge-configs.js       # Multi-repo config merging
+│   ├── plugins/               # Plugin system
+│   │   ├── interfaces/        # Base classes for all plugins
+│   │   ├── server/            # Server provider plugins
+│   │   ├── secrets/           # Secret store plugins
+│   │   └── approved.json      # Approved external plugins list
 │   ├── utils/                 # Utilities
 │   │   ├── github-secrets.js      # GitHub API integration
 │   │   ├── env-validator.js       # Environment file validation
 │   │   ├── server-check.js        # SSH server checks
 │   │   └── deployment-report.js   # Deployment reporting
-│   └── workflows/             # Workflow templates (generated for repos, not used by Core)
-│       ├── core-staging.yml   # Repo CI/CD: PR to main → staging deploy
-│       ├── core-production.yml # Repo CI/CD: Merge to prod → production deploy
-│       └── core-undeploy.yml  # Manual cleanup trigger
+│   └── workflows/             # Workflow templates (generated for repos)
+│       ├── factiii-deploy.yml     # Manual deployment workflow
+│       ├── factiii-staging.yml    # Auto-deploy on push to main
+│       ├── factiii-production.yml # Auto-deploy on merge to production
+│       └── factiii-undeploy.yml   # Manual cleanup trigger
 ├── scripts/                   # Bash scripts for servers
 ├── templates/                 # Config templates
 ├── STANDARDS.md               # Architecture standards
@@ -97,16 +119,17 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 2. Test in a SEPARATE application repository:
    ```bash
    cd /path/to/test-app
-   npm link /Users/jon/infrastructure  # Link local core package
-   npx core init                       # Test the command
+   pnpm link /Users/jon/infrastructure  # Link local package
+   npx factiii init                     # Test the command
    ```
-3. Do NOT run `npx core init` inside `/Users/jon/infrastructure`
+3. Do NOT run `npx factiii init` inside `/Users/jon/infrastructure`
 
 ### Key Files to Edit
 - **CLI Commands**: `src/cli/*.js` - Command implementations
 - **Generators**: `src/generators/*.js` - Config generation
+- **Plugins**: `src/plugins/` - Plugin implementations
 - **Workflow Templates**: `src/workflows/*.yml` - GitHub Actions
-- **Package Entry**: `bin/core` - Main CLI entry point
+- **Package Entry**: `bin/factiii` - Main CLI entry point
 
 ## Init Command Behavior
 
@@ -124,26 +147,26 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 **Triggers GitHub workflow for deployment:**
 - Validates config locally first
 - Checks GitHub secrets exist (`{ENV}_SSH`, `AWS_SECRET_ACCESS_KEY`)
-- Triggers `core-deploy.yml` workflow
+- Triggers `factiii-deploy.yml` workflow
 - Workflow builds, pushes to ECR, and deploys via SSH
 
 **Blocking failures:**
-- `EXAMPLE-` values present in core.yml
+- `EXAMPLE-` values present in factiii.yml
 - Invalid YAML syntax
 - Missing GitHub secrets
-- Missing host in core.yml
+- Missing host in factiii.yml
 
 ## GitHub Actions Workflows
 
-**Core generates workflows for repos:**
-- `core-deploy.yml` - Manual deployment triggered by `npx core deploy`
-- `core-staging.yml` - Auto-deploy on PR/push to main
-- `core-production.yml` - Auto-deploy on merge to production
-- `core-undeploy.yml` - Manual cleanup trigger
+**Factiii generates workflows for repos:**
+- `factiii-deploy.yml` - Manual deployment triggered by `npx factiii deploy`
+- `factiii-staging.yml` - Auto-deploy on PR/push to main
+- `factiii-production.yml` - Auto-deploy on merge to production
+- `factiii-undeploy.yml` - Manual cleanup trigger
 
 **Workflow reads config from:**
-- `core.yml`: aws.access_key_id, aws.region, environments.{env}.host
-- `coreAuto.yml`: ssh_user, dockerfile, prisma settings
+- `factiii.yml`: aws.access_key_id, aws.region, environments.{env}.host
+- `factiiiAuto.yml`: ssh_user, dockerfile, prisma settings
 - GitHub Secrets: {ENV}_SSH, AWS_SECRET_ACCESS_KEY
 
 **Staging (main branch):**
@@ -183,28 +206,43 @@ fs.writeFileSync(outputPath, newContent);
 
 ### EXAMPLE- Pattern for Required Settings
 ```yaml
-# core.yml - user must replace EXAMPLE- values
+# factiii.yml - user must replace EXAMPLE- values
 name: EXAMPLE-factiii
 ssl_email: EXAMPLE-admin@yourdomain.com
 ```
 
-Core blocks deployment if any `EXAMPLE-` values remain.
+Factiii blocks deployment if any `EXAMPLE-` values remain.
 
 ### OVERRIDE Pattern for Auto-Detected Settings
 ```yaml
-# coreAuto.yml - user can override detected values
+# factiiiAuto.yml - user can override detected values
 dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 ```
 
-Core warns if auto-detected != deployed (unexpected drift).
+Factiii warns if auto-detected != deployed (unexpected drift).
 
-## Future: Adapter Extraction
+## External Plugins
 
-Adapters will be extracted from core one by one:
+**Approved plugins:** Listed in `src/plugins/approved.json`
+- Approved plugins load without warnings
+- Unapproved plugins show a warning but still work
+- Users can add to `trusted_plugins` in factiii.yml to suppress warnings
+
+**Creating plugins:**
+1. Extend appropriate base class from `src/plugins/interfaces/`
+2. Implement required methods (scanDev, fixDev, deploy)
+3. Export with static `id` and `category` properties
+4. Publish to npm as `@factiii/stack-plugin-*` or custom name
+
+## Future: Plugin Roadmap
+
+Plugins will be extracted from core one by one:
 1. Phase 1: Core only (current)
-2. Phase 2: Next.js adapter
-3. Phase 3: Expo adapter
-4. Phase 4: Prisma/tRPC adapters
+2. Phase 2: Expo plugin
+3. Phase 3: Prisma/tRPC plugin
+4. Phase 4: AWS Free Tier plugin
+5. Phase 5: Next.js/Vercel plugin
+6. Phase 6: Next.js/Server plugin
 
 ## Related Documentation
 - [README.md](README.md) - User-facing documentation

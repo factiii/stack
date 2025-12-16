@@ -3,14 +3,14 @@
  * ============================================================================
  * LEGACY SCRIPT - For backward compatibility with centralized approach
  * ============================================================================
- * This script is part of the legacy centralized core.yml
+ * This script is part of the legacy centralized factiii.yml
  * approach. For new repositories, use the decentralized approach with
- * the npm package CLI commands (npx core generate-workflows, etc.)
+ * the npm package CLI commands (npx factiii generate-workflows, etc.)
  * ============================================================================
  * 
  * Generates .github/workflows/setup-infrastructure.yml from template
  * 
- * Reads core.yml and generates the workflow file with
+ * Reads factiii.yml and generates the workflow file with
  * all required secrets statically mapped in the env: block.
  * 
  * Usage: node scripts/generate-workflow.js
@@ -23,7 +23,7 @@ const path = require('path');
 
 // Paths
 const ROOT_DIR = path.join(__dirname, '..');
-const CONFIG_PATH = path.join(ROOT_DIR, 'core.yml');
+const CONFIG_PATH = path.join(ROOT_DIR, 'factiii.yml');
 const TEMPLATE_PATH = path.join(ROOT_DIR, '.github/workflows/setup-infrastructure.yml.template');
 const OUTPUT_PATH = path.join(ROOT_DIR, '.github/workflows/setup-infrastructure.yml');
 
@@ -127,7 +127,7 @@ function extractSecrets(config) {
 function generateEnvBlock(secrets) {
   const lines = [];
   
-  lines.push('          # Auto-generated from core.yml');
+  lines.push('          # Auto-generated from factiii.yml');
   lines.push('          # Re-run: node scripts/generate-workflow.js');
   lines.push('          #');
   lines.push('          # SSH Keys (one per server)');
@@ -157,7 +157,7 @@ function main() {
   }
   const configContent = fs.readFileSync(CONFIG_PATH, 'utf8');
   const config = parseSimpleYaml(configContent);
-  console.log('✅ Loaded core.yml');
+  console.log('✅ Loaded factiii.yml');
 
   // Extract secrets
   const secrets = extractSecrets(config);

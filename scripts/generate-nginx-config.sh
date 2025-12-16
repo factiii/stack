@@ -3,19 +3,19 @@
 # ============================================================================
 # LEGACY SCRIPT - For backward compatibility with centralized approach
 # ============================================================================
-# This script is part of the legacy centralized core.yml
+# This script is part of the legacy centralized factiii.yml
 # approach. For new repositories, use the decentralized approach with
-# the npm package CLI commands (npx core check-config, etc.)
+# the npm package CLI commands (npx factiii check-config, etc.)
 # ============================================================================
 #
-# Generate nginx.conf from core.yml
+# Generate nginx.conf from factiii.yml
 # Usage: ./scripts/generate-nginx-config.sh [output-file]
 # If output-file not specified, outputs to nginx/nginx.conf
 
 set -e
 
 INFRASTRUCTURE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CONFIG_FILE="${INFRASTRUCTURE_ROOT}/core.yml"
+CONFIG_FILE="${INFRASTRUCTURE_ROOT}/factiii.yml"
 OUTPUT_FILE="${1:-${INFRASTRUCTURE_ROOT}/nginx/nginx.conf}"
 
 # Source the parse script

@@ -3,9 +3,9 @@ const path = require('path');
 const yaml = require('js-yaml');
 
 /**
- * Get current Core package version
+ * Get current Factiii package version
  */
-function getCoreVersion() {
+function getFactiiiVersion() {
   try {
     const packageJsonPath = path.join(__dirname, '../../package.json');
     const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
@@ -75,26 +75,26 @@ function isBreakingUpgrade(from, to) {
 }
 
 /**
- * Read version info from coreAuto.yml
+ * Read version info from factiiiAuto.yml
  * @param {string} rootDir - Project root directory
- * @returns {{core_version: string|null, core_min_version: string|null}}
+ * @returns {{factiii_version: string|null, factiii_min_version: string|null}}
  */
-function readCoreAutoVersion(rootDir) {
-  const coreAutoPath = path.join(rootDir, 'coreAuto.yml');
-  
-  if (!fs.existsSync(coreAutoPath)) {
-    return { core_version: null, core_min_version: null };
+function readFactiiiAutoVersion(rootDir) {
+  const factiiiAutoPath = path.join(rootDir, 'factiiiAuto.yml');
+
+  if (!fs.existsSync(factiiiAutoPath)) {
+    return { factiii_version: null, factiii_min_version: null };
   }
   
   try {
-    const content = fs.readFileSync(coreAutoPath, 'utf8');
+    const content = fs.readFileSync(factiiiAutoPath, 'utf8');
     const config = yaml.load(content);
     return {
-      core_version: config.core_version || null,
-      core_min_version: config.core_min_version || null
+      factiii_version: config.factiii_version || null,
+      factiii_min_version: config.factiii_min_version || null
     };
   } catch (e) {
-    return { core_version: null, core_min_version: null };
+    return { factiii_version: null, factiii_min_version: null };
   }
 }
 
@@ -112,42 +112,42 @@ function readCoreAutoVersion(rootDir) {
  * }}
  */
 function checkVersionCompatibility(rootDir) {
-  const currentVersion = getCoreVersion();
-  const { core_version, core_min_version } = readCoreAutoVersion(rootDir);
+  const currentVersion = getFactiiiVersion();
+  const { factiii_version, factiii_min_version } = readFactiiiAutoVersion(rootDir);
   
   const result = {
     compatible: true,
     currentVersion,
-    configVersion: core_version,
-    minVersion: core_min_version,
+    configVersion: factiii_version,
+    minVersion: factiii_min_version,
     needsUpgrade: false,
     isBreaking: false,
     message: ''
   };
   
-  // No version info in coreAuto.yml (legacy or first run)
-  if (!core_version) {
+  // No version info in factiiiAuto.yml (legacy or first run)
+  if (!factiii_version) {
     result.needsUpgrade = true;
-    result.message = 'No version info in coreAuto.yml. Run: npx core upgrade';
+    result.message = 'No version info in factiiiAuto.yml. Run: npx factiii upgrade';
     return result;
   }
   
   // Check if current version meets minimum requirement
-  if (core_min_version && !isCompatible(currentVersion, core_min_version)) {
+  if (factiii_min_version && !isCompatible(currentVersion, factiii_min_version)) {
     result.compatible = false;
-    result.message = `Core version ${currentVersion} is below minimum required ${core_min_version}`;
+    result.message = `Factiii version ${currentVersion} is below minimum required ${factiii_min_version}`;
     return result;
   }
   
   // Check if versions match
-  if (compareVersions(currentVersion, core_version) !== 0) {
+  if (compareVersions(currentVersion, factiii_version) !== 0) {
     result.needsUpgrade = true;
-    result.isBreaking = isBreakingUpgrade(core_version, currentVersion);
+    result.isBreaking = isBreakingUpgrade(factiii_version, currentVersion);
     
     if (result.isBreaking) {
-      result.message = `Major version change: ${core_version} → ${currentVersion}. Run: npx core upgrade`;
+      result.message = `Major version change: ${factiii_version} → ${currentVersion}. Run: npx factiii upgrade`;
     } else {
-      result.message = `Version mismatch: config=${core_version}, installed=${currentVersion}. Run: npx core upgrade`;
+      result.message = `Version mismatch: config=${factiii_version}, installed=${currentVersion}. Run: npx factiii upgrade`;
     }
     return result;
   }
@@ -187,12 +187,12 @@ function displayVersionWarning(rootDir) {
 }
 
 module.exports = {
-  getCoreVersion,
+  getFactiiiVersion,
   parseVersion,
   compareVersions,
   isCompatible,
   isBreakingUpgrade,
-  readCoreAutoVersion,
+  readFactiiiAutoVersion,
   checkVersionCompatibility,
   displayVersionWarning
 };

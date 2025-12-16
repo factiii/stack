@@ -11,12 +11,12 @@ describe('GitHub Secrets Utilities', () => {
       const config = { name: 'test-repo' };
       const secrets = getRequiredSecrets(config);
       
+      // Updated for simplified secrets (only SSH keys and AWS secret)
       expect(secrets).toContain('STAGING_SSH');
       expect(secrets).toContain('PROD_SSH');
-      expect(secrets).toContain('AWS_ACCESS_KEY_ID');
+      expect(secrets).toContain('AWS_SECRET_ACCESS_KEY');
       expect(secrets).toContain('STAGING_ENVS');
       expect(secrets).toContain('PROD_ENVS');
-      expect(secrets.length).toBeGreaterThan(10);
     });
   });
 

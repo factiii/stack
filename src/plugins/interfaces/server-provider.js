@@ -59,7 +59,7 @@ class ServerProvider {
   // ============================================================
   
   /**
-   * @param {Object} config - Plugin configuration from core.yml
+   * @param {Object} config - Plugin configuration from factiii.yml
    * @param {Object} secrets - Resolved secrets (values, not secret names)
    */
   constructor(config = {}, secrets = {}) {
@@ -77,7 +77,7 @@ class ServerProvider {
    * - Create infrastructure directory
    * - Set up networking
    * 
-   * @param {Object} envConfig - Environment configuration from core.yml
+   * @param {Object} envConfig - Environment configuration from factiii.yml
    * @returns {Promise<{success: boolean, message?: string, error?: string}>}
    */
   async setup(envConfig) {

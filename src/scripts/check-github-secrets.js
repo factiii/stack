@@ -8,7 +8,7 @@ async function checkSecrets() {
   const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
   
   // Simplified secrets - only truly sensitive values
-  // HOST is in core.yml, USER defaults to ubuntu, AWS_ACCESS_KEY_ID and AWS_REGION are in core.yml
+  // HOST is in factiii.yml, USER defaults to ubuntu, AWS_ACCESS_KEY_ID and AWS_REGION are in factiii.yml
   const required = [
     'STAGING_SSH', 'PROD_SSH',           // SSH private keys
     'AWS_SECRET_ACCESS_KEY'              // Only secret AWS value

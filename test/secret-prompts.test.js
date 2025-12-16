@@ -33,16 +33,11 @@ describe('Secret Prompts Utilities', () => {
     });
 
     it('should have metadata for all required secret types', () => {
+      // Updated for simplified secrets (SSH keys and AWS secret only in GitHub)
       const secretTypes = [
         'STAGING_SSH',
         'PROD_SSH',
-        'STAGING_HOST',
-        'PROD_HOST',
-        'STAGING_USER',
-        'PROD_USER',
-        'AWS_ACCESS_KEY_ID',
-        'AWS_SECRET_ACCESS_KEY',
-        'AWS_REGION'
+        'AWS_SECRET_ACCESS_KEY'
       ];
       
       secretTypes.forEach(secret => {

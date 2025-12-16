@@ -156,7 +156,7 @@ async function promptForPluginSecret(secret, serverPlugin) {
 }
 
 /**
- * Parse environments from core.yml config
+ * Parse environments from factiii.yml config
  */
 function parseEnvironments(config) {
   const environments = [];
@@ -209,12 +209,12 @@ function parseEnvironments(config) {
  * - {ENV}_SSH: SSH private key for each environment
  * - AWS_SECRET_ACCESS_KEY: Only truly secret AWS value
  * 
- * Not secrets (in core.yml):
+ * Not secrets (in factiii.yml):
  * - HOST: environments.{env}.host
  * - AWS_ACCESS_KEY_ID: aws.access_key_id  
  * - AWS_REGION: aws.region
  * 
- * Not secrets (in coreAuto.yml):
+ * Not secrets (in factiiiAuto.yml):
  * - USER: defaults to ubuntu
  */
 function collectRequiredSecrets(environments) {
@@ -251,7 +251,7 @@ function collectRequiredSecrets(environments) {
  */
 async function initFix(options = {}) {
   const rootDir = process.cwd();
-  const configPath = path.join(rootDir, 'core.yml');
+  const configPath = path.join(rootDir, 'factiii.yml');
   
   console.log('═'.repeat(70));
   console.log('🔧 INIT FIX: Automated Environment Setup');
@@ -287,7 +287,7 @@ async function initFix(options = {}) {
   
   // Check if we have a config
   if (!fs.existsSync(configPath)) {
-    console.error('❌ core.yml not found. Run: npx core init');
+    console.error('❌ factiii.yml not found. Run: npx factiii init');
     process.exit(1);
   }
   
@@ -306,7 +306,7 @@ async function initFix(options = {}) {
     console.error('   echo \'export GITHUB_TOKEN=ghp_your_token_here\' >> ~/.zshrc');
     console.error('   source ~/.zshrc');
     console.error('');
-    console.error('   Or pass temporarily: npx core init fix --token <token>');
+    console.error('   Or pass temporarily: npx factiii init fix --token <token>');
     process.exit(1);
   }
   
@@ -529,7 +529,7 @@ async function initFix(options = {}) {
   // ============================================================
   console.log('🖥️  Part 3: Remote Server Setup\n');
   
-  // Copy core.yml and coreAuto.yml to servers
+  // Copy factiii.yml and factiiiAuto.yml to servers
   for (const env of environments) {
     const envName = env.name.toUpperCase();
     const sshKeyName = `${envName}_SSH`;
@@ -549,7 +549,7 @@ async function initFix(options = {}) {
         continue;
       }
       
-      // Get host and user from core.yml
+      // Get host and user from factiii.yml
       const host = env.config.host;
       const user = env.config.ssh_user || 'ubuntu';
       
@@ -570,14 +570,14 @@ async function initFix(options = {}) {
       // Create infrastructure directory on server
       try {
         execSync(
-          `ssh -i "${keyPath}" -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${user}@${host}" "mkdir -p ~/infrastructure/configs"`,
+          `ssh -i "${keyPath}" -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${user}@${host}" "mkdir -p ~/.factiii/configs"`,
           { stdio: 'pipe' }
         );
         
-        // Copy core.yml to server as {repo_name}.yml
+        // Copy factiii.yml to server as {repo_name}.yml
         const repoConfigName = `${config.name}.yml`;
         execSync(
-          `scp -i "${keyPath}" -o StrictHostKeyChecking=no "${configPath}" "${user}@${host}:~/infrastructure/configs/${repoConfigName}"`,
+          `scp -i "${keyPath}" -o StrictHostKeyChecking=no "${configPath}" "${user}@${host}:~/.factiii/configs/${repoConfigName}"`,
           { stdio: 'pipe' }
         );
         
@@ -657,11 +657,11 @@ async function initFix(options = {}) {
         fixReport.errors.push(`Deployment: ${error.message}`);
       }
     } else {
-      console.log('\n💡 Run deployment later with: npx core deploy\n');
+      console.log('\n💡 Run deployment later with: npx factiii deploy\n');
     }
   } else if (fixReport.errors.length > 0) {
     console.log('\n⚠️  Deployment skipped due to errors above.');
-    console.log('   Fix the errors and run: npx core init fix\n');
+    console.log('   Fix the errors and run: npx factiii init fix\n');
   }
   
   // Optionally trigger workflow to verify
@@ -689,14 +689,14 @@ async function initFix(options = {}) {
         const { data: workflow } = await octokit.rest.actions.getWorkflow({
           owner: repoInfo.owner,
           repo: repoInfo.repo,
-          workflow_id: 'core-init.yml'
+          workflow_id: 'factiii-init.yml'
         });
         console.log(`✅ Found workflow: ${workflow.name}\n`);
       } catch (error) {
         if (error.status === 404) {
           console.log('⚠️  Workflow not found in GitHub repository.');
-          console.log('   Please commit and push .github/workflows/core-init.yml');
-          console.log('   Then run: npx core init (to verify)\n');
+          console.log('   Please commit and push .github/workflows/factiii-init.yml');
+          console.log('   Then run: npx factiii init (to verify)\n');
           return;
         }
         throw error;
@@ -706,7 +706,7 @@ async function initFix(options = {}) {
       await octokit.rest.actions.createWorkflowDispatch({
         owner: repoInfo.owner,
         repo: repoInfo.repo,
-        workflow_id: 'core-init.yml',
+        workflow_id: 'factiii-init.yml',
         ref: currentBranch,
         inputs: {
           fix: 'true'
@@ -719,14 +719,14 @@ async function initFix(options = {}) {
     } catch (error) {
       if (error.status === 404) {
         console.log('⚠️  Workflow not found in GitHub.');
-        console.log('   Please commit and push .github/workflows/core-init.yml\n');
+        console.log('   Please commit and push .github/workflows/factiii-init.yml\n');
       } else {
         console.log(`⚠️  Could not trigger workflow: ${error.message}`);
-        console.log('   Run: npx core init (to verify manually)\n');
+        console.log('   Run: npx factiii init (to verify manually)\n');
       }
     }
   } else {
-    console.log('   Run: npx core init (to verify)\n');
+    console.log('   Run: npx factiii init (to verify)\n');
   }
 }
 

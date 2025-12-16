@@ -48,8 +48,8 @@ describe('CLI Command Tests', () => {
   });
 
   describe('init command', () => {
-    test('creates core.yml from template', async () => {
-      const configPath = path.join(testDir, 'core.yml');
+    test('creates factiii.yml from template', async () => {
+      const configPath = path.join(testDir, 'factiii.yml');
       
       // Should not exist initially
       expect(fs.existsSync(configPath)).toBe(false);
@@ -70,7 +70,7 @@ describe('CLI Command Tests', () => {
 
       await init({});
       
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       const content = fs.readFileSync(configPath, 'utf8');
       expect(content).toContain('name: test-repo');
       expect(content).not.toContain('your-repo-name');
@@ -82,14 +82,14 @@ describe('CLI Command Tests', () => {
 
       await init({});
       
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       const content = fs.readFileSync(configPath, 'utf8');
       expect(content).toContain('name: test-repo');
       expect(content).not.toContain('@org/test-repo');
     });
 
     test('skips creating config if exists without --force', async () => {
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       fs.writeFileSync(configPath, 'existing config');
 
       await init({});
@@ -100,7 +100,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('overwrites existing config with --force', async () => {
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       fs.writeFileSync(configPath, 'existing config');
 
       await init({ force: true });
@@ -114,13 +114,13 @@ describe('CLI Command Tests', () => {
       await init({});
       
       // Init now outputs comprehensive audit report
-      expect(consoleOutput.some(o => o[1].includes('Running infrastructure audit') || o[1].includes('core.yml'))).toBe(true);
+      expect(consoleOutput.some(o => o[1].includes('Running infrastructure audit') || o[1].includes('factiii.yml'))).toBe(true);
     });
   });
 
   describe('validate command', () => {
     test('validates a correct config file', () => {
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       const validConfig = {
         name: 'test-repo',
         environments: {
@@ -136,14 +136,14 @@ describe('CLI Command Tests', () => {
       const yaml = require('js-yaml');
       fs.writeFileSync(configPath, yaml.dump(validConfig));
 
-      validate({ config: 'core.yml' });
+      validate({ config: 'factiii.yml' });
 
       expect(consoleOutput.some(o => o[1].includes('Configuration is valid'))).toBe(true);
       expect(exitCode).toBeNull();
     });
 
     test('fails on missing name field', () => {
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       const invalidConfig = {
         environments: {
           staging: {
@@ -156,7 +156,7 @@ describe('CLI Command Tests', () => {
       fs.writeFileSync(configPath, yaml.dump(invalidConfig));
 
       try {
-        validate({ config: 'core.yml' });
+        validate({ config: 'factiii.yml' });
         fail('Should have exited');
       } catch (error) {
         expect(exitCode).toBe(1);
@@ -165,7 +165,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('fails on missing environments field', () => {
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       const invalidConfig = {
         name: 'test-repo'
       };
@@ -174,7 +174,7 @@ describe('CLI Command Tests', () => {
       fs.writeFileSync(configPath, yaml.dump(invalidConfig));
 
       try {
-        validate({ config: 'core.yml' });
+        validate({ config: 'factiii.yml' });
         fail('Should have exited');
       } catch (error) {
         expect(exitCode).toBe(1);
@@ -183,7 +183,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('fails on missing domain', () => {
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       const invalidConfig = {
         name: 'test-repo',
         environments: {
@@ -195,7 +195,7 @@ describe('CLI Command Tests', () => {
       fs.writeFileSync(configPath, yaml.dump(invalidConfig));
 
       try {
-        validate({ config: 'core.yml' });
+        validate({ config: 'factiii.yml' });
         fail('Should have exited');
       } catch (error) {
         expect(exitCode).toBe(1);
@@ -204,7 +204,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('warns on invalid port range', () => {
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       const configWithBadPort = {
         name: 'test-repo',
         environments: {
@@ -219,14 +219,14 @@ describe('CLI Command Tests', () => {
       const yaml = require('js-yaml');
       fs.writeFileSync(configPath, yaml.dump(configWithBadPort));
 
-      validate({ config: 'core.yml' });
+      validate({ config: 'factiii.yml' });
 
       expect(consoleOutput.some(o => o[1].includes('Port 2000') && o[1].includes('outside recommended range'))).toBe(true);
       expect(exitCode).toBeNull(); // Should not exit on warnings
     });
 
     test('warns on missing ssl_email', () => {
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       const configWithoutEmail = {
         name: 'test-repo',
         environments: {
@@ -239,7 +239,7 @@ describe('CLI Command Tests', () => {
       const yaml = require('js-yaml');
       fs.writeFileSync(configPath, yaml.dump(configWithoutEmail));
 
-      validate({ config: 'core.yml' });
+      validate({ config: 'factiii.yml' });
 
       expect(consoleOutput.some(o => o[1].includes('Missing ssl_email'))).toBe(true);
       expect(exitCode).toBeNull();
@@ -256,11 +256,11 @@ describe('CLI Command Tests', () => {
     });
 
     test('fails on invalid YAML', () => {
-      const configPath = path.join(testDir, 'core.yml');
+      const configPath = path.join(testDir, 'factiii.yml');
       fs.writeFileSync(configPath, 'invalid: yaml: content: [unclosed');
 
       try {
-        validate({ config: 'core.yml' });
+        validate({ config: 'factiii.yml' });
         fail('Should have exited');
       } catch (error) {
         expect(exitCode).toBe(1);
@@ -273,11 +273,11 @@ describe('CLI Command Tests', () => {
     test('generates workflow files in default directory', () => {
       const workflowsDir = path.join(testDir, '.github', 'workflows');
       const expectedFiles = [
-        'core-init.yml',
-        'core-deploy.yml',
-        'core-undeploy.yml',
-        'core-staging.yml',
-        'core-production.yml'
+        'factiii-init.yml',
+        'factiii-deploy.yml',
+        'factiii-undeploy.yml',
+        'factiii-staging.yml',
+        'factiii-production.yml'
       ];
 
       generateWorkflows({});
@@ -292,11 +292,11 @@ describe('CLI Command Tests', () => {
     test('generates workflow files in custom directory', () => {
       const customDir = path.join(testDir, 'custom-workflows');
       const expectedFiles = [
-        'core-init.yml',
-        'core-deploy.yml',
-        'core-undeploy.yml',
-        'core-staging.yml',
-        'core-production.yml'
+        'factiii-init.yml',
+        'factiii-deploy.yml',
+        'factiii-undeploy.yml',
+        'factiii-staging.yml',
+        'factiii-production.yml'
       ];
 
       generateWorkflows({ output: 'custom-workflows' });
@@ -308,8 +308,8 @@ describe('CLI Command Tests', () => {
       });
     });
 
-    test('replaces repo name placeholder if core.yml exists', () => {
-      const configPath = path.join(testDir, 'core.yml');
+    test('replaces repo name placeholder if factiii.yml exists', () => {
+      const configPath = path.join(testDir, 'factiii.yml');
       const yaml = require('js-yaml');
       fs.writeFileSync(configPath, yaml.dump({
         name: 'my-test-repo'

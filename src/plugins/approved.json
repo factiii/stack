@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "description": "List of approved/validated external plugins for Factiii Stack",
+  "approved": [
+    "@factiii/stack-plugin-expo",
+    "@factiii/stack-plugin-prisma-trpc",
+    "@factiii/stack-plugin-nextjs"
+  ],
+  "lastUpdated": "2024-12-16"
+}
+

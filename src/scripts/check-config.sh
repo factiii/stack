@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Server-side script to check configs and regenerate docker-compose.yml and nginx.conf
-# This script scans ~/infrastructure/configs/ for all repo configs and merges them
+# This script scans ~/.factiii/configs/ for all repo configs and merges them
 
 set -e
 
@@ -47,7 +47,7 @@ if ! command -v node &> /dev/null; then
 fi
 
 # Check if generators are available
-# They should be copied from the package to ~/infrastructure/scripts/
+# They should be copied from the package to ~/.factiii/scripts/
 GENERATOR_DIR="${SCRIPTS_DIR}/generators"
 
 if [ ! -d "$GENERATOR_DIR" ]; then

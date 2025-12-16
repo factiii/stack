@@ -66,7 +66,7 @@ class AppFramework {
   
   /**
    * @param {string} appPath - Path to the app directory
-   * @param {Object} config - App configuration from core.yml
+   * @param {Object} config - App configuration from factiii.yml
    */
   constructor(appPath, config = {}) {
     this.appPath = appPath;

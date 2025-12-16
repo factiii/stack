@@ -4,7 +4,7 @@ const yaml = require('js-yaml');
 
 function validate(options = {}) {
   const rootDir = process.cwd();
-  const configPath = path.resolve(rootDir, options.config || 'core.yml');
+  const configPath = path.resolve(rootDir, options.config || 'factiii.yml');
 
   if (!fs.existsSync(configPath)) {
     console.error(`❌ Config file not found: ${configPath}`);
@@ -43,7 +43,7 @@ function validate(options = {}) {
         console.error(`   ${path}: ${value}`);
       });
       console.error('\n💡 Please replace all EXAMPLE- values with your actual configuration.');
-      console.error('   Edit core.yml and replace these placeholder values.\n');
+      console.error('   Edit factiii.yml and replace these placeholder values.\n');
       process.exit(1);
     }
 

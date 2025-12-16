@@ -5,10 +5,10 @@ const { execSync } = require('child_process');
 const generateWorkflows = require('./generate-workflows');
 
 /**
- * Check core.yml status and detect if it needs customization
+ * Check factiii.yml status and detect if it needs customization
  */
 function checkCoreYmlStatus(rootDir, templatePath) {
-  const configPath = path.join(rootDir, 'core.yml');
+  const configPath = path.join(rootDir, 'factiii.yml');
   const result = {
     exists: false,
     needsCustomization: false,
@@ -74,9 +74,9 @@ function checkWorkflowsStatus(rootDir) {
     anyExist: false
   };
 
-  const stagingPath = path.join(workflowsDir, 'core-staging.yml');
-  const productionPath = path.join(workflowsDir, 'core-production.yml');
-  const undeployPath = path.join(workflowsDir, 'core-undeploy.yml');
+  const stagingPath = path.join(workflowsDir, 'factiii-staging.yml');
+  const productionPath = path.join(workflowsDir, 'factiii-production.yml');
+  const undeployPath = path.join(workflowsDir, 'factiii-undeploy.yml');
 
   result.stagingExists = fs.existsSync(stagingPath);
   result.productionExists = fs.existsSync(productionPath);
@@ -277,12 +277,12 @@ function detectPrismaVersion(rootDir, schemaPath = null) {
  * - {ENV}_SSH: SSH private key for each environment
  * - AWS_SECRET_ACCESS_KEY: AWS secret (only truly secret AWS value)
  * 
- * Not secrets (in core.yml):
+ * Not secrets (in factiii.yml):
  * - HOST: in environments.{env}.host
  * - AWS_ACCESS_KEY_ID: in aws.access_key_id
  * - AWS_REGION: in aws.region
  * 
- * Not secrets (in coreAuto.yml):
+ * Not secrets (in factiiiAuto.yml):
  * - USER: defaults to ubuntu
  */
 async function validateGitHubSecrets(config) {
@@ -421,42 +421,42 @@ function displayAuditReport(auditResults) {
   // 1. Configuration Status
   console.log('\n📋 Configuration Status:');
   if (!coreYml.exists) {
-    console.log('   ❌ core.yml does not exist');
+    console.log('   ❌ factiii.yml does not exist');
     console.log('      Will create on first run or with --force flag');
   } else if (coreYml.parseError) {
-    console.log('   ❌ core.yml has parsing errors');
+    console.log('   ❌ factiii.yml has parsing errors');
     console.log(`      Error: ${coreYml.parseError}`);
   } else if (coreYml.needsCustomization) {
-    console.log('   ⚠️  core.yml exists but needs customization');
+    console.log('   ⚠️  factiii.yml exists but needs customization');
     console.log('      Placeholder values detected:');
     for (const placeholder of coreYml.placeholders) {
       console.log(`         - ${placeholder.field}: ${placeholder.value}`);
     }
-    console.log('      💡 Edit core.yml with your actual values');
+    console.log('      💡 Edit factiii.yml with your actual values');
   } else {
-    console.log('   ✅ core.yml exists and is customized');
+    console.log('   ✅ factiii.yml exists and is customized');
   }
 
   // 2. GitHub Workflows (Generated for Repo CI/CD)
   console.log('\n📝 GitHub Workflows (Repo CI/CD):');
   console.log('   ℹ️  Core generates these for your repo - they run independently');
   if (workflows.stagingExists) {
-    console.log('   ✅ core-staging.yml exists (auto-deploy on push to main)');
+    console.log('   ✅ factiii-staging.yml exists (auto-deploy on push to main)');
   } else {
-    console.log('   ⚠️  core-staging.yml missing');
+    console.log('   ⚠️  factiii-staging.yml missing');
   }
   if (workflows.productionExists) {
-    console.log('   ✅ core-production.yml exists (auto-deploy on merge to production)');
+    console.log('   ✅ factiii-production.yml exists (auto-deploy on merge to production)');
   } else {
-    console.log('   ⚠️  core-production.yml missing');
+    console.log('   ⚠️  factiii-production.yml missing');
   }
   if (workflows.undeployExists) {
-    console.log('   ✅ core-undeploy.yml exists (manual cleanup)');
+    console.log('   ✅ factiii-undeploy.yml exists (manual cleanup)');
   } else {
-    console.log('   ⚠️  core-undeploy.yml missing (optional)');
+    console.log('   ⚠️  factiii-undeploy.yml missing (optional)');
   }
   if (!workflows.anyExist) {
-    console.log('      💡 Generate: npx core generate-workflows');
+    console.log('      💡 Generate: npx factiii generate-workflows');
   }
 
   // 3. Repository Scripts
@@ -513,15 +513,15 @@ function displayAuditReport(auditResults) {
     if (repoScripts.hasPrismaSchema) {
       console.log(`   ✅ Schema: ${repoScripts.prismaSchemaPath}`);
       
-      // Check if core.yml has it configured
+      // Check if factiii.yml has it configured
       if (coreYml.config?.prisma_schema) {
         if (coreYml.config.prisma_schema === repoScripts.prismaSchemaPath) {
-          console.log('   ✅ core.yml prisma_schema matches detected location');
+          console.log('   ✅ factiii.yml prisma_schema matches detected location');
         } else {
-          console.log('   ⚠️  core.yml prisma_schema differs from detected:');
+          console.log('   ⚠️  factiii.yml prisma_schema differs from detected:');
           console.log(`      Config: ${coreYml.config.prisma_schema}`);
           console.log(`      Found:  ${repoScripts.prismaSchemaPath}`);
-          console.log('      💡 Run: npx core init --force to update');
+          console.log('      💡 Run: npx factiii init --force to update');
         }
       }
       
@@ -529,9 +529,9 @@ function displayAuditReport(auditResults) {
       if (coreYml.config?.prisma_version && repoScripts.prismaVersion) {
         if (coreYml.config.prisma_version !== repoScripts.prismaVersion) {
           console.log('   ⚠️  Version mismatch:');
-          console.log(`      core.yml: ${coreYml.config.prisma_version}`);
+          console.log(`      factiii.yml: ${coreYml.config.prisma_version}`);
           console.log(`      package.json: ${repoScripts.prismaVersion}`);
-          console.log('      💡 Run: npx core init --force to update');
+          console.log('      💡 Run: npx factiii init --force to update');
         }
       }
     } else {
@@ -630,7 +630,7 @@ function displayAuditReport(auditResults) {
     console.log('   ℹ️  Optional secrets:');
     console.log('      - STAGING_ENVS, PROD_ENVS (environment variables)');
     console.log('');
-    console.log('   ℹ️  Not secrets (in core.yml):');
+    console.log('   ℹ️  Not secrets (in factiii.yml):');
     console.log('      - HOST: environments.{env}.host');
     console.log('      - AWS_ACCESS_KEY_ID: aws.access_key_id');
     console.log('      - AWS_REGION: aws.region');
@@ -671,8 +671,8 @@ function displayAuditReport(auditResults) {
   
   console.log('');
   console.log('   💡 Manage secrets:');
-  console.log('      npx core init fix     # Setup missing secrets interactively');
-  console.log('      npx core secrets      # Update specific secrets');
+  console.log('      npx factiii init fix     # Setup missing secrets interactively');
+  console.log('      npx factiii secrets      # Update specific secrets');
   console.log('');
   console.log('   Or manually: Repository Settings → Secrets → Actions');
 
@@ -802,13 +802,13 @@ function displayNextSteps(auditResults) {
 
   // Check what needs to be done
   if (!coreYml.exists) {
-    steps.push('Run this command again to create core.yml');
+    steps.push('Run this command again to create factiii.yml');
   } else if (coreYml.needsCustomization) {
-    steps.push('Edit core.yml with your actual domains and settings');
+    steps.push('Edit factiii.yml with your actual domains and settings');
   }
 
   if (!workflows.anyExist) {
-    steps.push('Generate CI/CD workflows: npx core generate-workflows');
+    steps.push('Generate CI/CD workflows: npx factiii generate-workflows');
   }
 
   const missingScripts = repoScripts.hasPackageJson && 
@@ -845,7 +845,7 @@ function displayNextSteps(auditResults) {
   }
 
   steps.push('Set environment variables with secrets (or use GitHub Secrets if using workflows)');
-  steps.push('Test deployment: npx core deploy');
+  steps.push('Test deployment: npx factiii deploy');
 
   // Display steps
   steps.forEach((step, index) => {
@@ -860,8 +860,8 @@ function displayNextSteps(auditResults) {
  */
 async function init(options = {}) {
   const rootDir = process.cwd();
-  const configPath = path.join(rootDir, 'core.yml');
-  const templatePath = path.join(__dirname, '../../templates/core.yml.example');
+  const configPath = path.join(rootDir, 'factiii.yml');
+  const templatePath = path.join(__dirname, '../../templates/factiii.yml.example');
 
   // Always run comprehensive audit
   const auditResults = {
@@ -878,7 +878,7 @@ async function init(options = {}) {
   // Always check workflows for updates (it will detect if no changes needed)
   const shouldGenerateWorkflows = true;
 
-  // Create core.yml if needed
+  // Create factiii.yml if needed
   if (shouldCreateCoreYml) {
     // Read template
     if (!fs.existsSync(templatePath)) {
@@ -938,13 +938,13 @@ async function init(options = {}) {
     auditResults.coreYml = checkCoreYmlStatus(rootDir, templatePath);
   }
   
-  // Generate coreAuto.yml with auto-detected settings
+  // Generate factiiiAuto.yml with auto-detected settings
   console.log('🔧 Auto-detecting project configuration...\n');
   try {
-    const { generateCoreAuto } = require('../generators/generate-core-auto');
+    const { generateCoreAuto } = require('../generators/generate-factiii-auto');
     generateCoreAuto(rootDir);
   } catch (error) {
-    console.log(`⚠️  Warning: Failed to generate coreAuto.yml: ${error.message}\n`);
+    console.log(`⚠️  Warning: Failed to generate factiiiAuto.yml: ${error.message}\n`);
   }
   
   // Validate environment files (after config is available)
@@ -978,14 +978,14 @@ async function init(options = {}) {
   // Final message
   if (summary.critical === 0 && summary.warnings === 0) {
     console.log('✨ All checks passed! Your infrastructure is ready.\n');
-    console.log('🚀 Next: Run \'npx core deploy\' to deploy directly via SSH.\n');
+    console.log('🚀 Next: Run \'npx factiii deploy\' to deploy directly via SSH.\n');
   } else if (summary.critical === 0) {
     console.log('✨ Setup is functional but some improvements recommended.\n');
-    console.log('   💡 Run \'npx core init\' anytime to re-check your setup.\n');
-    console.log('🚀 You can still deploy: npx core deploy\n');
+    console.log('   💡 Run \'npx factiii init\' anytime to re-check your setup.\n');
+    console.log('🚀 You can still deploy: npx factiii deploy\n');
   } else {
     console.log('⚠️  Please address critical issues before deploying.\n');
-    console.log('   💡 Run \'npx core init\' again after making changes.\n');
+    console.log('   💡 Run \'npx factiii init\' again after making changes.\n');
   }
 
   // Return summary for use by other commands (e.g., init-fix)

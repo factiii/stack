@@ -3,7 +3,7 @@ const path = require('path');
 
 /**
  * Generate .env.example template file content
- * @param {object} config - Parsed core.yml configuration
+ * @param {object} config - Parsed factiii.yml configuration
  * @returns {string} - Template file content
  */
 function generateEnvExampleTemplate(config) {
@@ -88,7 +88,7 @@ function generateEnvTemplate(environment, devEnv) {
 # Instructions:
 # 1. Replace all <FILL_IN> values with real ${environment} values
 # 2. Ensure all keys match .env.example
-# 3. Run: npx core init (to validate)
+# 3. Run: npx factiii init (to validate)
 `;
   
   return template;
@@ -97,7 +97,7 @@ function generateEnvTemplate(environment, devEnv) {
 /**
  * Create .env template files if they don't exist
  * @param {string} rootDir - Repository root directory
- * @param {object} config - Parsed core.yml configuration
+ * @param {object} config - Parsed factiii.yml configuration
  * @returns {object} - Results with created files
  */
 function createEnvTemplates(rootDir, config) {
@@ -184,13 +184,13 @@ function generateSecretsChecklist() {
    □ STAGING_ENVS   - Environment vars from .env.staging
    □ PROD_ENVS      - Environment vars from .env.prod
 
-   NOT SECRETS (in core.yml):
+   NOT SECRETS (in factiii.yml):
    ───────────────────────────────────────────────────────
    ✓ environments.{env}.host - Server IP/hostname
    ✓ aws.access_key_id       - AWS access key ID
    ✓ aws.region              - AWS region (e.g., us-east-1)
 
-   NOT SECRETS (in coreAuto.yml):
+   NOT SECRETS (in factiiiAuto.yml):
    ───────────────────────────────────────────────────────
    ✓ ssh_user               - Defaults to ubuntu
 `.trim();

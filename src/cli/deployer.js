@@ -102,15 +102,15 @@ class Deployer {
       await octokit.actions.getWorkflow({
         owner,
         repo,
-        workflow_id: 'core-deploy.yml'
+        workflow_id: 'factiii-deploy.yml'
       });
       console.log('   ✅ Workflow found in GitHub\n');
     } catch (error) {
       if (error.status === 404) {
         throw new Error(
-          'Workflow not found: .github/workflows/core-deploy.yml\n' +
+          'Workflow not found: .github/workflows/factiii-deploy.yml\n' +
           '\n' +
-          '   Run: npx core generate-workflows\n' +
+          '   Run: npx factiii generate-workflows\n' +
           '   Then commit and push: git add .github/workflows && git commit && git push\n'
         );
       }
@@ -123,7 +123,7 @@ class Deployer {
       await octokit.actions.createWorkflowDispatch({
         owner,
         repo,
-        workflow_id: 'core-deploy.yml',
+        workflow_id: 'factiii-deploy.yml',
         ref: branch,
         inputs: {
           environment: envName
@@ -135,7 +135,7 @@ class Deployer {
           `Cannot trigger workflow on branch '${branch}'.\n` +
           '\n' +
           '   The workflow file must exist on this branch.\n' +
-          '   Commit and push .github/workflows/core-deploy.yml first.\n'
+          '   Commit and push .github/workflows/factiii-deploy.yml first.\n'
         );
       }
       throw new Error(`Failed to trigger workflow: ${error.message}`);
@@ -156,7 +156,7 @@ class Deployer {
         const runs = await octokit.actions.listWorkflowRuns({
           owner,
           repo,
-          workflow_id: 'core-deploy.yml',
+          workflow_id: 'factiii-deploy.yml',
           branch,
           per_page: 5
         });

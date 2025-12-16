@@ -24,7 +24,7 @@ function formatDeploymentReport(data) {
   if (localChecks) {
     lines.push('✅ LOCAL CONFIGURATION');
     if (localChecks.coreYml) {
-      lines.push(`   ✅ core.yml valid (${repoName})`);
+      lines.push(`   ✅ factiii.yml valid (${repoName})`);
     }
     if (localChecks.dockerfile) {
       lines.push('   ✅ Dockerfile found');
@@ -33,7 +33,7 @@ function formatDeploymentReport(data) {
       lines.push(`   ✅ Git configured${localChecks.branch ? ` (${localChecks.branch} branch)` : ''}`);
     }
     if (localChecks.workflows) {
-      lines.push('   ✅ Workflows exist (core-deploy.yml, core-undeploy.yml, core-init.yml)');
+      lines.push('   ✅ Workflows exist (factiii-deploy.yml, factiii-undeploy.yml, factiii-init.yml)');
     }
     if (localChecks.scripts) {
       lines.push('   ✅ Required scripts present');
@@ -209,14 +209,14 @@ function generateSummary(localChecks, secretsCheck, serverChecks) {
   
   // If ready, add deployment instructions
   if (summary.ready && summary.warnings === 0) {
-    summary.nextSteps.push('Run: npx core deploy --environment staging');
+    summary.nextSteps.push('Run: npx factiii deploy --environment staging');
     summary.nextSteps.push('Or push to main branch to trigger automatic deployment');
   } else if (summary.ready && summary.warnings > 0) {
     summary.nextSteps.push('Review warnings above');
-    summary.nextSteps.push('Run: npx core deploy (deployment will proceed with warnings)');
+    summary.nextSteps.push('Run: npx factiii deploy (deployment will proceed with warnings)');
   } else {
     summary.nextSteps.push('Fix errors above');
-    summary.nextSteps.push('Run: npx core init (to verify fixes)');
+    summary.nextSteps.push('Run: npx factiii init (to verify fixes)');
   }
   
   return summary;

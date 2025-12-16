@@ -4,7 +4,7 @@ const fs = require('fs');
 const yaml = require('js-yaml');
 
 // Load config
-const config = yaml.load(fs.readFileSync('core.yml', 'utf8'));
+const config = yaml.load(fs.readFileSync('factiii.yml', 'utf8'));
 const isStagingSecret = config.auto?.isStagingSecret !== false; // default true
 
 // Parse env files

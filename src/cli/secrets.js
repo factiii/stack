@@ -23,7 +23,7 @@ function envObjectToString(env) {
  * - AWS_SECRET_ACCESS_KEY: Only truly secret AWS value
  * - {ENV}_ENVS: Optional, environment variables
  * 
- * Not secrets (in core.yml):
+ * Not secrets (in factiii.yml):
  * - HOST: environments.{env}.host
  * - AWS_ACCESS_KEY_ID: aws.access_key_id
  * - AWS_REGION: aws.region
@@ -58,16 +58,16 @@ function getRequiredSecrets(config) {
  */
 async function secrets(secretNames = [], options = {}) {
   const rootDir = process.cwd();
-  const configPath = path.join(rootDir, 'core.yml');
+  const configPath = path.join(rootDir, 'factiii.yml');
   
   console.log('🔐 GitHub Secrets Management\n');
   console.log('═'.repeat(60));
   console.log('');
   
-  // Check for core.yml
+  // Check for factiii.yml
   if (!fs.existsSync(configPath)) {
-    console.error('❌ core.yml not found');
-    console.error('   Run: npx core init');
+    console.error('❌ factiii.yml not found');
+    console.error('   Run: npx factiii init');
     process.exit(1);
   }
   
@@ -76,7 +76,7 @@ async function secrets(secretNames = [], options = {}) {
   try {
     config = yaml.load(fs.readFileSync(configPath, 'utf8'));
   } catch (error) {
-    console.error('❌ Failed to parse core.yml:', error.message);
+    console.error('❌ Failed to parse factiii.yml:', error.message);
     process.exit(1);
   }
   
@@ -237,7 +237,7 @@ async function secrets(secretNames = [], options = {}) {
         process.exit(1);
       }
     } else {
-      console.log('\n💡 Run deployment later with: npx core deploy\n');
+      console.log('\n💡 Run deployment later with: npx factiii deploy\n');
     }
   }
 }

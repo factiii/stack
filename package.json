@@ -1,10 +1,10 @@
 {
-  "name": "@factiii/core",
+  "name": "@factiii/stack",
   "version": "1.0.0",
   "description": "Infrastructure management package for deploying services to servers",
   "main": "src/index.js",
   "bin": {
-    "core": "./bin/core"
+    "factiii": "./bin/factiii"
   },
   "files": [
     "bin/",

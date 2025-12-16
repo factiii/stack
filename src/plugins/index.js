@@ -1,7 +1,7 @@
 /**
  * Plugin Registry and Loader
  * 
- * Central registry for all Core plugins.
+ * Central registry for all Factiii Stack plugins.
  * Handles loading, registration, and retrieval of plugins.
  */
 
@@ -10,7 +10,9 @@ const {
   ServerProvider, 
   SecretStore, 
   RegistryProvider, 
-  AppFramework 
+  AppFramework,
+  Addon,
+  Pipeline
 } = require('./interfaces');
 
 // Import built-in plugins
@@ -18,18 +20,24 @@ const { GitHubSecretsStore } = require('./secrets/github');
 const MacMiniProvider = require('./server/mac-mini');
 const AWSEC2Provider = require('./server/aws-ec2');
 
+// Approved plugins list (for external plugin warnings)
+const APPROVED_PLUGINS = require('./approved.json');
+
 // ============================================================
 // PLUGIN REGISTRY
 // ============================================================
 
 /**
  * Central registry for all plugins
+ * 5 categories: secrets, server, app (framework), addon, pipeline
  */
 const registry = {
   server: {},
   secrets: {},
   registry: {},
-  app: {}
+  app: {},
+  addon: {},
+  pipeline: {}
 };
 
 // ============================================================
@@ -171,11 +179,32 @@ function createSecretStore(id, config = {}) {
 // ============================================================
 
 /**
+ * Check if a plugin is approved
+ * @param {string} packageName - npm package name
+ * @returns {boolean}
+ */
+function isApprovedPlugin(packageName) {
+  return APPROVED_PLUGINS.approved.includes(packageName);
+}
+
+/**
  * Load external plugins from npm packages
  * @param {string[]} packageNames - Array of npm package names
+ * @param {string[]} trustedPlugins - Additional trusted plugins (from factiii.yml)
  */
-function loadExternalPlugins(packageNames = []) {
+function loadExternalPlugins(packageNames = [], trustedPlugins = []) {
   for (const packageName of packageNames) {
+    // Check if plugin is approved or trusted
+    const isApproved = isApprovedPlugin(packageName);
+    const isTrusted = trustedPlugins.includes(packageName);
+    
+    if (!isApproved && !isTrusted) {
+      console.warn(`⚠️  Loading unapproved plugin: ${packageName}`);
+      console.warn(`   This plugin has not been validated by the Factiii team.`);
+      console.warn(`   Use at your own risk. To suppress: add to factiii.yml trusted_plugins list.`);
+      console.warn('');
+    }
+    
     try {
       const pluginModule = require(packageName);
       
@@ -196,9 +225,10 @@ function loadExternalPlugins(packageNames = []) {
         }
       }
       
-      console.log(`✅ Loaded external plugin: ${packageName}`);
+      const approvalStatus = isApproved ? '✅' : (isTrusted ? '🔓' : '⚠️');
+      console.log(`${approvalStatus} Loaded external plugin: ${packageName}`);
     } catch (error) {
-      console.warn(`⚠️  Failed to load external plugin ${packageName}: ${error.message}`);
+      console.warn(`❌ Failed to load external plugin ${packageName}: ${error.message}`);
     }
   }
 }
@@ -267,7 +297,9 @@ module.exports = {
     ServerProvider,
     SecretStore,
     RegistryProvider,
-    AppFramework
+    AppFramework,
+    Addon,
+    Pipeline
   },
   
   // Registry functions
@@ -284,6 +316,7 @@ module.exports = {
   
   // External plugins
   loadExternalPlugins,
+  isApprovedPlugin,
   
   // Helpers
   getServerSecrets,

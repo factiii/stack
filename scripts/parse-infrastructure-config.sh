@@ -3,22 +3,22 @@
 # ============================================================================
 # LEGACY SCRIPT - For backward compatibility with centralized approach
 # ============================================================================
-# This script is part of the legacy centralized core.yml
+# This script is part of the legacy centralized factiii.yml
 # approach. For new repositories, use the decentralized approach with
-# the npm package CLI commands (npx core check-config, etc.)
+# the npm package CLI commands (npx factiii check-config, etc.)
 # ============================================================================
 #
-# Parse core.yml and extract server/repo mappings
+# Parse factiii.yml and extract server/repo mappings
 # Usage: source this script to use functions, or call directly with function name
 
 set -e
 
 INFRASTRUCTURE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CONFIG_FILE="${INFRASTRUCTURE_ROOT}/core.yml"
+CONFIG_FILE="${INFRASTRUCTURE_ROOT}/factiii.yml"
 
 # Check if config file exists
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "Error: core.yml not found at $CONFIG_FILE" >&2
+    echo "Error: factiii.yml not found at $CONFIG_FILE" >&2
     exit 1
 fi
 

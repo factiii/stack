@@ -1,4 +1,4 @@
-name: Core Production
+name: Factiii Production
 
 # Application deployment workflow for production environment
 # Handles testing, building, migrations with backup/restore, and rollback
@@ -56,9 +56,9 @@ jobs:
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
           
-          if [ -f "core.yml" ]; then
-            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' core.yml)
-            REPO_NAME=$(yq eval '.name' core.yml)
+          if [ -f "factiii.yml" ]; then
+            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' factiii.yml)
+            REPO_NAME=$(yq eval '.name' factiii.yml)
             echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
             echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           else
@@ -121,9 +121,9 @@ jobs:
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
           
-          if [ -f "core.yml" ]; then
-            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' core.yml)
-            REPO_NAME=$(yq eval '.name' core.yml)
+          if [ -f "factiii.yml" ]; then
+            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' factiii.yml)
+            REPO_NAME=$(yq eval '.name' factiii.yml)
             echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
             echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           else
@@ -169,9 +169,9 @@ jobs:
           NEEDS_MIGRATION=false
           BACKUP_CREATED=false
           
-          # Read Prisma config from core.yml
-          PRISMA_SCHEMA=$(grep '^prisma_schema:' core.yml | cut -d: -f2 | tr -d ' ' || echo "")
-          PRISMA_VERSION=$(grep '^prisma_version:' core.yml | cut -d: -f2 | tr -d ' ' || echo "")
+          # Read Prisma config from factiii.yml
+          PRISMA_SCHEMA=$(grep '^prisma_schema:' factiii.yml | cut -d: -f2 | tr -d ' ' || echo "")
+          PRISMA_VERSION=$(grep '^prisma_version:' factiii.yml | cut -d: -f2 | tr -d ' ' || echo "")
           
           # Set defaults if not configured
           if [ -z "$PRISMA_SCHEMA" ]; then
@@ -191,7 +191,7 @@ jobs:
           # Check if migrations are pending using docker compose run
           if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "cd ~/infrastructure && \
+            "cd ~/.factiii && \
              docker compose run --rm --no-deps ${SERVICE_KEY} \
              npx -y prisma@${PRISMA_VERSION} migrate status --schema=${PRISMA_SCHEMA}" 2>&1 | grep -q "pending\|not been applied"; then
             echo "⚠️  Migrations pending, will handle after deployment"
@@ -212,7 +212,7 @@ jobs:
               # Fallback to database backup via docker compose
               ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
                 "$SSH_USER@$SSH_HOST" \
-                "cd ~/infrastructure && \
+                "cd ~/.factiii && \
                  docker compose run --rm --no-deps ${SERVICE_KEY} \
                  sh -c 'pg_dump \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
                         mysqldump --no-tablespaces \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
@@ -234,13 +234,13 @@ jobs:
           echo "📋 Recording current container state..."
           CURRENT_CONTAINER=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "cd ~/infrastructure && docker compose ps -q ${SERVICE_KEY}" || echo "")
+            "cd ~/.factiii && docker compose ps -q ${SERVICE_KEY}" || echo "")
           
           # Pull new image and deploy
           echo "🚀 Deploying new container..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "cd ~/infrastructure && \
+            "cd ~/.factiii && \
              docker compose pull ${SERVICE_KEY} && \
              docker compose up -d ${SERVICE_KEY}"
           
@@ -252,7 +252,7 @@ jobs:
             
             if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
               "$SSH_USER@$SSH_HOST" \
-              "cd ~/infrastructure && \
+              "cd ~/.factiii && \
                docker compose run --rm --no-deps ${SERVICE_KEY} \
                npx -y prisma@${PRISMA_VERSION} migrate deploy --schema=${PRISMA_SCHEMA}"; then
               echo "✅ Migrations completed successfully"
@@ -281,7 +281,7 @@ jobs:
                 echo "♻️  Reverting to previous container..."
                 ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
                   "$SSH_USER@$SSH_HOST" \
-                  "cd ~/infrastructure && \
+                  "cd ~/.factiii && \
                    docker compose stop ${SERVICE_KEY} && \
                    docker compose rm -f ${SERVICE_KEY} && \
                    docker start ${CURRENT_CONTAINER} || \
@@ -328,7 +328,7 @@ jobs:
               echo "♻️  Reverting to previous container..."
               ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
                 "$SSH_USER@$SSH_HOST" \
-                "cd ~/infrastructure && \
+                "cd ~/.factiii && \
                  docker compose stop ${SERVICE_KEY} && \
                  docker start ${CURRENT_CONTAINER} || \
                  docker compose up -d ${SERVICE_KEY}"

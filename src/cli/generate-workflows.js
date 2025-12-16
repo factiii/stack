@@ -12,13 +12,13 @@ function generateWorkflows(options = {}) {
   fs.mkdirSync(outputDir, { recursive: true });
 
   // Copy workflow files (static files, no templates)
-  // Note: core-deploy.yml is triggered by npx core deploy
+  // Note: factiii-deploy.yml is triggered by npx factiii deploy
   // Other workflows are repo CI/CD that run independently on git events
   const workflows = [
-    'core-deploy.yml',      // Manual deployment (triggered by npx core deploy)
-    'core-staging.yml',     // Auto-deploy on push to main/staging
-    'core-production.yml',  // Auto-deploy on merge to production
-    'core-undeploy.yml'     // Manual cleanup
+    'factiii-deploy.yml',      // Manual deployment (triggered by npx factiii deploy)
+    'factiii-staging.yml',     // Auto-deploy on push to main/staging
+    'factiii-production.yml',  // Auto-deploy on merge to production
+    'factiii-undeploy.yml'     // Manual cleanup
   ];
 
   let updated = 0;
@@ -38,7 +38,7 @@ function generateWorkflows(options = {}) {
 
     // Replace placeholders if needed (e.g., repo name)
     try {
-      const configPath = path.join(rootDir, 'core.yml');
+      const configPath = path.join(rootDir, 'factiii.yml');
       if (fs.existsSync(configPath)) {
         const yaml = require('js-yaml');
         const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
@@ -78,15 +78,15 @@ function generateWorkflows(options = {}) {
   console.log(`   📊 Summary: ${created} created, ${updated} updated, ${unchanged} unchanged`);
   
   console.log(`\n💡 How deployments work:`);
-  console.log(`   1. npx core deploy → triggers core-deploy.yml workflow`);
+  console.log(`   1. npx factiii deploy → triggers factiii-deploy.yml workflow`);
   console.log(`   2. Workflow has access to GitHub Secrets (secure)`);
   console.log(`   3. Workflow deploys to your servers via SSH\n`);
   
   console.log(`📝 Generated workflows:`);
-  console.log(`   - core-deploy.yml: Manual deployment (triggered by npx core deploy)`);
-  console.log(`   - core-staging.yml: Auto-deploy on PR/push to main branch (optional)`);
-  console.log(`   - core-production.yml: Auto-deploy on merge to production branch (optional)`);
-  console.log(`   - core-undeploy.yml: Manual cleanup trigger (optional)\n`);
+  console.log(`   - factiii-deploy.yml: Manual deployment (triggered by npx factiii deploy)`);
+  console.log(`   - factiii-staging.yml: Auto-deploy on PR/push to main branch (optional)`);
+  console.log(`   - factiii-production.yml: Auto-deploy on merge to production branch (optional)`);
+  console.log(`   - factiii-undeploy.yml: Manual cleanup trigger (optional)\n`);
   
   console.log(`📋 Auto-deploy workflows (optional):`);
   console.log(`   - Enable by pushing/merging to configured branches`);
@@ -96,10 +96,10 @@ function generateWorkflows(options = {}) {
   console.log(`📋 Required GitHub Secrets (minimal):`);
   console.log(`   - STAGING_SSH, PROD_SSH (SSH private keys)`);
   console.log(`   - AWS_SECRET_ACCESS_KEY`);
-  console.log(`\n📋 Not secrets (in core.yml):`);
+  console.log(`\n📋 Not secrets (in factiii.yml):`);
   console.log(`   - aws.access_key_id, aws.region`);
   console.log(`   - environments.{env}.host`);
-  console.log(`\n💡 Run 'npx core init fix' to set up secrets automatically.`);
+  console.log(`\n💡 Run 'npx factiii init fix' to set up secrets automatically.`);
 }
 
 

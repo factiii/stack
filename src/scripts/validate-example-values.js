@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Validates that core.yml doesn't contain EXAMPLE- placeholder values
+ * Validates that factiii.yml doesn't contain EXAMPLE- placeholder values
  * This script properly parses YAML and ignores comments
  * Use this in workflows instead of grep to avoid false positives from documentation
  */
@@ -10,7 +10,7 @@ const yaml = require('js-yaml');
 const fs = require('fs');
 const path = require('path');
 
-const configPath = process.argv[2] || 'core.yml';
+const configPath = process.argv[2] || 'factiii.yml';
 
 if (!fs.existsSync(configPath)) {
   console.log(`❌ ${configPath} not found`);

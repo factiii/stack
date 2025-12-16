@@ -11,20 +11,20 @@ const { GitHubSecretsStore } = require('../utils/github-secrets');
  */
 async function deploy(options = {}) {
   const rootDir = process.cwd();
-  const configPath = path.resolve(rootDir, options.config || 'core.yml');
+  const configPath = path.resolve(rootDir, options.config || 'factiii.yml');
 
   console.log('🔍 Validating local repository configuration...\n');
 
-  // Step 1: Check core.yml exists
+  // Step 1: Check factiii.yml exists
   if (!fs.existsSync(configPath)) {
     console.error(`❌ Config file not found: ${configPath}`);
-    console.error('   Run: npx core init');
+    console.error('   Run: npx factiii init');
     process.exit(1);
   }
-  console.log('✅ Found core.yml');
+  console.log('✅ Found factiii.yml');
 
-  // Step 2: Validate core.yml (includes EXAMPLE- check now)
-  console.log('🔍 Validating core.yml...');
+  // Step 2: Validate factiii.yml (includes EXAMPLE- check now)
+  console.log('🔍 Validating factiii.yml...');
   try {
     validate({ config: configPath });
   } catch (error) {
@@ -74,8 +74,8 @@ async function deploy(options = {}) {
   const envsToCheck = environments[0] === 'all' ? Object.keys(config.environments) : environments;
   
   // Build required secrets list (minimal - only truly secret values)
-  // HOST is in core.yml, USER defaults to ubuntu in coreAuto.yml
-  // AWS_ACCESS_KEY_ID and AWS_REGION are in core.yml (not secret)
+  // HOST is in factiii.yml, USER defaults to ubuntu in factiiiAuto.yml
+  // AWS_ACCESS_KEY_ID and AWS_REGION are in factiii.yml (not secret)
   const requiredSecrets = [];
   for (const env of envsToCheck) {
     const prefix = env.toUpperCase();
@@ -97,7 +97,7 @@ async function deploy(options = {}) {
     console.error('❌ Missing required GitHub secrets:\n');
     check.missing.forEach(name => console.error(`   - ${name}`));
     console.error('');
-    console.error('💡 Run: npx core init fix');
+    console.error('💡 Run: npx factiii init fix');
     console.error('   This will prompt for missing secrets and upload them to GitHub.\n');
     process.exit(1);
   }

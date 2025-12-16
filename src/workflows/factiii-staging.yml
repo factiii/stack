@@ -1,4 +1,4 @@
-name: Core Staging
+name: Factiii Staging
 
 # Application deployment workflow for staging environment
 # Runs tests, builds Docker image, and deploys to staging server
@@ -67,9 +67,9 @@ jobs:
       - name: Read config for Dockerfile path
         id: read-config
         run: |
-          if [ -f "core.yml" ]; then
-            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' core.yml)
-            REPO_NAME=$(yq eval '.name' core.yml)
+          if [ -f "factiii.yml" ]; then
+            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' factiii.yml)
+            REPO_NAME=$(yq eval '.name' factiii.yml)
             echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
             echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           else
@@ -116,7 +116,7 @@ jobs:
           echo "🚀 Deploying to staging server..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "cd ~/infrastructure && \
+            "cd ~/.factiii && \
              docker compose pull ${SERVICE_KEY} && \
              docker compose up -d ${SERVICE_KEY}"
           

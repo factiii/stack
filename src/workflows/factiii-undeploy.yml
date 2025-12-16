@@ -1,4 +1,4 @@
-name: Core Undeploy
+name: Factiii Undeploy
 
 # Completely removes this repository from staging and production servers.
 # Deletes all configs, environment files, containers, and data.
@@ -59,25 +59,25 @@ jobs:
           echo "🛑 Stopping and removing containers..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "cd ~/infrastructure && \
+            "cd ~/.factiii && \
              docker compose stop ${SERVICE_KEY} 2>/dev/null || true && \
              docker compose rm -f ${SERVICE_KEY} 2>/dev/null || true"
           
           echo "📝 Removing config file..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "rm -f ~/infrastructure/configs/${REPO_NAME}.yml"
+            "rm -f ~/.factiii/configs/${REPO_NAME}.yml"
           
           echo "🔐 Removing environment file..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "rm -f ~/infrastructure/${REPO_NAME}-staging.env"
+            "rm -f ~/.factiii/${REPO_NAME}-staging.env"
           
           echo "🔄 Regenerating configurations..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "cd ~/infrastructure && \
-             INFRA_DIR=~/infrastructure ~/infrastructure/scripts/check-config.sh 2>/dev/null || true"
+            "cd ~/.factiii && \
+             INFRA_DIR=~/.factiii ~/.factiii/scripts/check-config.sh 2>/dev/null || true"
           
           rm -f ~/.ssh/deploy_key
           echo "✅ Removed ${REPO_NAME} from staging"
@@ -116,25 +116,25 @@ jobs:
           echo "🛑 Stopping and removing containers..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "cd ~/infrastructure && \
+            "cd ~/.factiii && \
              docker compose stop ${SERVICE_KEY} 2>/dev/null || true && \
              docker compose rm -f ${SERVICE_KEY} 2>/dev/null || true"
           
           echo "📝 Removing config file..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "rm -f ~/infrastructure/configs/${REPO_NAME}.yml"
+            "rm -f ~/.factiii/configs/${REPO_NAME}.yml"
           
           echo "🔐 Removing environment file..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "rm -f ~/infrastructure/${REPO_NAME}-prod.env"
+            "rm -f ~/.factiii/${REPO_NAME}-prod.env"
           
           echo "🔄 Regenerating configurations..."
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "cd ~/infrastructure && \
-             INFRA_DIR=~/infrastructure ~/infrastructure/scripts/check-config.sh 2>/dev/null || true"
+            "cd ~/.factiii && \
+             INFRA_DIR=~/.factiii ~/.factiii/scripts/check-config.sh 2>/dev/null || true"
           
           rm -f ~/.ssh/deploy_key
           echo "✅ Removed ${REPO_NAME} from production"
@@ -152,7 +152,7 @@ jobs:
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: 'core-deploy.yml',
+              workflow_id: 'factiii-deploy.yml',
               ref: context.ref,
               inputs: {
                 environment: 'all'

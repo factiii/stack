@@ -57,15 +57,15 @@ function checkConfig(options = {}) {
 
       const generatorsDir = path.join(__dirname, '../generators');
       const scriptPath = path.join(__dirname, '../scripts/check-config.sh');
-      const remoteScriptPath = '~/infrastructure/scripts/check-config.sh';
-      const configsDir = '~/infrastructure/configs';
-      const infraDir = '~/infrastructure';
+      const remoteScriptPath = '~/.factiii/scripts/check-config.sh';
+      const configsDir = '~/.factiii/configs';
+      const infraDir = '~/.factiii';
 
       // Ensure infrastructure directory exists
       console.log('   📁 Ensuring infrastructure directory exists...');
       execSync(
         `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"mkdir -p ${configsDir} ~/infrastructure/scripts/generators ~/infrastructure/nginx"`,
+        `"mkdir -p ${configsDir} ~/.factiii/scripts/generators ~/.factiii/nginx"`,
         { stdio: 'pipe' }
       );
 
@@ -142,7 +142,7 @@ function checkConfig(options = {}) {
       // Copy generators and script
       console.log('   📦 Copying generators and scripts...');
       execSync(
-        `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no -r ${generatorsDir}/* ${user}@${host}:~/infrastructure/scripts/generators/ 2>/dev/null || true`,
+        `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no -r ${generatorsDir}/* ${user}@${host}:~/.factiii/scripts/generators/ 2>/dev/null || true`,
         { stdio: 'pipe' }
       );
       execSync(

@@ -7,7 +7,7 @@ const readline = require('readline');
  * - {ENV}_SSH: SSH private key for each environment
  * - AWS_SECRET_ACCESS_KEY: Only truly secret AWS value
  * 
- * Not secrets (in core.yml):
+ * Not secrets (in factiii.yml):
  * - HOST: environments.{env}.host
  * - AWS_ACCESS_KEY_ID: aws.access_key_id
  * - AWS_REGION: aws.region
@@ -23,7 +23,7 @@ const SECRET_METADATA = {
    Step 2: Add PUBLIC key to your staging server:
    ssh-copy-id -i ~/.ssh/staging_deploy.pub ubuntu@YOUR_HOST
    
-   (HOST is configured in core.yml → environments.staging.host)
+   (HOST is configured in factiii.yml → environments.staging.host)
    
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
    cat ~/.ssh/staging_deploy`,
@@ -48,7 +48,7 @@ const SECRET_METADATA = {
    Step 2: Add PUBLIC key to your production server:
    ssh-copy-id -i ~/.ssh/prod_deploy.pub ubuntu@YOUR_HOST
    
-   (HOST is configured in core.yml → environments.production.host)
+   (HOST is configured in factiii.yml → environments.production.host)
    
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
    cat ~/.ssh/prod_deploy`,
@@ -72,7 +72,7 @@ const SECRET_METADATA = {
    This is shown only once when you create the key.
    If lost, you must create a new key pair.
    
-   Note: AWS_ACCESS_KEY_ID and AWS_REGION go in core.yml (not secrets)
+   Note: AWS_ACCESS_KEY_ID and AWS_REGION go in factiii.yml (not secrets)
    
    Enter AWS Secret Access Key:`,
     validation: (value) => {

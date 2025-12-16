@@ -21,23 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release of Core infrastructure package
 - Plugin architecture with 4 categories: Secrets, Servers, Frameworks, Pipelines
-- `npx core init` - Comprehensive scan with local auto-fix
-- `npx core init fix` - Fix dev + GitHub issues
-- `npx core deploy` - Direct SSH deployment
+- `npx factiii init` - Comprehensive scan with local auto-fix
+- `npx factiii init fix` - Fix dev + GitHub issues
+- `npx factiii deploy` - Direct SSH deployment
 - GitHub Secrets plugin for credential storage
 - Mac Mini server plugin
 - AWS EC2 server plugin (partial)
 - GitHub Actions pipeline (default)
 - Auto-detection of Prisma configuration
-- `coreAuto.yml` generation with OVERRIDE pattern
-- `core.yml` template with EXAMPLE- prefix pattern
+- `factiiiAuto.yml` generation with OVERRIDE pattern
+- `factiii.yml` template with EXAMPLE- prefix pattern
 - Workflow generation for repos (staging, production, undeploy)
-- Version tracking in coreAuto.yml
+- Version tracking in factiiiAuto.yml
 
 ### Configuration
 - Minimal secrets approach (only SSH keys and AWS_SECRET_ACCESS_KEY)
-- Host, AWS access key ID, and region in core.yml (not secrets)
-- SSH user defaults to ubuntu in coreAuto.yml
+- Host, AWS access key ID, and region in factiii.yml (not secrets)
+- SSH user defaults to ubuntu in factiiiAuto.yml
 
 ### Documentation
 - README.md with quick start guide
@@ -65,7 +65,7 @@ This is the initial release. No migration required.
 
 When breaking changes occur, migration guides will be added here with:
 - What changed
-- How to update your core.yml
-- How to update your coreAuto.yml
+- How to update your factiii.yml
+- How to update your factiiiAuto.yml
 - Any manual steps required
 

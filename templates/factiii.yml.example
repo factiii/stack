@@ -46,7 +46,7 @@ ecr_repository: EXAMPLE-yourapp
 # ============================================================================
 # GitHub Secrets Setup
 # ============================================================================
-# Run `npx core init fix` to configure these secrets interactively.
+# Run `npx factiii init fix` to configure these secrets interactively.
 #
 # Required secrets (sensitive values only):
 #   - STAGING_SSH           SSH private key for staging
@@ -61,4 +61,4 @@ ecr_repository: EXAMPLE-yourapp
 #   - Host addresses (environments.{env}.host)
 #   - AWS access key ID (aws.access_key_id)
 #   - AWS region (aws.region)
-#   - SSH user (auto-detected in coreAuto.yml, defaults to ubuntu)
+#   - SSH user (auto-detected in factiiiAuto.yml, defaults to ubuntu)

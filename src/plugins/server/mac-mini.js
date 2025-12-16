@@ -16,7 +16,7 @@ class MacMiniProvider extends ServerProvider {
   static category = 'server';
   static version = '1.0.0';
   
-  // Only SSH key is a secret. HOST is in core.yml, USER defaults to ubuntu in coreAuto.yml
+  // Only SSH key is a secret. HOST is in factiii.yml, USER defaults to ubuntu in factiiiAuto.yml
   static requiredSecrets = [
     { 
       name: 'SSH', 
@@ -118,7 +118,7 @@ class MacMiniProvider extends ServerProvider {
       await this.executeCommand(`docker rm ${serviceName} 2>/dev/null || true`);
       
       // Start new container
-      const envFile = envConfig.envFile || `~/infrastructure/envs/${serviceName}.env`;
+      const envFile = envConfig.envFile || `~/.factiii/envs/${serviceName}.env`;
       const runCommand = [
         'docker run -d',
         `--name ${serviceName}`,
@@ -257,12 +257,12 @@ class MacMiniProvider extends ServerProvider {
       
       // Remove config file
       await this.executeCommand(
-        `rm -f ~/infrastructure/configs/${envConfig.name}.yml 2>/dev/null || true`
+        `rm -f ~/.factiii/configs/${envConfig.name}.yml 2>/dev/null || true`
       );
       
       // Remove env file
       await this.executeCommand(
-        `rm -f ~/infrastructure/envs/${serviceName}.env 2>/dev/null || true`
+        `rm -f ~/.factiii/envs/${serviceName}.env 2>/dev/null || true`
       );
       
       result.success = true;
@@ -316,9 +316,9 @@ class MacMiniProvider extends ServerProvider {
     const result = { success: false, error: null };
     
     const commands = [
-      'mkdir -p ~/infrastructure/configs',
-      'mkdir -p ~/infrastructure/envs',
-      'mkdir -p ~/infrastructure/nginx'
+      'mkdir -p ~/.factiii/configs',
+      'mkdir -p ~/.factiii/envs',
+      'mkdir -p ~/.factiii/nginx'
     ];
     
     for (const cmd of commands) {

@@ -3,9 +3,9 @@
 # ============================================================================
 # LEGACY SCRIPT - For backward compatibility with centralized approach
 # ============================================================================
-# This script is part of the legacy centralized core.yml
+# This script is part of the legacy centralized factiii.yml
 # approach. For new repositories, use the decentralized approach with
-# the npm package CLI commands (npx core check-config, etc.)
+# the npm package CLI commands (npx factiii check-config, etc.)
 # ============================================================================
 #
 # Setup infrastructure on target server
@@ -68,7 +68,7 @@ if [ -n "$SERVER_NAME" ]; then
 else
     # Setup all servers
     if command -v yq &> /dev/null; then
-        SERVERS=$(yq eval '.servers | keys | .[]' "${INFRASTRUCTURE_ROOT}/core.yml")
+        SERVERS=$(yq eval '.servers | keys | .[]' "${INFRASTRUCTURE_ROOT}/factiii.yml")
         for server in $SERVERS; do
             setup_server "$server"
         done

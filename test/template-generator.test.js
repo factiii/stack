@@ -42,7 +42,7 @@ describe('Template Generator', () => {
       const template = generateEnvTemplate('staging', devEnv);
       
       expect(template).toContain('Instructions:');
-      expect(template).toContain('npx core init');
+      expect(template).toContain('npx factiii init');
     });
   });
 
@@ -50,9 +50,10 @@ describe('Template Generator', () => {
     it('should return checklist with all required secrets', () => {
       const checklist = generateSecretsChecklist();
       
+      // Updated for simplified secrets
       expect(checklist).toContain('STAGING_SSH');
       expect(checklist).toContain('PROD_SSH');
-      expect(checklist).toContain('AWS_ACCESS_KEY_ID');
+      expect(checklist).toContain('AWS_SECRET_ACCESS_KEY');
       expect(checklist).toContain('STAGING_ENVS');
       expect(checklist).toContain('PROD_ENVS');
       expect(checklist).toContain('SSH (server access)');

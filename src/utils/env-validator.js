@@ -172,7 +172,7 @@ function findMatchingValues(env1, env2) {
 /**
  * Validate environment file setup
  * @param {string} rootDir - Root directory
- * @param {object} config - Parsed core.yml config
+ * @param {object} config - Parsed factiii.yml config
  * @param {object} githubSecrets - Optional GitHub secrets for comparison
  * @returns {object} - Validation results
  */

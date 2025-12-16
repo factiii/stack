@@ -14,8 +14,8 @@ const secrets = require('../src/cli/secrets');
 const upgrade = require('../src/cli/upgrade');
 
 program
-  .name('core')
-  .description('Infrastructure management CLI')
+  .name('factiii')
+  .description('Factiii Stack - Infrastructure management CLI')
   .version('1.0.0');
 
 // Create init as a command with subcommands
@@ -29,7 +29,6 @@ initCommand
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .option('--continue-on-error', 'Continue even if some secrets fail to upload')
   .action(async (options) => {
-    console.log('🚨 BIN/CORE: init fix command matched!', options);
     const initFix = require('../src/cli/init-fix');
     await initFix(options);
   });
@@ -47,8 +46,8 @@ initCommand
 
 program
   .command('validate')
-  .description('Validate core.yml config file')
-  .option('-c, --config <path>', 'Path to config file', 'core.yml')
+  .description('Validate factiii.yml config file')
+  .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
   .action((options) => {
     validate(options);
   });
@@ -70,7 +69,7 @@ program
 program
   .command('deploy')
   .description('Validate local config and trigger GitHub deploy workflow')
-  .option('-c, --config <path>', 'Path to config file', 'core.yml')
+  .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
   .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
   .option('-b, --branch <branch>', 'Branch to deploy from (defaults to "main")')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
@@ -81,7 +80,7 @@ program
 program
   .command('undeploy')
   .description('Completely remove repo from staging and prod servers (deletes configs, env files, and all data)')
-  .option('-c, --config <path>', 'Path to config file', 'core.yml')
+  .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
   .option('--repo <name>', 'Repository name (if not using config file)')
   .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
   .option('--ssh-staging <key>', 'SSH key for staging server')

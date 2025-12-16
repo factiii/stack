@@ -47,7 +47,7 @@ function discoverDeployedRepos(sshKeyPath, host, user, environment) {
   try {
     // Check if infrastructure directory exists
     const dirCheck = execSync(
-      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "test -d ~/infrastructure && echo 'exists' || echo 'missing'"`,
+      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "test -d ~/.factiii && echo 'exists' || echo 'missing'"`,
       { encoding: 'utf8', stdio: 'pipe' }
     ).trim();
     
@@ -59,7 +59,7 @@ function discoverDeployedRepos(sshKeyPath, host, user, environment) {
     
     // List all config files
     const configFiles = execSync(
-      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "ls -1 ~/infrastructure/configs/*.yml ~/infrastructure/configs/*.yaml 2>/dev/null || echo ''"`,
+      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "ls -1 ~/.factiii/configs/*.yml ~/.factiii/configs/*.yaml 2>/dev/null || echo ''"`,
       { encoding: 'utf8', stdio: 'pipe' }
     ).trim();
     
@@ -121,7 +121,7 @@ function checkCurrentRepoDeployment(sshKeyPath, host, user, repoName, environmen
     error: null
   };
   
-  const configFile = `~/infrastructure/configs/${repoName}.yml`;
+  const configFile = `~/.factiii/configs/${repoName}.yml`;
   
   try {
     // Check if config file exists
@@ -158,7 +158,7 @@ function checkCurrentRepoDeployment(sshKeyPath, host, user, repoName, environmen
 /**
  * Compare current deployed config with new local config
  * @param {object} deployedConfig - Config from server
- * @param {object} localConfig - Local core.yml config
+ * @param {object} localConfig - Local factiii.yml config
  * @param {string} environment - 'staging' or 'prod'
  * @returns {object} - Comparison results
  */
@@ -226,7 +226,7 @@ function checkDockerStatus(sshKeyPath, host, user, serviceName) {
   
   try {
     const status = execSync(
-      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "cd ~/infrastructure && docker compose ps -q ${serviceName} 2>/dev/null || echo ''"`,
+      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "cd ~/.factiii && docker compose ps -q ${serviceName} 2>/dev/null || echo ''"`,
       { encoding: 'utf8', stdio: 'pipe' }
     ).trim();
     
@@ -235,7 +235,7 @@ function checkDockerStatus(sshKeyPath, host, user, serviceName) {
       
       // Check if it's running
       const runningCheck = execSync(
-        `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "cd ~/infrastructure && docker compose ps ${serviceName} 2>/dev/null | grep -i 'up' || echo ''"`,
+        `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "cd ~/.factiii && docker compose ps ${serviceName} 2>/dev/null | grep -i 'up' || echo ''"`,
         { encoding: 'utf8', stdio: 'pipe' }
       ).trim();
       

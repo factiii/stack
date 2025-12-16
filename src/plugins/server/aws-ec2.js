@@ -18,8 +18,8 @@ class AWSEC2Provider extends ServerProvider {
   static version = '1.0.0';
   
   // Simplified secrets - only SSH key and AWS_SECRET_ACCESS_KEY are secrets
-  // HOST is in core.yml, USER defaults to ubuntu in coreAuto.yml
-  // AWS_ACCESS_KEY_ID and AWS_REGION are in core.yml (not sensitive)
+  // HOST is in factiii.yml, USER defaults to ubuntu in factiiiAuto.yml
+  // AWS_ACCESS_KEY_ID and AWS_REGION are in factiii.yml (not sensitive)
   static requiredSecrets = [
     { 
       name: 'SSH', 
@@ -62,7 +62,7 @@ class AWSEC2Provider extends ServerProvider {
    This is shown only once when you create the key.
    If lost, you must create a new key pair.
    
-   Note: AWS_ACCESS_KEY_ID and AWS_REGION go in core.yml (not secrets)
+   Note: AWS_ACCESS_KEY_ID and AWS_REGION go in factiii.yml (not secrets)
    
    Enter AWS Secret Access Key:`
   };
@@ -167,7 +167,7 @@ class AWSEC2Provider extends ServerProvider {
       await this.executeCommand(`docker rm ${serviceName} 2>/dev/null || true`);
       
       // Start new container
-      const envFile = envConfig.envFile || `~/infrastructure/envs/${serviceName}.env`;
+      const envFile = envConfig.envFile || `~/.factiii/envs/${serviceName}.env`;
       const runCommand = [
         'docker run -d',
         `--name ${serviceName}`,
@@ -299,10 +299,10 @@ class AWSEC2Provider extends ServerProvider {
       await this.executeCommand(`docker stop ${serviceName} 2>/dev/null || true`);
       await this.executeCommand(`docker rm ${serviceName} 2>/dev/null || true`);
       await this.executeCommand(
-        `rm -f ~/infrastructure/configs/${envConfig.name}.yml 2>/dev/null || true`
+        `rm -f ~/.factiii/configs/${envConfig.name}.yml 2>/dev/null || true`
       );
       await this.executeCommand(
-        `rm -f ~/infrastructure/envs/${serviceName}.env 2>/dev/null || true`
+        `rm -f ~/.factiii/envs/${serviceName}.env 2>/dev/null || true`
       );
       
       result.success = true;
@@ -618,9 +618,9 @@ class AWSEC2Provider extends ServerProvider {
     const result = { success: false, error: null };
     
     const commands = [
-      'mkdir -p ~/infrastructure/configs',
-      'mkdir -p ~/infrastructure/envs',
-      'mkdir -p ~/infrastructure/nginx'
+      'mkdir -p ~/.factiii/configs',
+      'mkdir -p ~/.factiii/envs',
+      'mkdir -p ~/.factiii/nginx'
     ];
     
     for (const cmd of commands) {

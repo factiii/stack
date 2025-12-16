@@ -8,13 +8,13 @@ const yaml = require('js-yaml');
  */
 function undeploy(options = {}) {
   const rootDir = process.cwd();
-  const configPath = path.resolve(rootDir, options.config || 'core.yml');
+  const configPath = path.resolve(rootDir, options.config || 'factiii.yml');
 
   // Load config to get repo name
   let repoName = options.repo;
   if (!repoName) {
     if (!fs.existsSync(configPath)) {
-      console.error('❌ Config file not found. Specify --repo <repo-name> or ensure core.yml exists.');
+      console.error('❌ Config file not found. Specify --repo <repo-name> or ensure factiii.yml exists.');
       process.exit(1);
     }
     const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
@@ -57,15 +57,15 @@ function undeploy(options = {}) {
       fs.writeFileSync(sshKeyPath, sshKey);
       fs.chmodSync(sshKeyPath, 0o600);
 
-      const remoteConfigPath = `~/infrastructure/configs/${repoName}.yml`;
+      const remoteConfigPath = `~/.factiii/configs/${repoName}.yml`;
       const serviceKey = `${repoName}-${env}`;
-      const remoteEnvPath = `~/infrastructure/${serviceKey}.env`;
+      const remoteEnvPath = `~/.factiii/${serviceKey}.env`;
 
       // Stop and remove service
       console.log(`   🛑 Stopping service...`);
       execSync(
         `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"cd ~/infrastructure && docker compose stop ${serviceKey} && docker compose rm -f ${serviceKey} 2>/dev/null || true"`,
+        `"cd ~/.factiii && docker compose stop ${serviceKey} && docker compose rm -f ${serviceKey} 2>/dev/null || true"`,
         { stdio: 'inherit' }
       );
 
@@ -88,11 +88,11 @@ function undeploy(options = {}) {
       // Run check-config to regenerate docker-compose and nginx without this repo
       console.log(`   🔄 Regenerating configurations (without ${repoName})...`);
       const scriptPath = path.join(__dirname, '../scripts/check-config.sh');
-      const remoteScriptPath = '~/infrastructure/scripts/check-config.sh';
+      const remoteScriptPath = '~/.factiii/scripts/check-config.sh';
 
       execSync(
         `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"chmod +x ${remoteScriptPath} && cd ~/infrastructure && INFRA_DIR=~/infrastructure ${remoteScriptPath}"`,
+        `"chmod +x ${remoteScriptPath} && cd ~/.factiii && INFRA_DIR=~/.factiii ${remoteScriptPath}"`,
         { stdio: 'inherit' }
       );
 
@@ -100,7 +100,7 @@ function undeploy(options = {}) {
       console.log(`   ✅ Verifying remaining services...`);
       execSync(
         `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"cd ~/infrastructure && docker compose ps"`,
+        `"cd ~/.factiii && docker compose ps"`,
         { stdio: 'inherit' }
       );
 
