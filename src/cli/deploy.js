@@ -1,148 +1,196 @@
+/**
+ * Deploy Command
+ * 
+ * Runs scan, aborts if problems found, then deploys.
+ * Calls each plugin's deploy() method for the requested environment.
+ * 
+ * Usage:
+ *   npx factiii deploy           # Deploy all (runs on server)
+ *   npx factiii deploy --dev     # Deploy dev (local containers)
+ *   npx factiii deploy --staging # Deploy staging
+ *   npx factiii deploy --prod    # Deploy production
+ */
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
-const validate = require('./validate');
-const Deployer = require('./deployer');
-const { GitHubSecretsStore } = require('../utils/github-secrets');
+const scan = require('./scan');
 
 /**
- * Deploy by triggering GitHub Actions workflow
- * Validates config and GitHub secrets, then triggers workflow
+ * Load all plugins
+ */
+function loadPlugins() {
+  const plugins = [];
+  
+  // Load pipeline plugins
+  try {
+    const FactiiiPipeline = require('../plugins/pipelines/factiii');
+    plugins.push(new FactiiiPipeline());
+  } catch (e) {
+    // Plugin not available
+  }
+  
+  // Load server plugins
+  try {
+    const MacMiniPlugin = require('../plugins/servers/mac-mini');
+    plugins.push(new MacMiniPlugin());
+  } catch (e) {
+    // Plugin not available
+  }
+  
+  try {
+    const AWSPlugin = require('../plugins/servers/aws');
+    plugins.push(new AWSPlugin());
+  } catch (e) {
+    // Plugin not available
+  }
+  
+  // Load framework plugins
+  try {
+    const PrismaTrpcPlugin = require('../plugins/frameworks/prisma-trpc');
+    plugins.push(new PrismaTrpcPlugin());
+  } catch (e) {
+    // Plugin not available
+  }
+  
+  return plugins;
+}
+
+/**
+ * Load config from factiii.yml
+ */
+function loadConfig(rootDir) {
+  const configPath = path.join(rootDir, 'factiii.yml');
+  
+  if (!fs.existsSync(configPath)) {
+    return {};
+  }
+  
+  try {
+    return yaml.load(fs.readFileSync(configPath, 'utf8')) || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+/**
+ * Load environment file
+ */
+function loadEnvFile(envFile) {
+  if (!fs.existsSync(envFile)) {
+    return;
+  }
+  
+  const content = fs.readFileSync(envFile, 'utf8');
+  const lines = content.split('\n');
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    
+    const match = trimmed.match(/^([^=]+)=(.*)$/);
+    if (match) {
+      const [, key, value] = match;
+      process.env[key] = value.replace(/^["']|["']$/g, '');
+    }
+  }
+}
+
+/**
+ * Main deploy function
  */
 async function deploy(options = {}) {
-  const rootDir = process.cwd();
-  const configPath = path.resolve(rootDir, options.config || 'factiii.yml');
-
-  console.log('🔍 Running scan before deployment...\n');
-
-  // Run scan in check-only mode
-  const scan = require('./scan');
-  const scanSummary = await scan({ skipWorkflow: true, silent: false });
-
-  // If ANY critical issues, show them and abort
-  if (scanSummary && scanSummary.critical > 0) {
-    console.log('\n❌ Deployment cancelled due to scan failures (see above)\n');
-    console.log('   Run: npx factiii fix\n');
-    process.exit(1);
-  }
-
-  console.log('\n✅ Init check passed. Proceeding with deployment...\n');
-
-  // Load config
-  const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
-  const repoName = config.name;
-
-  if (!repoName) {
-    console.error('❌ Config must have a "name" field');
-    process.exit(1);
-  }
-
-  // Determine which environments to deploy
-  const environments = options.environment === 'all'
-    ? Object.keys(config.environments || {})
-    : options.environment ? [options.environment] : ['all'];
-
-  if (environments.length === 0 || (environments[0] === 'all' && Object.keys(config.environments || {}).length === 0)) {
-    console.error('❌ No environments found in config');
-    process.exit(1);
-  }
-
-  console.log(`\n📦 Repository: ${repoName}`);
-  console.log(`🌍 Environments: ${environments.join(', ')}\n`);
-
-  // Step 3: Check GitHub secrets exist
-  console.log('🔍 Checking GitHub secrets...\n');
+  const rootDir = options.rootDir || process.cwd();
+  const config = loadConfig(rootDir);
   
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) {
-    console.error('❌ GITHUB_TOKEN required for deployment');
-    console.error('');
-    console.error('   Generate token: https://github.com/settings/tokens');
-    console.error('   → Select scopes: repo + workflow');
-    console.error('');
-    console.error('   Add to your shell config:');
-    console.error('   export GITHUB_TOKEN=ghp_your_token_here');
-    console.error('');
-    process.exit(1);
-  }
-
-  const secretStore = new GitHubSecretsStore(token);
-  const envsToCheck = environments[0] === 'all' ? Object.keys(config.environments) : environments;
+  // Determine which stages to deploy
+  let stages = [];
+  if (options.dev) stages = ['dev'];
+  else if (options.staging) stages = ['staging'];
+  else if (options.prod) stages = ['prod'];
+  else if (options.environment) stages = [options.environment];
+  else stages = ['dev', 'secrets', 'staging', 'prod'];
   
-  // Build required secrets list (minimal - only truly secret values)
-  // HOST is in factiii.yml, USER defaults to ubuntu in factiiiAuto.yml
-  // AWS_ACCESS_KEY_ID and AWS_REGION are in factiii.yml (not secret)
-  const requiredSecrets = [];
-  for (const env of envsToCheck) {
-    const prefix = env.toUpperCase();
-    requiredSecrets.push(`${prefix}_SSH`);  // SSH private key only
-  }
+  console.log('═'.repeat(60));
+  console.log('🚀 FACTIII DEPLOY');
+  console.log('═'.repeat(60) + '\n');
   
-  // Only AWS_SECRET_ACCESS_KEY needs to be a secret
-  requiredSecrets.push('AWS_SECRET_ACCESS_KEY');
-
-  // Check secrets
-  const check = await secretStore.checkSecrets(requiredSecrets);
+  // 1. Run scan - ABORT if any problems found
+  console.log('📋 Stage 1: Running pre-deploy checks...\n');
+  const problems = await scan({ 
+    rootDir, 
+    stages: stages.filter(s => s !== 'secrets'), // Secrets are checked separately
+    silent: true 
+  });
   
-  if (check.error) {
-    console.error(`❌ Failed to check GitHub secrets: ${check.error}\n`);
-    process.exit(1);
-  }
-
-  if (check.missing.length > 0) {
-    console.error('❌ Missing required GitHub secrets:\n');
-    check.missing.forEach(name => console.error(`   - ${name}`));
-    console.error('');
-    console.error('💡 Run: npx factiii fix');
-    console.error('   This will prompt for missing secrets and upload them to GitHub.\n');
-    process.exit(1);
-  }
-
-  console.log('✅ All required secrets exist in GitHub\n');
-
-  // Create deployer instance (triggers workflow)
-  const deployer = new Deployer(config, options);
-
-  console.log('══════════════════════════════════════════════════════════════════════');
-  console.log('🚀 Starting Workflow-Based Deployment');
-  console.log('══════════════════════════════════════════════════════════════════════\n');
-
-  try {
-    // Deploy!
-    const results = await deployer.deploy(environments);
-
-    // Show summary
-    console.log('\n══════════════════════════════════════════════════════════════════════');
-    console.log('📊 Deployment Summary');
-    console.log('══════════════════════════════════════════════════════════════════════\n');
-
-    const successful = results.filter(r => r.success);
-    const failed = results.filter(r => !r.success);
-
-    if (successful.length > 0) {
-      console.log('✅ Successful deployments:');
-      successful.forEach(r => {
-        console.log(`   - ${r.environment}: ${r.message || 'Deployed'}`);
-      });
-      console.log('');
+  const totalProblems = Object.values(problems).flat().length;
+  
+  if (totalProblems > 0) {
+    console.log('❌ Pre-deploy checks failed!\n');
+    
+    // Display problems
+    for (const [stage, stageProblems] of Object.entries(problems)) {
+      if (stageProblems.length > 0) {
+        console.log(`   ${stage.toUpperCase()}:`);
+        for (const problem of stageProblems) {
+          console.log(`   - ${problem.description}`);
+        }
+      }
     }
-
-    if (failed.length > 0) {
-      console.log('❌ Failed deployments:');
-      failed.forEach(r => {
-        console.log(`   - ${r.environment}: ${r.error}`);
-      });
-      console.log('');
-      process.exit(1);
-    }
-
-    console.log('✨ All deployments completed successfully!\n');
-
-  } catch (error) {
-    console.error('\n❌ Deployment failed:', error.message);
-    console.error('');
+    
+    console.log('\n💡 Fix issues first: npx factiii fix\n');
     process.exit(1);
   }
+  
+  console.log('✅ All pre-deploy checks passed!\n');
+  
+  // 2. Load plugins
+  const plugins = loadPlugins();
+  
+  // 3. Deploy each environment requested
+  console.log('═'.repeat(60));
+  console.log('📋 Stage 2: Deploying...');
+  console.log('═'.repeat(60) + '\n');
+  
+  for (const stage of stages) {
+    if (stage === 'secrets') continue; // Secrets don't deploy
+    
+    console.log(`🚀 Deploying ${stage}...\n`);
+    
+    // Load env file for this environment
+    if (stage === 'staging') {
+      loadEnvFile(path.join(rootDir, '.env.staging'));
+    } else if (stage === 'prod') {
+      loadEnvFile(path.join(rootDir, '.env.prod'));
+    } else if (stage === 'dev') {
+      loadEnvFile(path.join(rootDir, '.env'));
+    }
+    
+    // Call each plugin's deploy method
+    for (const plugin of plugins) {
+      if (plugin.deploy) {
+        try {
+          const result = await plugin.deploy(config, stage);
+          if (result.message) {
+            console.log(`   ✅ ${plugin.constructor.name}: ${result.message}`);
+          }
+        } catch (e) {
+          console.log(`   ⚠️  ${plugin.constructor.name}: ${e.message}`);
+        }
+      }
+    }
+    
+    console.log('');
+  }
+  
+  // 4. Summary
+  console.log('═'.repeat(60));
+  console.log('✅ DEPLOY COMPLETE');
+  console.log('═'.repeat(60) + '\n');
+  
+  for (const stage of stages.filter(s => s !== 'secrets')) {
+    console.log(`   ✅ ${stage}: Deployed`);
+  }
+  console.log('');
 }
 
 module.exports = deploy;

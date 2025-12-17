@@ -6,21 +6,32 @@ const path = require('path');
 // Import CLI commands
 const scan = require('../src/cli/scan');
 const fix = require('../src/cli/fix');
-const validate = require('../src/cli/validate');
-const checkConfig = require('../src/cli/check-config');
 const deploy = require('../src/cli/deploy');
 const undeploy = require('../src/cli/undeploy');
 const generateWorkflows = require('../src/cli/generate-workflows');
 const secrets = require('../src/cli/secrets');
 const upgrade = require('../src/cli/upgrade');
 
+// Legacy commands (will be removed)
+let validate, checkConfig;
+try {
+  validate = require('../src/cli/validate');
+  checkConfig = require('../src/cli/check-config');
+} catch (e) {
+  // Legacy commands may not exist
+}
+
 program
   .name('factiii')
   .description('Factiii Stack - Infrastructure management CLI')
   .version('1.0.0');
 
-// Default action (npx factiii with no subcommand runs scan)
+// Default command: scan (npx factiii with no subcommand runs scan)
 program
+  .option('--dev', 'Scan dev environment only')
+  .option('--staging', 'Scan staging environment only')
+  .option('--prod', 'Scan production environment only')
+  .option('--secrets', 'Scan secrets only')
   .option('-f, --force', 'Overwrite existing config file')
   .option('--no-remote', 'Skip auto-triggering the scan workflow')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
@@ -31,66 +42,59 @@ program
     }
   });
 
-// Fix command (npx factiii fix)
+// Scan command (explicit)
+program
+  .command('scan')
+  .description('Scan all environments for issues')
+  .option('--dev', 'Scan dev environment only')
+  .option('--staging', 'Scan staging environment only')
+  .option('--prod', 'Scan production environment only')
+  .option('--secrets', 'Scan secrets only')
+  .action(async (options) => {
+    await scan(options);
+  });
+
+// Fix command
 program
   .command('fix')
   .description('Fix all environments including uploading secrets to GitHub and installing server dependencies')
+  .option('--dev', 'Fix dev environment only')
+  .option('--staging', 'Fix staging environment only')
+  .option('--prod', 'Fix production environment only')
+  .option('--secrets', 'Fix secrets only')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
-  .option('--continue-on-error', 'Continue even if some secrets fail to upload')
-  .option('--no-install-deps', 'Skip automatic installation of missing dependencies on remote servers')
+  .option('--continue-on-error', 'Continue even if some fixes fail')
   .action(async (options) => {
     await fix(options);
   });
 
-program
-  .command('validate')
-  .description('Validate factiii.yml config file')
-  .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
-  .action((options) => {
-    validate(options);
-  });
-
-program
-  .command('check-config')
-  .description('Check and regenerate configs on servers, verify GitHub secrets, provide report')
-  .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
-  .option('--ssh-staging <key>', 'SSH key for staging server')
-  .option('--ssh-prod <key>', 'SSH key for production server')
-  .option('--staging-host <host>', 'Staging server host')
-  .option('--staging-user <user>', 'Staging server user')
-  .option('--prod-host <host>', 'Production server host')
-  .option('--prod-user <user>', 'Production server user')
-  .action((options) => {
-    checkConfig(options);
-  });
-
+// Deploy command
 program
   .command('deploy')
-  .description('Validate local config and trigger GitHub deploy workflow')
-  .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
-  .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
-  .option('-b, --branch <branch>', 'Branch to deploy from (defaults to "main")')
+  .description('Deploy to environments (runs scan first, aborts on issues)')
+  .option('--dev', 'Deploy dev environment only (local containers)')
+  .option('--staging', 'Deploy staging environment only')
+  .option('--prod', 'Deploy production environment only')
+  .option('-e, --environment <env>', 'Environment (staging|prod)')
+  .option('-b, --branch <branch>', 'Branch to deploy from (defaults to current branch)')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .action(async (options) => {
     await deploy(options);
   });
 
+// Undeploy command
 program
   .command('undeploy')
-  .description('Completely remove repo from staging and prod servers (deletes configs, env files, and all data)')
-  .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
-  .option('--repo <name>', 'Repository name (if not using config file)')
+  .description('Remove deployment from servers')
+  .option('--dev', 'Undeploy dev environment only')
+  .option('--staging', 'Undeploy staging environment only')
+  .option('--prod', 'Undeploy production environment only')
   .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
-  .option('--ssh-staging <key>', 'SSH key for staging server')
-  .option('--ssh-prod <key>', 'SSH key for production server')
-  .option('--staging-host <host>', 'Staging server host')
-  .option('--staging-user <user>', 'Staging server user')
-  .option('--prod-host <host>', 'Production server host')
-  .option('--prod-user <user>', 'Production server user')
-  .action((options) => {
-    undeploy(options);
+  .action(async (options) => {
+    await undeploy(options);
   });
 
+// Generate workflows command
 program
   .command('generate-workflows')
   .description('Generate GitHub workflow files')
@@ -99,6 +103,7 @@ program
     generateWorkflows(options);
   });
 
+// Secrets command
 program
   .command('secrets [names...]')
   .description('Manage GitHub secrets (SSH keys, AWS credentials, env vars)')
@@ -109,6 +114,7 @@ program
     await secrets(names, options);
   });
 
+// Upgrade command
 program
   .command('upgrade')
   .description('Check for updates and regenerate configs for new version')
@@ -116,5 +122,26 @@ program
   .action(async (options) => {
     await upgrade(options);
   });
+
+// Legacy commands (for backwards compatibility)
+if (validate) {
+  program
+    .command('validate')
+    .description('[Legacy] Validate factiii.yml config file')
+    .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
+    .action((options) => {
+      validate(options);
+    });
+}
+
+if (checkConfig) {
+  program
+    .command('check-config')
+    .description('[Legacy] Check and regenerate configs on servers')
+    .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
+    .action((options) => {
+      checkConfig(options);
+    });
+}
 
 program.parse();

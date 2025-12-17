@@ -1,0 +1,94 @@
+name: Factiii Production
+
+# Auto-deploy to production on push to production branch
+# Thin workflow - just SSH and call CLI
+
+on:
+  push:
+    branches:
+      - production
+      - prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Read config
+        id: config
+        run: |
+          if [ ! -f "factiii.yml" ]; then
+            echo "❌ factiii.yml not found"
+            exit 1
+          fi
+          
+          REPO_NAME=$(yq eval '.name' factiii.yml)
+          HOST=$(yq eval '.environments.prod.host // .environments.production.host // ""' factiii.yml)
+          SSH_USER=$(yq eval '.environments.prod.ssh_user // .environments.production.ssh_user // "ubuntu"' factiii.yml)
+          
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "host=$HOST" >> $GITHUB_OUTPUT
+          echo "ssh_user=$SSH_USER" >> $GITHUB_OUTPUT
+
+      - name: Setup SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH }}
+        run: |
+          if [ -z "$SSH_KEY" ]; then
+            echo "❌ Missing PROD_SSH secret"
+            exit 1
+          fi
+          
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Deploy via CLI
+        env:
+          HOST: ${{ steps.config.outputs.host }}
+          USER: ${{ steps.config.outputs.ssh_user }}
+          REPO_NAME: ${{ steps.config.outputs.repo_name }}
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ -z "$HOST" ]; then
+            echo "❌ Missing host in factiii.yml: environments.prod.host"
+            exit 1
+          fi
+          
+          echo "🚀 Deploying to production ($HOST)..."
+          
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" bash -s << EOF
+            set -e
+            REPO_DIR=~/.factiii/$REPO_NAME
+            
+            mkdir -p ~/.factiii
+            if [ ! -d "\$REPO_DIR" ]; then
+              echo "📦 Cloning repo..."
+              git clone git@github.com:$GITHUB_REPO.git \$REPO_DIR
+            fi
+            
+            cd \$REPO_DIR
+            
+            echo "🔄 Pulling latest code..."
+            git fetch
+            git checkout $GITHUB_BRANCH
+            git pull origin $GITHUB_BRANCH
+            
+            echo "📦 Installing dependencies..."
+            npm install -g pnpm@9 2>/dev/null || true
+            pnpm install
+            
+            echo "🚀 Running deploy..."
+            npx factiii deploy --prod
+          EOF
+          
+          rm -f ~/.ssh/deploy_key
+          echo "✅ Production deployment complete!"

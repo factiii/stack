@@ -4,19 +4,22 @@ const path = require('path');
 function generateWorkflows(options = {}) {
   const rootDir = process.cwd();
   const outputDir = path.resolve(rootDir, options.output || '.github/workflows');
-  const workflowsDir = path.join(__dirname, '../workflows');
+  
+  // First, try the new plugin location, then fall back to old location
+  let workflowsDir = path.join(__dirname, '../plugins/pipelines/factiii/workflows');
+  if (!fs.existsSync(workflowsDir)) {
+    workflowsDir = path.join(__dirname, '../workflows');
+  }
 
   console.log(`📝 Generating GitHub workflows...\n`);
 
   // Ensure output directory exists
   fs.mkdirSync(outputDir, { recursive: true });
 
-  // Copy workflow files (static files, no templates)
-  // Note: factiii-deploy.yml is triggered by npx factiii deploy
-  // Other workflows are repo CI/CD that run independently on git events
+  // Thin workflow files - just SSH and call CLI
   const workflows = [
     'factiii-deploy.yml',      // Manual deployment (triggered by npx factiii deploy)
-    'factiii-staging.yml',     // Auto-deploy on push to main/staging
+    'factiii-staging.yml',     // Auto-deploy on push to main
     'factiii-production.yml',  // Auto-deploy on merge to production
     'factiii-undeploy.yml'     // Manual cleanup
   ];
@@ -77,32 +80,24 @@ function generateWorkflows(options = {}) {
   console.log(`\n✅ Workflow generation complete!`);
   console.log(`   📊 Summary: ${created} created, ${updated} updated, ${unchanged} unchanged`);
   
-  console.log(`\n💡 How deployments work:`);
-  console.log(`   1. npx factiii deploy → triggers factiii-deploy.yml workflow`);
-  console.log(`   2. Workflow has access to GitHub Secrets (secure)`);
-  console.log(`   3. Workflow deploys to your servers via SSH\n`);
+  console.log(`\n💡 How thin workflows work:`);
+  console.log(`   1. Workflow SSHs into your server`);
+  console.log(`   2. Runs: npx factiii deploy --{environment}`);
+  console.log(`   3. All logic runs on server (not in workflow)\n`);
   
   console.log(`📝 Generated workflows:`);
   console.log(`   - factiii-deploy.yml: Manual deployment (triggered by npx factiii deploy)`);
-  console.log(`   - factiii-staging.yml: Auto-deploy on PR/push to main branch (optional)`);
-  console.log(`   - factiii-production.yml: Auto-deploy on merge to production branch (optional)`);
-  console.log(`   - factiii-undeploy.yml: Manual cleanup trigger (optional)\n`);
+  console.log(`   - factiii-staging.yml: Auto-deploy on push to main branch`);
+  console.log(`   - factiii-production.yml: Auto-deploy on merge to production branch`);
+  console.log(`   - factiii-undeploy.yml: Manual cleanup trigger\n`);
   
-  console.log(`📋 Auto-deploy workflows (optional):`);
-  console.log(`   - Enable by pushing/merging to configured branches`);
-  console.log(`   - They run independently and deploy automatically`);
-  console.log(`   - Uses same secrets as manual deployment\n`);
+  console.log(`📋 Required GitHub Secrets:`);
+  console.log(`   - STAGING_SSH (SSH private key for staging)`);
+  console.log(`   - PROD_SSH (SSH private key for production)`);
+  console.log(`   - AWS_SECRET_ACCESS_KEY (if using ECR)\n`);
   
-  console.log(`📋 Required GitHub Secrets (minimal):`);
-  console.log(`   - STAGING_SSH, PROD_SSH (SSH private keys)`);
-  console.log(`   - AWS_SECRET_ACCESS_KEY`);
-  console.log(`\n📋 Not secrets (in factiii.yml):`);
-  console.log(`   - aws.access_key_id, aws.region`);
-  console.log(`   - environments.{env}.host`);
-  console.log(`\n💡 Run 'npx factiii fix' to set up secrets automatically.`);
+  console.log(`💡 Run 'npx factiii fix' to set up secrets automatically.`);
 }
 
 
 module.exports = generateWorkflows;
-
-

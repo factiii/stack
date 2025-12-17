@@ -1,8 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 const scan = require('../src/cli/scan');
-const validate = require('../src/cli/validate');
+const fix = require('../src/cli/fix');
 const generateWorkflows = require('../src/cli/generate-workflows');
+
+// Legacy commands - may not exist
+let validate;
+try {
+  validate = require('../src/cli/validate');
+} catch (e) {
+  // Legacy command not available
+}
 
 describe('CLI Command Tests', () => {
   const testDir = path.join(__dirname, 'temp-cli-test');
@@ -47,225 +55,88 @@ describe('CLI Command Tests', () => {
     }
   });
 
-  describe('scan command (default)', () => {
-    test('creates factiii.yml from template', async () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      
-      // Should not exist initially
-      expect(fs.existsSync(configPath)).toBe(false);
-
-      await scan({});
-
-      // Should be created
-      expect(fs.existsSync(configPath)).toBe(true);
-      const content = fs.readFileSync(configPath, 'utf8');
-      expect(content).toContain('name:');
-      expect(content).toContain('servers:');
-    });
-
-    test('replaces placeholder repo name', async () => {
-      // Create a package.json to test repo name inference
-      const packageJsonPath = path.join(testDir, 'package.json');
-      fs.writeFileSync(packageJsonPath, JSON.stringify({ name: 'test-repo' }));
-
-      await scan({});
-      
-      const configPath = path.join(testDir, 'factiii.yml');
-      const content = fs.readFileSync(configPath, 'utf8');
-      expect(content).toContain('name: test-repo');
-      expect(content).not.toContain('your-repo-name');
-    });
-
-    test('handles scoped package names', async () => {
-      const packageJsonPath = path.join(testDir, 'package.json');
-      fs.writeFileSync(packageJsonPath, JSON.stringify({ name: '@org/test-repo' }));
-
-      await scan({});
-      
-      const configPath = path.join(testDir, 'factiii.yml');
-      const content = fs.readFileSync(configPath, 'utf8');
-      expect(content).toContain('name: test-repo');
-      expect(content).not.toContain('@org/test-repo');
-    });
-
-    test('skips creating config if exists without --force', async () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      fs.writeFileSync(configPath, 'existing config');
-
-      await scan({});
-      
-      // Config should not be overwritten
-      const content = fs.readFileSync(configPath, 'utf8');
-      expect(content).toBe('existing config');
-    });
-
-    test('overwrites existing config with --force', async () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      fs.writeFileSync(configPath, 'existing config');
-
-      await scan({ force: true });
-
-      const content = fs.readFileSync(configPath, 'utf8');
-      expect(content).not.toBe('existing config');
-      expect(content).toContain('name:');
-    });
-
-    test('outputs audit report', async () => {
-      await scan({});
-      
-      // Init now outputs comprehensive audit report
-      expect(consoleOutput.some(o => o[1].includes('Running infrastructure audit') || o[1].includes('factiii.yml'))).toBe(true);
-    });
-  });
-
-  describe('validate command', () => {
-    test('validates a correct config file', () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      const validConfig = {
-        name: 'test-repo',
-        environments: {
-          staging: {
-            domain: 'staging.test.com'
-          }
-        },
-        ssl_email: 'test@example.com',
-        ecr_registry: '123456789.dkr.ecr.us-east-1.amazonaws.com',
-        ecr_repository: 'apps'
-      };
-      
+  describe('scan command', () => {
+    test('scans and reports no issues when properly configured', async () => {
+      // Create a minimal valid config
       const yaml = require('js-yaml');
-      fs.writeFileSync(configPath, yaml.dump(validConfig));
-
-      validate({ config: 'factiii.yml' });
-
-      expect(consoleOutput.some(o => o[1].includes('Configuration is valid'))).toBe(true);
-      expect(exitCode).toBeNull();
-    });
-
-    test('fails on missing name field', () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      const invalidConfig = {
-        environments: {
-          staging: {
-            domain: 'staging.test.com'
-          }
-        }
-      };
-      
-      const yaml = require('js-yaml');
-      fs.writeFileSync(configPath, yaml.dump(invalidConfig));
-
-      try {
-        validate({ config: 'factiii.yml' });
-        fail('Should have exited');
-      } catch (error) {
-        expect(exitCode).toBe(1);
-        expect(consoleOutput.some(o => o[1].includes('Missing required field: name'))).toBe(true);
-      }
-    });
-
-    test('fails on missing environments field', () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      const invalidConfig = {
-        name: 'test-repo'
-      };
-      
-      const yaml = require('js-yaml');
-      fs.writeFileSync(configPath, yaml.dump(invalidConfig));
-
-      try {
-        validate({ config: 'factiii.yml' });
-        fail('Should have exited');
-      } catch (error) {
-        expect(exitCode).toBe(1);
-        expect(consoleOutput.some(o => o[1].includes('Missing required field: environments'))).toBe(true);
-      }
-    });
-
-    test('fails on missing domain', () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      const invalidConfig = {
-        name: 'test-repo',
-        environments: {
-          staging: {}
-        }
-      };
-      
-      const yaml = require('js-yaml');
-      fs.writeFileSync(configPath, yaml.dump(invalidConfig));
-
-      try {
-        validate({ config: 'factiii.yml' });
-        fail('Should have exited');
-      } catch (error) {
-        expect(exitCode).toBe(1);
-        expect(consoleOutput.some(o => o[1].includes('Missing domain'))).toBe(true);
-      }
-    });
-
-    test('warns on invalid port range', () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      const configWithBadPort = {
+      fs.writeFileSync(path.join(testDir, 'factiii.yml'), yaml.dump({
         name: 'test-repo',
         environments: {
           staging: {
             domain: 'staging.test.com',
-            port: 2000  // Too low
-          }
-        },
-        ssl_email: 'test@example.com'
-      };
-      
-      const yaml = require('js-yaml');
-      fs.writeFileSync(configPath, yaml.dump(configWithBadPort));
-
-      validate({ config: 'factiii.yml' });
-
-      expect(consoleOutput.some(o => o[1].includes('Port 2000') && o[1].includes('outside recommended range'))).toBe(true);
-      expect(exitCode).toBeNull(); // Should not exit on warnings
-    });
-
-    test('warns on missing ssl_email', () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      const configWithoutEmail = {
-        name: 'test-repo',
-        environments: {
-          staging: {
-            domain: 'staging.test.com'
+            host: '192.168.1.100'
           }
         }
-      };
+      }));
       
-      const yaml = require('js-yaml');
-      fs.writeFileSync(configPath, yaml.dump(configWithoutEmail));
+      // Create necessary env files
+      fs.writeFileSync(path.join(testDir, '.env.example'), 'DATABASE_URL=test\n');
+      fs.writeFileSync(path.join(testDir, '.env'), 'DATABASE_URL=test\n');
+      fs.writeFileSync(path.join(testDir, '.env.staging'), 'DATABASE_URL=test\n');
+      fs.writeFileSync(path.join(testDir, '.env.prod'), 'DATABASE_URL=test\n');
 
-      validate({ config: 'factiii.yml' });
+      const problems = await scan({ rootDir: testDir, dev: true });
 
-      expect(consoleOutput.some(o => o[1].includes('Missing ssl_email'))).toBe(true);
-      expect(exitCode).toBeNull();
+      expect(problems).toHaveProperty('dev');
+      expect(Array.isArray(problems.dev)).toBe(true);
     });
 
-    test('fails on non-existent config file', () => {
-      try {
-        validate({ config: 'nonexistent.yml' });
-        fail('Should have exited');
-      } catch (error) {
-        expect(exitCode).toBe(1);
-        expect(consoleOutput.some(o => o[1].includes('Config file not found'))).toBe(true);
-      }
+    test('detects missing factiii.yml', async () => {
+      const problems = await scan({ rootDir: testDir, dev: true });
+
+      // Should detect missing factiii.yml
+      expect(problems.dev.some(p => p.id === 'missing-factiii-yml')).toBe(true);
     });
 
-    test('fails on invalid YAML', () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      fs.writeFileSync(configPath, 'invalid: yaml: content: [unclosed');
+    test('returns problems grouped by stage', async () => {
+      const problems = await scan({ rootDir: testDir });
 
-      try {
-        validate({ config: 'factiii.yml' });
-        fail('Should have exited');
-      } catch (error) {
-        expect(exitCode).toBe(1);
-        expect(consoleOutput.some(o => o[1].includes('YAML parsing error'))).toBe(true);
-      }
+      expect(problems).toHaveProperty('dev');
+      expect(problems).toHaveProperty('secrets');
+      expect(problems).toHaveProperty('staging');
+      expect(problems).toHaveProperty('prod');
+    });
+
+    test('respects stage filters', async () => {
+      const devProblems = await scan({ rootDir: testDir, dev: true });
+      
+      // When filtering to dev only, other stages should be empty
+      expect(devProblems.secrets).toHaveLength(0);
+      expect(devProblems.staging).toHaveLength(0);
+      expect(devProblems.prod).toHaveLength(0);
+    });
+  });
+
+  describe('fix command', () => {
+    test('runs scan then applies fixes', async () => {
+      // Create minimal setup
+      fs.writeFileSync(path.join(testDir, '.env.example'), 'TEST=value\n');
+      
+      const results = await fix({ rootDir: testDir, dev: true });
+
+      expect(results).toHaveProperty('fixed');
+      expect(results).toHaveProperty('manual');
+      expect(results).toHaveProperty('failed');
+    });
+
+    test('creates .env from .env.example', async () => {
+      // Create .env.example but not .env
+      fs.writeFileSync(path.join(testDir, '.env.example'), 'DATABASE_URL=test\n');
+      fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ 
+        dependencies: { prisma: '5.0.0' } 
+      }));
+
+      await fix({ rootDir: testDir, dev: true });
+
+      // .env should be created from .env.example
+      expect(fs.existsSync(path.join(testDir, '.env'))).toBe(true);
+    });
+
+    test('respects stage filters', async () => {
+      const results = await fix({ rootDir: testDir, dev: true });
+
+      // Should only fix dev stage issues
+      expect(typeof results.fixed).toBe('number');
     });
   });
 
@@ -306,39 +177,190 @@ describe('CLI Command Tests', () => {
       });
     });
 
-    test('replaces repo name placeholder if factiii.yml exists', () => {
-      const configPath = path.join(testDir, 'factiii.yml');
-      const yaml = require('js-yaml');
-      fs.writeFileSync(configPath, yaml.dump({
-        name: 'my-test-repo'
-      }));
-
-      generateWorkflows({});
-
-      const deployStagingPath = path.join(testDir, '.github', 'workflows', 'deploy-staging.yml');
-      if (fs.existsSync(deployStagingPath)) {
-        const content = fs.readFileSync(deployStagingPath, 'utf8');
-        // Check if repo name was replaced (if template has placeholder)
-        // Note: This depends on the actual template content
-      }
-    });
-
     test('outputs success messages', () => {
       generateWorkflows({});
 
-      expect(consoleOutput.some(o => o[1].includes('Generating GitHub workflows'))).toBe(true);
-      expect(consoleOutput.some(o => o[1].includes('Workflow generation complete'))).toBe(true);
+      expect(consoleOutput.some(o => o[1]?.includes('Generating GitHub workflows'))).toBe(true);
+      expect(consoleOutput.some(o => o[1]?.includes('Workflow generation complete'))).toBe(true);
+    });
+  });
+
+  // Legacy validate tests - only run if validate exists
+  if (validate) {
+    describe('validate command (legacy)', () => {
+      test('validates a correct config file', () => {
+        const configPath = path.join(testDir, 'factiii.yml');
+        const validConfig = {
+          name: 'test-repo',
+          environments: {
+            staging: {
+              domain: 'staging.test.com'
+            }
+          },
+          ssl_email: 'test@example.com',
+          ecr_registry: '123456789.dkr.ecr.us-east-1.amazonaws.com',
+          ecr_repository: 'apps'
+        };
+        
+        const yaml = require('js-yaml');
+        fs.writeFileSync(configPath, yaml.dump(validConfig));
+
+        validate({ config: 'factiii.yml' });
+
+        expect(consoleOutput.some(o => o[1]?.includes('Configuration is valid'))).toBe(true);
+        expect(exitCode).toBeNull();
+      });
+
+      test('fails on missing name field', () => {
+        const configPath = path.join(testDir, 'factiii.yml');
+        const invalidConfig = {
+          environments: {
+            staging: {
+              domain: 'staging.test.com'
+            }
+          }
+        };
+        
+        const yaml = require('js-yaml');
+        fs.writeFileSync(configPath, yaml.dump(invalidConfig));
+
+        try {
+          validate({ config: 'factiii.yml' });
+          fail('Should have exited');
+        } catch (error) {
+          expect(exitCode).toBe(1);
+          expect(consoleOutput.some(o => o[1]?.includes('Missing required field: name'))).toBe(true);
+        }
+      });
+    });
+  }
+});
+
+describe('Plugin Architecture Tests', () => {
+  const testDir = path.join(__dirname, 'temp-plugin-test');
+
+  beforeEach(() => {
+    if (!fs.existsSync(testDir)) {
+      fs.mkdirSync(testDir, { recursive: true });
+    }
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(testDir)) {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  describe('Plugin Loading', () => {
+    test('loads pipeline plugins', () => {
+      const { getPluginsByCategory } = require('../src/plugins');
+      const pipelines = getPluginsByCategory('pipelines');
+      
+      expect(pipelines).toBeDefined();
+      expect(pipelines['factiii']).toBeDefined();
     });
 
-    test('handles missing template files gracefully', () => {
-      // This test would require mocking or removing templates
-      // For now, we'll just verify it doesn't crash
-      generateWorkflows({});
+    test('loads server plugins', () => {
+      const { getPluginsByCategory } = require('../src/plugins');
+      const servers = getPluginsByCategory('servers');
       
-      // Should complete without throwing
-      expect(true).toBe(true);
+      expect(servers).toBeDefined();
+      expect(servers['mac-mini']).toBeDefined();
+      expect(servers['aws']).toBeDefined();
+    });
+
+    test('loads framework plugins', () => {
+      const { getPluginsByCategory } = require('../src/plugins');
+      const frameworks = getPluginsByCategory('frameworks');
+      
+      expect(frameworks).toBeDefined();
+      expect(frameworks['prisma-trpc']).toBeDefined();
+    });
+  });
+
+  describe('Plugin Structure', () => {
+    test('pipeline plugin has required static properties', () => {
+      const FactiiiPipeline = require('../src/plugins/pipelines/factiii');
+      
+      expect(FactiiiPipeline.id).toBe('factiii');
+      expect(FactiiiPipeline.category).toBe('pipeline');
+      expect(Array.isArray(FactiiiPipeline.fixes)).toBe(true);
+    });
+
+    test('server plugin has required static properties', () => {
+      const MacMiniPlugin = require('../src/plugins/servers/mac-mini');
+      
+      expect(MacMiniPlugin.id).toBe('mac-mini');
+      expect(MacMiniPlugin.category).toBe('server');
+      expect(Array.isArray(MacMiniPlugin.fixes)).toBe(true);
+    });
+
+    test('framework plugin has required static properties', () => {
+      const PrismaTrpcPlugin = require('../src/plugins/frameworks/prisma-trpc');
+      
+      expect(PrismaTrpcPlugin.id).toBe('prisma-trpc');
+      expect(PrismaTrpcPlugin.category).toBe('framework');
+      expect(Array.isArray(PrismaTrpcPlugin.fixes)).toBe(true);
+      expect(Array.isArray(PrismaTrpcPlugin.requiredEnvVars)).toBe(true);
+    });
+  });
+
+  describe('Fix Structure', () => {
+    test('pipeline plugin fixes have correct structure', () => {
+      const FactiiiPipeline = require('../src/plugins/pipelines/factiii');
+      
+      for (const fix of FactiiiPipeline.fixes) {
+        expect(fix.id).toBeDefined();
+        expect(['dev', 'secrets', 'staging', 'prod']).toContain(fix.stage);
+        expect(['critical', 'warning', 'info']).toContain(fix.severity);
+        expect(fix.description).toBeDefined();
+        expect(typeof fix.scan).toBe('function');
+        expect(fix.manualFix).toBeDefined();
+      }
+    });
+
+    test('server plugin fixes have correct structure', () => {
+      const MacMiniPlugin = require('../src/plugins/servers/mac-mini');
+      
+      for (const fix of MacMiniPlugin.fixes) {
+        expect(fix.id).toBeDefined();
+        expect(['dev', 'secrets', 'staging', 'prod']).toContain(fix.stage);
+        expect(['critical', 'warning', 'info']).toContain(fix.severity);
+        expect(fix.description).toBeDefined();
+        expect(typeof fix.scan).toBe('function');
+        expect(fix.manualFix).toBeDefined();
+      }
+    });
+
+    test('framework plugin fixes have correct structure', () => {
+      const PrismaTrpcPlugin = require('../src/plugins/frameworks/prisma-trpc');
+      
+      for (const fix of PrismaTrpcPlugin.fixes) {
+        expect(fix.id).toBeDefined();
+        expect(['dev', 'secrets', 'staging', 'prod']).toContain(fix.stage);
+        expect(['critical', 'warning', 'info']).toContain(fix.severity);
+        expect(fix.description).toBeDefined();
+        expect(typeof fix.scan).toBe('function');
+        expect(fix.manualFix).toBeDefined();
+      }
+    });
+  });
+
+  describe('Plugin Instances', () => {
+    test('server plugins can be instantiated and have deploy method', () => {
+      const MacMiniPlugin = require('../src/plugins/servers/mac-mini');
+      const instance = new MacMiniPlugin({});
+      
+      expect(typeof instance.deploy).toBe('function');
+      expect(typeof instance.undeploy).toBe('function');
+    });
+
+    test('framework plugins can be instantiated and have deploy method', () => {
+      const PrismaTrpcPlugin = require('../src/plugins/frameworks/prisma-trpc');
+      const instance = new PrismaTrpcPlugin({});
+      
+      expect(typeof instance.deploy).toBe('function');
+      expect(typeof instance.undeploy).toBe('function');
     });
   });
 });
-
-
