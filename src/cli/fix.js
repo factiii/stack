@@ -247,9 +247,9 @@ function collectRequiredSecrets(environments) {
 }
 
 /**
- * Main init fix function - fixes all environments including uploading secrets
+ * Main fix function - fixes all environments including uploading secrets
  */
-async function initFix(options = {}) {
+async function fix(options = {}) {
   const rootDir = process.cwd();
   const configPath = path.join(rootDir, 'factiii.yml');
   
@@ -276,16 +276,16 @@ async function initFix(options = {}) {
   console.log('   Running comprehensive check...\n');
   
   // Run scan to discover all issues
-  const initResult = await scan({ ...options, noRemote: true, skipWorkflow: true });
-  const auditResults = initResult.auditResults || {};
+  const scanResult = await scan({ ...options, noRemote: true, skipWorkflow: true });
+  const auditResults = scanResult.auditResults || {};
   
   console.log('\n' + '─'.repeat(70));
   console.log('');
   
-  // Check if init found critical issues - if so, exit before attempting fixes
-  if (initResult && initResult.critical > 0) {
-    console.error('❌ Init found critical issues that must be fixed manually.');
-    console.error('   Please address the issues shown above before running init fix.');
+  // Check if scan found critical issues - if so, exit before attempting fixes
+  if (scanResult && scanResult.critical > 0) {
+    console.error('❌ Scan found critical issues that must be fixed manually.');
+    console.error('   Please address the issues shown above before running fix.');
     process.exit(1);
   }
   
@@ -342,10 +342,10 @@ async function initFix(options = {}) {
   console.log('');
   
   // ============================================================
-  // STAGE 2A: LOCAL ENVIRONMENT (already fixed by init above)
+  // STAGE 2A: LOCAL ENVIRONMENT (already fixed by scan above)
   // ============================================================
   console.log('📦 Part 1: Local Environment');
-  console.log('   ✅ Configs generated (done by init check)');
+  console.log('   ✅ Configs generated (done by scan)');
   console.log('   ✅ Dependencies validated');
   console.log('   ✅ All local files ready\n');
   fixReport.local.push('Local environment configured');
@@ -665,7 +665,7 @@ async function initFix(options = {}) {
   // STAGE 2D: REMOTE SERVERS
   // ============================================================
   console.log('🖥️  Part 3: Remote Server Setup\n');
-  console.log('   Note: init fix only sets up basics. Deploy updates configs.\n');
+  console.log('   Note: fix only sets up basics. Deploy updates configs.\n');
   
   const { setupServerBasics } = require('../utils/server-check');
   
@@ -791,4 +791,4 @@ async function initFix(options = {}) {
   }
 }
 
-module.exports = initFix;
+module.exports = fix;

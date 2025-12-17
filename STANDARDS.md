@@ -296,7 +296,7 @@ Addons extend base frameworks with validation and enhanced functionality. They d
 
 ### Addon Interface
 
-Addons follow the same init/fix/deploy pattern but declare which frameworks they're compatible with:
+Addons follow the same scan/fix/deploy pattern but declare which frameworks they're compatible with:
 
 ```javascript
 class AuthAddon extends Addon {

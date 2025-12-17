@@ -13,14 +13,14 @@ async function deploy(options = {}) {
   const rootDir = process.cwd();
   const configPath = path.resolve(rootDir, options.config || 'factiii.yml');
 
-  console.log('🔍 Running init check before deployment...\n');
+  console.log('🔍 Running scan before deployment...\n');
 
-  // Run init in check-only mode
-  const init = require('./init');
-  const initSummary = await init({ skipWorkflow: true, silent: false });
+  // Run scan in check-only mode
+  const scan = require('./scan');
+  const scanSummary = await scan({ skipWorkflow: true, silent: false });
 
   // If ANY critical issues, show them and abort
-  if (initSummary && initSummary.critical > 0) {
+  if (scanSummary && scanSummary.critical > 0) {
     console.log('\n❌ Deployment cancelled due to scan failures (see above)\n');
     console.log('   Run: npx factiii fix\n');
     process.exit(1);

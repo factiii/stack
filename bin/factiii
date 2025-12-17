@@ -22,7 +22,7 @@ program
 // Default action (npx factiii with no subcommand runs scan)
 program
   .option('-f, --force', 'Overwrite existing config file')
-  .option('--no-remote', 'Skip auto-triggering the init workflow')
+  .option('--no-remote', 'Skip auto-triggering the scan workflow')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .action(async (options, command) => {
     // Only run scan if no subcommand was provided

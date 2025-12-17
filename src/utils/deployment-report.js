@@ -230,7 +230,7 @@ function formatLocalChecks(auditResults) {
   
   return {
     coreYml: coreYml.exists && !coreYml.parseError && !coreYml.needsCustomization,
-    dockerfile: true, // Checked separately in init
+    dockerfile: true, // Checked separately in scan
     git: branches.hasGit,
     branch: branches.currentBranch,
     workflows: workflows.allExist,

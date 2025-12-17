@@ -1071,9 +1071,9 @@ function displayNextSteps(auditResults) {
 }
 
 /**
- * Main init function - now acts as comprehensive audit tool
+ * Main scan function - comprehensive audit tool
  */
-async function init(options = {}) {
+async function scan(options = {}) {
   const rootDir = process.cwd();
   const configPath = path.join(rootDir, 'factiii.yml');
   const templatePath = path.join(__dirname, '../../templates/factiii.yml.example');
@@ -1311,12 +1311,12 @@ async function init(options = {}) {
     console.log('   Next: npx factiii fix\n');
   }
 
-  // Return summary for use by other commands (e.g., init-fix)
-  // Return both summary and audit results for use by init-fix
+  // Return summary for use by other commands (e.g., fix)
+  // Return both summary and audit results for use by fix
   return { 
     ...summary,
     auditResults 
   };
 }
 
-module.exports = init;
+module.exports = scan;
