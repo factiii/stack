@@ -28,7 +28,7 @@ function sshCommand(sshKey, user, host, command) {
  */
 async function checkServerConnectivity(envConfig, sshKey) {
   const { host, ssh_user = 'ubuntu' } = envConfig;
-  
+    
   if (!host) {
     return { ssh: false, error: 'No host configured' };
   }
@@ -181,8 +181,8 @@ async function scanServerAndValidateConfigs(envName, envConfig, config, sshKey) 
   if (!check.ssh) {
     check.error = connectivity.error;
     return check;
-  }
-  
+    }
+    
   // Check software
   const software = await checkServerSoftware(envConfig, sshKey);
   check.git = software.git;
@@ -217,7 +217,7 @@ async function setupServerBasics(envConfig, config, sshKey) {
     repoExists: false,
     configMismatch: false
   };
-  
+    
   // Check software
   const software = await checkServerSoftware(envConfig, sshKey);
   result.gitInstalled = software.git;

@@ -60,7 +60,7 @@ function loadConfigs(repos) {
     try {
       const content = fs.readFileSync(repo.configPath, 'utf8');
       configs[repo.name] = yaml.load(content);
-    } catch (error) {
+} catch (error) {
       console.error(`⚠️  Failed to load ${repo.name}/factiii.yml: ${error.message}`);
     }
   }

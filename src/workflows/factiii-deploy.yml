@@ -188,10 +188,62 @@ jobs:
             # Clone if doesn't exist
             if [ ! -d "$REPO_DIR" ]; then
               echo "📦 Cloning repo..."
-              git clone https://github.com/$GITHUB_REPO $REPO_DIR
+              if ! git clone git@github.com:$GITHUB_REPO.git $REPO_DIR 2>&1; then
+                echo ""
+                echo "❌ Failed to clone repository"
+                echo ""
+                echo "The server needs SSH access to GitHub. Please:"
+                echo "1. SSH to server: ssh $SSH_USER@$SSH_HOST"
+                echo "2. Generate SSH key: ssh-keygen -t ed25519 -C 'factiii-deploy'"
+                echo "3. Display public key: cat ~/.ssh/id_ed25519.pub"
+                echo "4. Add key to GitHub: https://github.com/settings/keys"
+                echo "5. Test access: ssh -T git@github.com"
+                echo "6. Re-run: npx factiii deploy"
+                exit 1
+              fi
             fi
             
             cd $REPO_DIR
+            
+            echo "🔍 Checking dependencies..."
+            
+            # Check git
+            if ! command -v git &> /dev/null; then
+              echo "❌ git not found. Please install: brew install git"
+              exit 1
+            fi
+            
+            # Check node
+            if ! command -v node &> /dev/null; then
+              echo "❌ node not found. Please install: brew install node"
+              exit 1
+            fi
+            
+            # Check npm
+            if ! command -v npm &> /dev/null; then
+              echo "❌ npm not found. Please install: brew install node"
+              exit 1
+            fi
+            
+            # Check docker
+            if ! command -v docker &> /dev/null; then
+              echo "❌ docker not found. Please install: brew install --cask docker"
+              exit 1
+            fi
+            
+            # Check docker compose
+            if ! docker compose version &> /dev/null; then
+              echo "❌ docker compose not found. Please install Docker Desktop or: brew install docker-compose"
+              exit 1
+            fi
+            
+            # Install pnpm if needed
+            if ! command -v pnpm &> /dev/null; then
+              echo "📦 Installing pnpm..."
+              npm install -g pnpm@9
+            fi
+            
+            echo "✅ All dependencies available"
             
             echo "🔄 Pulling latest code..."
             git fetch
@@ -266,7 +318,19 @@ jobs:
             # Clone if doesn't exist (need factiii.yml)
             if [ ! -d "$REPO_DIR" ]; then
               echo "📦 Cloning repo..."
-              git clone https://github.com/$GITHUB_REPO $REPO_DIR
+              if ! git clone git@github.com:$GITHUB_REPO.git $REPO_DIR 2>&1; then
+                echo ""
+                echo "❌ Failed to clone repository"
+                echo ""
+                echo "The server needs SSH access to GitHub. Please:"
+                echo "1. SSH to server: ssh $SSH_USER@$SSH_HOST"
+                echo "2. Generate SSH key: ssh-keygen -t ed25519 -C 'factiii-deploy'"
+                echo "3. Display public key: cat ~/.ssh/id_ed25519.pub"
+                echo "4. Add key to GitHub: https://github.com/settings/keys"
+                echo "5. Test access: ssh -T git@github.com"
+                echo "6. Re-run: npx factiii deploy"
+                exit 1
+              fi
             fi
             
             cd $REPO_DIR
