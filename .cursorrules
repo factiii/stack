@@ -13,7 +13,7 @@ This package is tested in application repositories (like `/Users/jon/factiii/`),
 - Only edit files within `/Users/jon/infrastructure/` (the Factiii Stack package itself)
 - Use read-only tools (Read, Grep, Shell with read-only commands) to inspect application repos
 
-Commands like `npx factiii init`, `npx factiii deploy`, etc. should ONLY be run in APPLICATION repositories that consume this package, not here.
+Commands like `npx factiii`, `npx factiii deploy`, etc. should ONLY be run in APPLICATION repositories that consume this package, not here.
 
 ## Architecture Overview
 
@@ -77,11 +77,11 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 
 | Command | Purpose |
 |---------|---------|
-| `npx factiii init` | Validate + auto-fix local dev, check-only for remote |
-| `npx factiii init fix` | Explicitly fix ALL environments including remote |
-| `npx factiii deploy` | Run init check, then deploy if checks pass |
+| `npx factiii` | Scan + auto-fix local dev, check-only for remote |
+| `npx factiii fix` | Explicitly fix ALL environments including remote |
+| `npx factiii deploy` | Run scan check, then deploy if checks pass |
 
-**No separate `validate` command** - `init` handles all validation.
+**No separate `validate` command** - `npx factiii` handles all validation.
 
 ## Project Structure
 ```
@@ -89,8 +89,8 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 ├── bin/factiii                 # CLI entry point (npx factiii)
 ├── src/
 │   ├── cli/                    # Command implementations
-│   │   ├── init.js            # Validate + auto-fix local
-│   │   ├── init-fix.js        # Fix all environments
+│   │   ├── scan.js            # Scan + auto-fix local (default command)
+│   │   ├── fix.js        # Fix all environments
 │   │   ├── deploy.js          # Deploy to servers
 │   │   ├── undeploy.js        # Remove from servers
 │   │   └── generate-workflows.js  # Generate .github/workflows
@@ -129,9 +129,9 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
    ```bash
    cd /path/to/test-app
    pnpm link /Users/jon/infrastructure  # Link local package
-   npx factiii init                     # Test the command
+   npx factiii                     # Test the command
    ```
-3. Do NOT run `npx factiii init` inside `/Users/jon/infrastructure`
+3. Do NOT run `npx factiii` inside `/Users/jon/infrastructure`
 
 ### Key Files to Edit
 - **CLI Commands**: `src/cli/*.js` - Command implementations
@@ -140,7 +140,7 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 - **Workflow Templates**: `src/workflows/*.yml` - GitHub Actions
 - **Package Entry**: `bin/factiii` - Main CLI entry point
 
-## Init Command Behavior
+## Scan Command Behavior
 
 **Local dev (where command runs):**
 - Auto-fix allowed (delete/modify files, install deps)
@@ -149,7 +149,7 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 **Remote environments (staging/prod):**
 - Check-only mode
 - NO modifications via SSH
-- Only `init fix` can modify remote
+- Only `npx factiii fix` can modify remote
 
 ## Deploy Command Behavior
 

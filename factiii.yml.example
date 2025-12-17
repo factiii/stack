@@ -49,7 +49,7 @@ plugins:
 #
 # ⚠️  IMPORTANT: Never put sensitive values (passwords, keys, hostnames) in this file!
 # All secrets are stored in GitHub Secrets and will be prompted for when you run:
-#   npx factiii init fix
+#   npx factiii fix
 #
 # The server plugin automatically determines what secrets it needs:
 # - mac-mini plugin needs: {ENV}_SSH, {ENV}_HOST, {ENV}_USER
@@ -134,7 +134,7 @@ ecr_repository: EXAMPLE-apps
 # GITHUB SECRETS REFERENCE
 # ----------------------------------------------------------------------------
 # The following secrets must be configured in GitHub Settings → Secrets.
-# Run `npx factiii init fix` to set these up interactively.
+# Run `npx factiii fix` to set these up interactively.
 #
 # ┌─────────────────────────────────────────────────────────────────────────┐
 # │ SECRET NAME              │ DESCRIPTION                                  │
@@ -155,7 +155,7 @@ ecr_repository: EXAMPLE-apps
 # ============================================================================
 # AUTO-DETECTED SETTINGS (factiiiAuto.yml)
 # ============================================================================
-# The following settings are auto-detected by running `npx factiii init`.
+# The following settings are auto-detected by running `npx factiii`.
 # They are stored in a separate file: factiiiAuto.yml
 #
 # To override an auto-detected value, use:

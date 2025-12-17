@@ -4,7 +4,8 @@ const { program } = require('commander');
 const path = require('path');
 
 // Import CLI commands
-const init = require('../src/cli/init');
+const scan = require('../src/cli/scan');
+const fix = require('../src/cli/fix');
 const validate = require('../src/cli/validate');
 const checkConfig = require('../src/cli/check-config');
 const deploy = require('../src/cli/deploy');
@@ -18,30 +19,26 @@ program
   .description('Factiii Stack - Infrastructure management CLI')
   .version('1.0.0');
 
-// Create init as a command with subcommands
-const initCommand = program
-  .command('init')
-  .description('Initialize and fix infrastructure setup');
+// Default action (npx factiii with no subcommand runs scan)
+program
+  .option('-f, --force', 'Overwrite existing config file')
+  .option('--no-remote', 'Skip auto-triggering the init workflow')
+  .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
+  .action(async (options, command) => {
+    // Only run scan if no subcommand was provided
+    if (command.args.length === 0) {
+      await scan(options);
+    }
+  });
 
-initCommand
+// Fix command (npx factiii fix)
+program
   .command('fix')
   .description('Fix all environments including uploading secrets to GitHub')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .option('--continue-on-error', 'Continue even if some secrets fail to upload')
   .action(async (options) => {
-    const initFix = require('../src/cli/init-fix');
-    await initFix(options);
-  });
-
-// Default init action (when no subcommand provided)
-initCommand
-  .option('-f, --force', 'Overwrite existing config file')
-  .option('--no-remote', 'Skip auto-triggering the init workflow')
-  .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
-  .action(async (options, command) => {
-    // If a subcommand was used, don't run this
-    if (command.args.length > 0) return;
-    await init(options);
+    await fix(options);
   });
 
 program
@@ -120,5 +117,3 @@ program
   });
 
 program.parse();
-
-

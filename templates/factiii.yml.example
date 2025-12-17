@@ -51,7 +51,7 @@ ecr_repository: EXAMPLE-yourapp
 # ============================================================================
 # GitHub Secrets Setup
 # ============================================================================
-# Run `npx factiii init fix` to configure these secrets interactively.
+# Run `npx factiii fix` to configure these secrets interactively.
 #
 # Required secrets (sensitive values only):
 #   - STAGING_SSH           SSH private key for staging

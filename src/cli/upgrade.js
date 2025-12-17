@@ -196,7 +196,7 @@ async function upgrade(options = {}) {
   console.log('📋 Next steps:');
   console.log('   1. Review changes: git diff');
   console.log('   2. Commit: git add -A && git commit -m "Upgrade Factiii to ' + currentVersion + '"');
-  console.log('   3. Run: npx factiii init (to verify)');
+  console.log('   3. Run: npx factiii (to verify)');
   console.log('');
 }
 

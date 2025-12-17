@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
-const init = require('./init');
+const scan = require('./scan');
 const { 
   getPlugin, 
   createSecretStore
@@ -275,8 +275,8 @@ async function initFix(options = {}) {
   console.log('📋 Stage 1: Discovering Issues\n');
   console.log('   Running comprehensive check...\n');
   
-  // Run init check to discover all issues
-  const initResult = await init({ ...options, noRemote: true, skipWorkflow: true });
+  // Run scan to discover all issues
+  const initResult = await scan({ ...options, noRemote: true, skipWorkflow: true });
   const auditResults = initResult.auditResults || {};
   
   console.log('\n' + '─'.repeat(70));
@@ -291,7 +291,7 @@ async function initFix(options = {}) {
   
   // Check if we have a config
   if (!fs.existsSync(configPath)) {
-    console.error('❌ factiii.yml not found. Run: npx factiii init');
+    console.error('❌ factiii.yml not found. Run: npx factiii');
     process.exit(1);
   }
   
@@ -310,7 +310,7 @@ async function initFix(options = {}) {
     console.error('   echo \'export GITHUB_TOKEN=ghp_your_token_here\' >> ~/.zshrc');
     console.error('   source ~/.zshrc');
     console.error('');
-    console.error('   Or pass temporarily: npx factiii init fix --token <token>');
+    console.error('   Or pass temporarily: npx factiii fix --token <token>');
     process.exit(1);
   }
   
@@ -787,7 +787,7 @@ async function initFix(options = {}) {
   } else {
     console.log('⚠️  Some issues could not be fixed automatically:\n');
     fixReport.errors.forEach(err => console.log(`   - ${err}`));
-    console.log('\n   Fix manually, then run: npx factiii init fix\n');
+    console.log('\n   Fix manually, then run: npx factiii fix\n');
   }
 }
 

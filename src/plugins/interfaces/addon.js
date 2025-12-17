@@ -106,7 +106,7 @@ class Addon {
       issues.push({
         type: 'warning',
         message: `Addon requires secret: ${secret}`,
-        fix: `npx factiii init fix`
+        fix: `npx factiii fix`
       });
     }
     

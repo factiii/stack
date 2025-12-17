@@ -33,7 +33,7 @@ function formatDeploymentReport(data) {
       lines.push(`   ✅ Git configured${localChecks.branch ? ` (${localChecks.branch} branch)` : ''}`);
     }
     if (localChecks.workflows) {
-      lines.push('   ✅ Workflows exist (factiii-deploy.yml, factiii-undeploy.yml, factiii-init.yml)');
+      lines.push('   ✅ Workflows exist (factiii-deploy.yml, factiii-undeploy.yml)');
     }
     if (localChecks.scripts) {
       lines.push('   ✅ Required scripts present');
@@ -216,7 +216,7 @@ function generateSummary(localChecks, secretsCheck, serverChecks) {
     summary.nextSteps.push('Run: npx factiii deploy (deployment will proceed with warnings)');
   } else {
     summary.nextSteps.push('Fix errors above');
-    summary.nextSteps.push('Run: npx factiii init (to verify fixes)');
+    summary.nextSteps.push('Run: npx factiii (to verify fixes)');
   }
   
   return summary;

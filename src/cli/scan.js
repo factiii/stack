@@ -442,10 +442,10 @@ function displayAuditReport(auditResults) {
     console.log('\n📋 Configuration Version:');
     if (!auditResults.configOutdated.hasVersion) {
       console.log(`   ⚠️  factiii.yml is pre-${auditResults.configOutdated.latestVersion} format (no version tracking)`);
-      console.log('      Run: npx factiii init fix (will add version tracking)');
+      console.log('      Run: npx factiii fix (will add version tracking)');
     } else {
       console.log(`   ⚠️  factiii.yml is outdated: ${auditResults.configOutdated.currentVersion} → ${auditResults.configOutdated.latestVersion}`);
-      console.log('      Run: npx factiii init fix (will migrate to latest)');
+      console.log('      Run: npx factiii fix (will migrate to latest)');
       if (auditResults.configOutdated.migrations && auditResults.configOutdated.migrations.length > 0) {
         console.log(`      Migrations needed: ${auditResults.configOutdated.migrations.join(', ')}`);
       }
@@ -458,7 +458,7 @@ function displayAuditReport(auditResults) {
       console.log('\n📋 Configuration Schema:');
       console.log('   ❌ Missing required fields:');
       auditResults.configSchema.missing.forEach(f => console.log(`      - ${f}`));
-      console.log('      Run: npx factiii init fix');
+      console.log('      Run: npx factiii fix');
     }
     
     if (auditResults.configSchema.newOptional && auditResults.configSchema.newOptional.length > 0) {
@@ -555,7 +555,7 @@ function displayAuditReport(auditResults) {
           console.log('   ⚠️  factiii.yml prisma_schema differs from detected:');
           console.log(`      Config: ${coreYml.config.prisma_schema}`);
           console.log(`      Found:  ${repoScripts.prismaSchemaPath}`);
-          console.log('      💡 Run: npx factiii init --force to update');
+          console.log('      💡 Run: npx factiii --force to update');
         }
       }
       
@@ -565,7 +565,7 @@ function displayAuditReport(auditResults) {
           console.log('   ⚠️  Version mismatch:');
           console.log(`      factiii.yml: ${coreYml.config.prisma_version}`);
           console.log(`      package.json: ${repoScripts.prismaVersion}`);
-          console.log('      💡 Run: npx factiii init --force to update');
+          console.log('      💡 Run: npx factiii --force to update');
         }
       }
     } else {
@@ -705,7 +705,7 @@ function displayAuditReport(auditResults) {
   
   console.log('');
   console.log('   💡 Manage secrets:');
-  console.log('      npx factiii init fix     # Setup missing secrets interactively');
+  console.log('      npx factiii fix          # Setup missing secrets interactively');
   console.log('      npx factiii secrets      # Update specific secrets');
   console.log('');
   console.log('   Or manually: Repository Settings → Secrets → Actions');
@@ -753,7 +753,7 @@ function displayAuditReport(auditResults) {
         if (check.error) {
           console.log(`         Error: ${check.error}`);
         }
-        console.log('         💡 Run: npx factiii init fix');
+        console.log('         💡 Run: npx factiii fix');
         continue;
       }
       console.log('      ✅ SSH connection');
@@ -763,7 +763,7 @@ function displayAuditReport(auditResults) {
         console.log('      ✅ Git installed');
       } else {
         console.log('      ❌ Git not found');
-        console.log('         💡 Run: npx factiii init fix');
+        console.log('         💡 Run: npx factiii fix');
       }
       
       if (check.docker) {
@@ -823,7 +823,7 @@ function displayAuditReport(auditResults) {
   } else if (auditResults.githubSecrets && auditResults.githubSecrets.tokenAvailable) {
     console.log('\n🖥️  Server Status:');
     console.log('   ℹ️  Cannot check servers (SSH keys not in GitHub yet)');
-    console.log('      💡 Run: npx factiii init fix to set up SSH keys');
+    console.log('      💡 Run: npx factiii fix to set up SSH keys');
   }
 
   // Config Sync Validation
@@ -834,7 +834,7 @@ function displayAuditReport(auditResults) {
       console.log('   ✅ factiii.yml matches generated workflows');
     } else if (auditResults.configSync.needsGeneration) {
       console.log('   ⚠️  Workflows not generated yet');
-      console.log('      💡 Run: npx factiii init (will generate)');
+      console.log('      💡 Run: npx factiii (will generate)');
     } else if (auditResults.configSync.needsRegeneration) {
       console.log('   ❌ Configuration drift detected');
       if (auditResults.configSync.message) {
@@ -845,7 +845,7 @@ function displayAuditReport(auditResults) {
           console.log(`      - ${mismatch}`);
         }
       }
-      console.log('      💡 Run: npx factiii init fix (will regenerate workflows)');
+      console.log('      💡 Run: npx factiii fix (will regenerate workflows)');
     } else if (auditResults.configSync.error) {
       console.log(`   ⚠️  ${auditResults.configSync.error}`);
     }
@@ -866,7 +866,7 @@ function displayAuditReport(auditResults) {
         
         if (validation.alternative) {
           console.log(`      💡 Found alternative: ${validation.alternative}`);
-          console.log('         Run: npx factiii init fix (will auto-correct)');
+          console.log('         Run: npx factiii fix (will auto-correct)');
         } else {
           console.log('      💡 Check your DNS records or update factiii.yml manually');
         }
@@ -1308,7 +1308,7 @@ async function init(options = {}) {
     console.log('   Next: npx factiii deploy\n');
   } else {
     console.log('❌ Critical issues found (see above)\n');
-    console.log('   Next: npx factiii init fix\n');
+    console.log('   Next: npx factiii fix\n');
   }
 
   // Return summary for use by other commands (e.g., init-fix)

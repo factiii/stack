@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING**: Renamed CLI commands for simplicity:
+  - `npx factiii init` is now `npx factiii` (default command, no subcommand needed)
+  - `npx factiii init fix` is now `npx factiii fix`
+  - `npx factiii deploy` remains unchanged
+- Renamed internal files: `init.js` → `scan.js`, `init-fix.js` → `fix.js`
+
 ### Planned
 - Expo plugin for mobile app builds
 - Prisma/tRPC server plugin
@@ -21,8 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release of Factiii Stack infrastructure package
 - Plugin architecture with 4 categories: Secrets, Servers, Frameworks, Pipelines
-- `npx factiii init` - Comprehensive scan with local auto-fix
-- `npx factiii init fix` - Fix dev + GitHub issues
+- `npx factiii` - Comprehensive scan with local auto-fix (default command)
+- `npx factiii fix` - Fix dev + GitHub issues
 - `npx factiii deploy` - Direct SSH deployment
 - GitHub Secrets plugin for credential storage
 - Mac Mini server plugin

@@ -99,7 +99,7 @@ function generateWorkflows(options = {}) {
   console.log(`\n📋 Not secrets (in factiii.yml):`);
   console.log(`   - aws.access_key_id, aws.region`);
   console.log(`   - environments.{env}.host`);
-  console.log(`\n💡 Run 'npx factiii init fix' to set up secrets automatically.`);
+  console.log(`\n💡 Run 'npx factiii fix' to set up secrets automatically.`);
 }
 
 

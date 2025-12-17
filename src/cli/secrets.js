@@ -67,7 +67,7 @@ async function secrets(secretNames = [], options = {}) {
   // Check for factiii.yml
   if (!fs.existsSync(configPath)) {
     console.error('❌ factiii.yml not found');
-    console.error('   Run: npx factiii init');
+    console.error('   Run: npx factiii');
     process.exit(1);
   }
   

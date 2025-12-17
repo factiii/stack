@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const init = require('../src/cli/init');
+const scan = require('../src/cli/scan');
 const validate = require('../src/cli/validate');
 const generateWorkflows = require('../src/cli/generate-workflows');
 
@@ -47,14 +47,14 @@ describe('CLI Command Tests', () => {
     }
   });
 
-  describe('init command', () => {
+  describe('scan command (default)', () => {
     test('creates factiii.yml from template', async () => {
       const configPath = path.join(testDir, 'factiii.yml');
       
       // Should not exist initially
       expect(fs.existsSync(configPath)).toBe(false);
 
-      await init({});
+      await scan({});
 
       // Should be created
       expect(fs.existsSync(configPath)).toBe(true);
@@ -68,7 +68,7 @@ describe('CLI Command Tests', () => {
       const packageJsonPath = path.join(testDir, 'package.json');
       fs.writeFileSync(packageJsonPath, JSON.stringify({ name: 'test-repo' }));
 
-      await init({});
+      await scan({});
       
       const configPath = path.join(testDir, 'factiii.yml');
       const content = fs.readFileSync(configPath, 'utf8');
@@ -80,7 +80,7 @@ describe('CLI Command Tests', () => {
       const packageJsonPath = path.join(testDir, 'package.json');
       fs.writeFileSync(packageJsonPath, JSON.stringify({ name: '@org/test-repo' }));
 
-      await init({});
+      await scan({});
       
       const configPath = path.join(testDir, 'factiii.yml');
       const content = fs.readFileSync(configPath, 'utf8');
@@ -92,7 +92,7 @@ describe('CLI Command Tests', () => {
       const configPath = path.join(testDir, 'factiii.yml');
       fs.writeFileSync(configPath, 'existing config');
 
-      await init({});
+      await scan({});
       
       // Config should not be overwritten
       const content = fs.readFileSync(configPath, 'utf8');
@@ -103,7 +103,7 @@ describe('CLI Command Tests', () => {
       const configPath = path.join(testDir, 'factiii.yml');
       fs.writeFileSync(configPath, 'existing config');
 
-      await init({ force: true });
+      await scan({ force: true });
 
       const content = fs.readFileSync(configPath, 'utf8');
       expect(content).not.toBe('existing config');
@@ -111,7 +111,7 @@ describe('CLI Command Tests', () => {
     });
 
     test('outputs audit report', async () => {
-      await init({});
+      await scan({});
       
       // Init now outputs comprehensive audit report
       expect(consoleOutput.some(o => o[1].includes('Running infrastructure audit') || o[1].includes('factiii.yml'))).toBe(true);
@@ -273,7 +273,6 @@ describe('CLI Command Tests', () => {
     test('generates workflow files in default directory', () => {
       const workflowsDir = path.join(testDir, '.github', 'workflows');
       const expectedFiles = [
-        'factiii-init.yml',
         'factiii-deploy.yml',
         'factiii-undeploy.yml',
         'factiii-staging.yml',
@@ -292,7 +291,6 @@ describe('CLI Command Tests', () => {
     test('generates workflow files in custom directory', () => {
       const customDir = path.join(testDir, 'custom-workflows');
       const expectedFiles = [
-        'factiii-init.yml',
         'factiii-deploy.yml',
         'factiii-undeploy.yml',
         'factiii-staging.yml',

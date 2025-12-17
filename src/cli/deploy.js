@@ -21,8 +21,8 @@ async function deploy(options = {}) {
 
   // If ANY critical issues, show them and abort
   if (initSummary && initSummary.critical > 0) {
-    console.log('\n❌ Deployment cancelled due to init check failures (see above)\n');
-    console.log('   Run: npx factiii init fix\n');
+    console.log('\n❌ Deployment cancelled due to scan failures (see above)\n');
+    console.log('   Run: npx factiii fix\n');
     process.exit(1);
   }
 
@@ -93,7 +93,7 @@ async function deploy(options = {}) {
     console.error('❌ Missing required GitHub secrets:\n');
     check.missing.forEach(name => console.error(`   - ${name}`));
     console.error('');
-    console.error('💡 Run: npx factiii init fix');
+    console.error('💡 Run: npx factiii fix');
     console.error('   This will prompt for missing secrets and upload them to GitHub.\n');
     process.exit(1);
   }
