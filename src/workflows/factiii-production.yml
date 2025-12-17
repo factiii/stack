@@ -50,7 +50,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --ignore-scripts || echo "⚠️ Install failed, continuing with Docker build"
+        run: pnpm install --no-frozen-lockfile --ignore-scripts || echo "⚠️ Install failed, continuing with Docker build"
         continue-on-error: true
 
       - name: Run tests
@@ -140,7 +140,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --ignore-scripts || echo "⚠️ Install failed, continuing with tests"
+        run: pnpm install --no-frozen-lockfile --ignore-scripts || echo "⚠️ Install failed, continuing with tests"
         continue-on-error: true
 
       - name: Run tests

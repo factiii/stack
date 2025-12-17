@@ -34,9 +34,10 @@ program
 // Fix command (npx factiii fix)
 program
   .command('fix')
-  .description('Fix all environments including uploading secrets to GitHub')
+  .description('Fix all environments including uploading secrets to GitHub and installing server dependencies')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .option('--continue-on-error', 'Continue even if some secrets fail to upload')
+  .option('--no-install-deps', 'Skip automatic installation of missing dependencies on remote servers')
   .action(async (options) => {
     await fix(options);
   });

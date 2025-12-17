@@ -665,52 +665,102 @@ async function fix(options = {}) {
   // STAGE 2D: REMOTE SERVERS
   // ============================================================
   console.log('🖥️  Part 3: Remote Server Setup\n');
-  console.log('   Note: fix only sets up basics. Deploy updates configs.\n');
   
-  const { setupServerBasics } = require('../utils/server-check');
+  const { 
+    setupServerBasics, 
+    checkServerSoftware,
+    installServerDependencies 
+  } = require('../utils/server-check');
+  
+  // Check if user wants to install dependencies on remote servers
+  const installRemoteDeps = options.installDeps !== false; // Default to true
   
   for (const env of environments) {
     const envName = env.name.toUpperCase();
     const sshKeyName = `${envName}_SSH`;
     
     try {
-      console.log(`   📤 Checking ${env.name} server...\n`);
-      
-      // Check if SSH key exists in GitHub (we can't read the value for security)
-      const secretsCheck = await secretStore.checkSecrets([sshKeyName]);
-      
-      if (secretsCheck.error) {
-        console.log(`   ⚠️  Error checking secrets: ${secretsCheck.error}\n`);
-        fixReport.servers[env.name].push('Error checking secrets');
-        continue;
-      }
-      
-      if (!secretsCheck.present.includes(sshKeyName)) {
-        console.log(`   ⚠️  ${sshKeyName} not found in GitHub`);
-        console.log(`      Run: npx factiii secrets --env ${env.name}\n`);
-        fixReport.servers[env.name].push('Missing SSH key');
-        continue;
-      }
+      console.log(`   🔍 Checking ${env.name} server...\n`);
       
       // Get host from environment config
       const host = env.host;
       
       if (!host) {
-        console.log(`   ⚠️  No host configured for ${env.name}\n`);
+        console.log(`   ⚠️  No host configured for ${env.name}`);
+        console.log(`      Add to factiii.yml: environments.${env.name}.host\n`);
         fixReport.servers[env.name].push('No host configured');
         continue;
       }
       
-      // Note: We can't read SSH keys from GitHub Secrets for security reasons
-      // Server setup will happen during first deployment via GitHub Actions
-      console.log(`   ✅ ${env.name} configuration valid`);
-      console.log(`      Server setup will occur during deployment\n`);
-      fixReport.servers[env.name].push('Ready for deployment');
+      // Check if we have SSH key locally (for direct server access)
+      // Try to read from local SSH key file first
+      let sshKey = null;
+      const sshKeyPath = path.join(process.env.HOME, '.ssh', 'id_rsa');
+      const sshKeyPathEd = path.join(process.env.HOME, '.ssh', 'id_ed25519');
+      
+      if (fs.existsSync(sshKeyPathEd)) {
+        sshKey = fs.readFileSync(sshKeyPathEd, 'utf8');
+      } else if (fs.existsSync(sshKeyPath)) {
+        sshKey = fs.readFileSync(sshKeyPath, 'utf8');
+      }
+      
+      if (!sshKey) {
+        console.log(`   ⚠️  No local SSH key found (~/.ssh/id_ed25519 or ~/.ssh/id_rsa)`);
+        console.log(`      Cannot check server directly. Will be set up during deployment.\n`);
+        fixReport.servers[env.name].push('No local SSH key for direct access');
+        continue;
+      }
+      
+      // Check what software is installed
+      console.log(`      Checking installed software...`);
+      const software = await checkServerSoftware(env, sshKey);
+      
+      const missing = [];
+      if (!software.git) missing.push('git');
+      if (!software.node) missing.push('node');
+      if (!software.docker) missing.push('docker');
+      if (!software.dockerCompose) missing.push('docker-compose');
+      
+      if (missing.length === 0) {
+        console.log(`      ✅ All dependencies installed\n`);
+        fixReport.servers[env.name].push('All dependencies installed');
+      } else {
+        console.log(`      ⚠️  Missing: ${missing.join(', ')}`);
+        
+        if (installRemoteDeps) {
+          console.log(`      🔧 Installing missing dependencies...\n`);
+          
+          const installResult = await installServerDependencies(env, sshKey, { autoConfirm: true });
+          
+          if (installResult.success) {
+            const installed = [];
+            if (installResult.results.node.installed) installed.push('node');
+            if (installResult.results.git.installed) installed.push('git');
+            if (installResult.results.pnpm.installed) installed.push('pnpm');
+            
+            if (installed.length > 0) {
+              console.log(`      ✅ Installed: ${installed.join(', ')}\n`);
+              fixReport.servers[env.name].push(`Installed: ${installed.join(', ')}`);
+            }
+            
+            // Check if Docker still needs manual installation
+            if (installResult.results.docker.needed && !installResult.results.docker.installed) {
+              fixReport.servers[env.name].push('Docker requires manual installation');
+            }
+          } else {
+            console.log(`      ❌ Installation failed: ${installResult.error}\n`);
+            fixReport.errors.push(`${env.name}: ${installResult.error}`);
+          }
+        } else {
+          console.log(`      💡 Run with --install-deps to auto-install\n`);
+          fixReport.servers[env.name].push(`Missing: ${missing.join(', ')}`);
+        }
+      }
       
     } catch (error) {
       console.log(`   ⚠️  Error checking ${env.name} server: ${error.message}`);
       console.log(`      Will be set up during deployment\n`);
-      fixReport.servers[env.name].push('Ready for deployment');
+      fixReport.servers[env.name].push(`Error: ${error.message}`);
     }
   }
   

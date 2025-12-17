@@ -204,6 +204,164 @@ async function scanServerAndValidateConfigs(envName, envConfig, config, sshKey) 
 }
 
 /**
+ * Detect package manager and OS on server
+ */
+async function detectServerEnvironment(envConfig, sshKey) {
+  const { host, ssh_user = 'ubuntu' } = envConfig;
+  
+  const env = {
+    os: 'unknown',
+    packageManager: null,
+    hasHomebrew: false,
+    hasApt: false,
+    hasYum: false
+  };
+  
+  // Check OS
+  const osResult = sshCommand(sshKey, ssh_user, host, 'uname -s');
+  if (osResult.success) {
+    const os = osResult.output.toLowerCase();
+    if (os.includes('darwin')) env.os = 'macos';
+    else if (os.includes('linux')) env.os = 'linux';
+  }
+  
+  // Check package managers
+  const brewResult = sshCommand(sshKey, ssh_user, host, 'which brew');
+  env.hasHomebrew = brewResult.success;
+  
+  const aptResult = sshCommand(sshKey, ssh_user, host, 'which apt-get');
+  env.hasApt = aptResult.success;
+  
+  const yumResult = sshCommand(sshKey, ssh_user, host, 'which yum');
+  env.hasYum = yumResult.success;
+  
+  // Determine primary package manager
+  if (env.hasHomebrew) env.packageManager = 'brew';
+  else if (env.hasApt) env.packageManager = 'apt';
+  else if (env.hasYum) env.packageManager = 'yum';
+  
+  return env;
+}
+
+/**
+ * Install missing dependencies on server
+ */
+async function installServerDependencies(envConfig, sshKey, options = {}) {
+  const { host, ssh_user = 'ubuntu' } = envConfig;
+  const { autoConfirm = false } = options;
+  
+  const results = {
+    node: { needed: false, installed: false, error: null },
+    git: { needed: false, installed: false, error: null },
+    docker: { needed: false, installed: false, error: null },
+    pnpm: { needed: false, installed: false, error: null }
+  };
+  
+  // Check what's missing
+  const software = await checkServerSoftware(envConfig, sshKey);
+  results.node.needed = !software.node;
+  results.git.needed = !software.git;
+  results.docker.needed = !software.docker;
+  
+  // Detect server environment
+  const serverEnv = await detectServerEnvironment(envConfig, sshKey);
+  
+  if (!serverEnv.packageManager) {
+    return {
+      success: false,
+      error: 'No supported package manager found (brew, apt, or yum)',
+      results
+    };
+  }
+  
+  // Install Node.js if needed
+  if (results.node.needed) {
+    console.log(`      📦 Installing Node.js using ${serverEnv.packageManager}...`);
+    
+    let installCmd;
+    if (serverEnv.packageManager === 'brew') {
+      installCmd = 'brew install node';
+    } else if (serverEnv.packageManager === 'apt') {
+      // Use NodeSource for latest Node.js on Ubuntu/Debian
+      installCmd = 'curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs';
+    } else if (serverEnv.packageManager === 'yum') {
+      installCmd = 'curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - && sudo yum install -y nodejs';
+    }
+    
+    const nodeResult = sshCommand(sshKey, ssh_user, host, installCmd);
+    results.node.installed = nodeResult.success;
+    results.node.error = nodeResult.error;
+    
+    if (nodeResult.success) {
+      console.log('      ✅ Node.js installed successfully');
+    } else {
+      console.log(`      ❌ Failed to install Node.js: ${nodeResult.error}`);
+    }
+  }
+  
+  // Install git if needed
+  if (results.git.needed) {
+    console.log(`      📦 Installing git using ${serverEnv.packageManager}...`);
+    
+    let installCmd;
+    if (serverEnv.packageManager === 'brew') {
+      installCmd = 'brew install git';
+    } else if (serverEnv.packageManager === 'apt') {
+      installCmd = 'sudo apt-get update && sudo apt-get install -y git';
+    } else if (serverEnv.packageManager === 'yum') {
+      installCmd = 'sudo yum install -y git';
+    }
+    
+    const gitResult = sshCommand(sshKey, ssh_user, host, installCmd);
+    results.git.installed = gitResult.success;
+    results.git.error = gitResult.error;
+    
+    if (gitResult.success) {
+      console.log('      ✅ git installed successfully');
+    } else {
+      console.log(`      ❌ Failed to install git: ${gitResult.error}`);
+    }
+  }
+  
+  // Install Docker if needed (more complex, provide instructions)
+  if (results.docker.needed) {
+    console.log('      ⚠️  Docker not found');
+    console.log('      Docker installation requires manual setup.');
+    console.log(`      Please SSH to server and install Docker:`);
+    console.log(`        ssh ${ssh_user}@${host}`);
+    if (serverEnv.os === 'macos') {
+      console.log('        brew install --cask docker');
+    } else {
+      console.log('        curl -fsSL https://get.docker.com | sh');
+      console.log('        sudo usermod -aG docker $USER');
+    }
+  }
+  
+  // Install pnpm if Node.js is available
+  if (software.node || results.node.installed) {
+    const pnpmResult = sshCommand(sshKey, ssh_user, host, 'which pnpm');
+    if (!pnpmResult.success) {
+      console.log('      📦 Installing pnpm...');
+      const installPnpm = sshCommand(sshKey, ssh_user, host, 'npm install -g pnpm@9');
+      results.pnpm.needed = true;
+      results.pnpm.installed = installPnpm.success;
+      
+      if (installPnpm.success) {
+        console.log('      ✅ pnpm installed successfully');
+      } else {
+        console.log(`      ❌ Failed to install pnpm: ${installPnpm.error}`);
+      }
+    }
+  }
+  
+  return {
+    success: true,
+    serverEnv,
+    results
+  };
+}
+
+/**
  * Setup server basics (clone repo, install software if possible)
  */
 async function setupServerBasics(envConfig, config, sshKey) {
@@ -243,5 +401,7 @@ module.exports = {
   checkServerRepo,
   validateDeployedConfigs,
   scanServerAndValidateConfigs,
-  setupServerBasics
+  setupServerBasics,
+  detectServerEnvironment,
+  installServerDependencies
 };

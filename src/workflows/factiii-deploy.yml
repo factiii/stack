@@ -52,7 +52,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --ignore-scripts || echo "⚠️ Install failed, continuing with Docker build"
+        run: pnpm install --no-frozen-lockfile --ignore-scripts || echo "⚠️ Install failed, continuing with Docker build"
         continue-on-error: true
 
       - name: Run tests
@@ -209,31 +209,79 @@ jobs:
             
             # Check git
             if ! command -v git &> /dev/null; then
-              echo "❌ git not found. Please install: brew install git"
-              exit 1
+              echo "❌ git not found, attempting to install..."
+              if command -v brew &> /dev/null; then
+                brew install git
+              elif command -v apt-get &> /dev/null; then
+                sudo apt-get update && sudo apt-get install -y git
+              else
+                echo ""
+                echo "❌ Cannot auto-install git. Please install manually:"
+                echo "  ssh $SSH_USER@$SSH_HOST"
+                echo "  brew install git  # or: sudo apt-get install git"
+                echo ""
+                exit 1
+              fi
             fi
             
             # Check node
             if ! command -v node &> /dev/null; then
-              echo "❌ node not found. Please install: brew install node"
-              exit 1
+              echo "❌ node not found, attempting to install..."
+              if command -v brew &> /dev/null; then
+                echo "📦 Installing Node.js via Homebrew..."
+                brew install node
+              elif command -v apt-get &> /dev/null; then
+                echo "📦 Installing Node.js via apt..."
+                curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+                sudo apt-get install -y nodejs
+              else
+                echo ""
+                echo "❌ Cannot auto-install Node.js. Please install manually:"
+                echo "  ssh $SSH_USER@$SSH_HOST"
+                echo "  brew install node  # macOS"
+                echo "  # or for Ubuntu/Debian:"
+                echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -"
+                echo "  sudo apt-get install -y nodejs"
+                echo ""
+                exit 1
+              fi
+              
+              # Verify node was installed
+              if ! command -v node &> /dev/null; then
+                echo "❌ Node.js installation failed"
+                exit 1
+              fi
+              echo "✅ Node.js installed successfully"
             fi
             
-            # Check npm
+            # Check npm (should come with node)
             if ! command -v npm &> /dev/null; then
-              echo "❌ npm not found. Please install: brew install node"
+              echo "❌ npm not found (should come with Node.js)"
               exit 1
             fi
             
             # Check docker
             if ! command -v docker &> /dev/null; then
-              echo "❌ docker not found. Please install: brew install --cask docker"
+              echo ""
+              echo "❌ docker not found on staging server"
+              echo ""
+              echo "Docker requires manual installation. Please SSH to the server:"
+              echo "  ssh $SSH_USER@$SSH_HOST"
+              echo ""
+              if command -v brew &> /dev/null; then
+                echo "  brew install --cask docker"
+              else
+                echo "  curl -fsSL https://get.docker.com | sh"
+                echo "  sudo usermod -aG docker \$USER"
+              fi
+              echo ""
               exit 1
             fi
             
             # Check docker compose
             if ! docker compose version &> /dev/null; then
-              echo "❌ docker compose not found. Please install Docker Desktop or: brew install docker-compose"
+              echo "❌ docker compose not found"
+              echo "Please install Docker Desktop or docker-compose plugin"
               exit 1
             fi
             
@@ -257,18 +305,16 @@ jobs:
             cd ~/.factiii
             docker compose build ${REPO_NAME}-staging
             
-            echo "🔄 Copying generate script..."
-            # Copy generate-all.js from repo's node_modules/@factiii/stack if available
-            if [ -f "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js" ]; then
-              cp "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js" ~/.factiii/scripts/
-            fi
-            
             echo "🔄 Regenerating shared configs..."
-            cd ~/.factiii
-            if [ -f "scripts/generate-all.js" ]; then
-              node scripts/generate-all.js
+            cd $REPO_DIR
+            
+            # Use generate-all.js from the installed @factiii/stack package
+            if [ -f "node_modules/@factiii/stack/src/scripts/generate-all.js" ]; then
+              echo "   Running from package..."
+              cd ~/.factiii
+              node "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js"
             else
-              echo "⚠️  generate-all.js not found, skipping config generation"
+              echo "⚠️  @factiii/stack not found in node_modules, skipping config generation"
             fi
             
             echo "🚀 Deploying..."
@@ -340,21 +386,23 @@ jobs:
             git checkout $GITHUB_BRANCH
             git pull origin $GITHUB_BRANCH
             
-            echo "🔄 Copying generate script..."
-            # Copy generate-all.js from repo's node_modules/@factiii/stack if available
-            if [ -f "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js" ]; then
-              cp "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js" ~/.factiii/scripts/
-            fi
+            echo "📦 Installing dependencies (for config generation)..."
+            pnpm install --prod
             
             echo "📥 Pulling Docker image from ECR..."
             cd ~/.factiii
             docker compose pull ${REPO_NAME}-prod
             
             echo "🔄 Regenerating shared configs..."
-            if [ -f "scripts/generate-all.js" ]; then
-              node scripts/generate-all.js
+            cd $REPO_DIR
+            
+            # Use generate-all.js from the installed @factiii/stack package
+            if [ -f "node_modules/@factiii/stack/src/scripts/generate-all.js" ]; then
+              echo "   Running from package..."
+              cd ~/.factiii
+              node "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js"
             else
-              echo "⚠️  generate-all.js not found, skipping config generation"
+              echo "⚠️  @factiii/stack not found in node_modules, skipping config generation"
             fi
             
             echo "🚀 Deploying..."
