@@ -2,6 +2,9 @@
 # Replace all EXAMPLE- values with your actual settings.
 # See STANDARDS.md for detailed documentation.
 
+# Config Version (tracks schema version for migrations)
+config_version: 1.1.0
+
 # Basic Info
 name: EXAMPLE-yourapp
 github_repo: EXAMPLE-yourorg/yourapp
@@ -31,12 +34,14 @@ environments:
     server: mac-mini
     domain: EXAMPLE-staging.yourapp.com
     host: EXAMPLE-192.168.1.100
+    ssh_user: ubuntu  # Optional: override SSH user for this environment (defaults to ubuntu from factiiiAuto.yml)
     env_file: .env.staging
     
   # production:
   #   server: aws-ec2-prod
   #   domain: EXAMPLE-yourapp.com
   #   host: EXAMPLE-prod.yourapp.com
+  #   ssh_user: ubuntu  # Optional: override SSH user for this environment
   #   env_file: .env.prod
 
 # ECR Configuration

@@ -4,6 +4,15 @@
 This repository IS the `@factiii/stack` infrastructure management tool.
 **DO NOT run `npx factiii` commands inside this repository.**
 
+
+## ⚠️ CRITICAL: DO NOT EDIT FILES OUTSIDE THIS REPOSITORY
+**NEVER use file editing tools (StrReplace, Write, EditNotebook, etc.) on files outside `/Users/jon/infrastructure/`.**
+
+This package is tested in application repositories (like `/Users/jon/factiii/`), but you must NEVER edit files in those repos directly. Instead:
+- Tell the user what changes to make in their application repo
+- Only edit files within `/Users/jon/infrastructure/` (the Factiii Stack package itself)
+- Use read-only tools (Read, Grep, Shell with read-only commands) to inspect application repos
+
 Commands like `npx factiii init`, `npx factiii deploy`, etc. should ONLY be run in APPLICATION repositories that consume this package, not here.
 
 ## Architecture Overview

@@ -413,7 +413,7 @@ function validateRepoScripts(rootDir) {
  * Display comprehensive audit report
  */
 function displayAuditReport(auditResults) {
-  const { coreYml, workflows, repoScripts, branches, envFiles } = auditResults;
+  const { coreYml, workflows, repoScripts, branches, envFiles, servers } = auditResults;
 
   console.log('🚀 Running infrastructure audit...\n');
   console.log('=' .repeat(60));
@@ -435,6 +435,40 @@ function displayAuditReport(auditResults) {
     console.log('      💡 Edit factiii.yml with your actual values');
   } else {
     console.log('   ✅ factiii.yml exists and is customized');
+  }
+
+  // 1b. Config Version Status
+  if (auditResults.configOutdated) {
+    console.log('\n📋 Configuration Version:');
+    if (!auditResults.configOutdated.hasVersion) {
+      console.log(`   ⚠️  factiii.yml is pre-${auditResults.configOutdated.latestVersion} format (no version tracking)`);
+      console.log('      Run: npx factiii init fix (will add version tracking)');
+    } else {
+      console.log(`   ⚠️  factiii.yml is outdated: ${auditResults.configOutdated.currentVersion} → ${auditResults.configOutdated.latestVersion}`);
+      console.log('      Run: npx factiii init fix (will migrate to latest)');
+      if (auditResults.configOutdated.migrations && auditResults.configOutdated.migrations.length > 0) {
+        console.log(`      Migrations needed: ${auditResults.configOutdated.migrations.join(', ')}`);
+      }
+    }
+  }
+
+  // 1c. Schema Validation
+  if (auditResults.configSchema) {
+    if (auditResults.configSchema.missing && auditResults.configSchema.missing.length > 0) {
+      console.log('\n📋 Configuration Schema:');
+      console.log('   ❌ Missing required fields:');
+      auditResults.configSchema.missing.forEach(f => console.log(`      - ${f}`));
+      console.log('      Run: npx factiii init fix');
+    }
+    
+    if (auditResults.configSchema.newOptional && auditResults.configSchema.newOptional.length > 0) {
+      console.log('\n💡 New Optional Fields Available:');
+      auditResults.configSchema.newOptional.forEach(f => {
+        console.log(`   - ${f.path}`);
+        console.log(`     ${f.description}`);
+      });
+      console.log('   💡 These fields are optional - add them to factiii.yml if needed');
+    }
   }
 
   // 2. GitHub Workflows (Generated for Repo CI/CD)
@@ -706,7 +740,141 @@ function displayAuditReport(auditResults) {
     }
   }
 
-  // 7. Summary
+  // 8. Server Status & Config Validation
+  if (auditResults.servers && Object.keys(auditResults.servers).length > 0) {
+    console.log('\n🖥️  Server Status & Config Validation:');
+    
+    for (const [env, check] of Object.entries(auditResults.servers)) {
+      console.log(`\n   ${env}:`);
+      
+      // Basic connectivity
+      if (!check.ssh) {
+        console.log('      ❌ Cannot connect via SSH');
+        if (check.error) {
+          console.log(`         Error: ${check.error}`);
+        }
+        console.log('         💡 Run: npx factiii init fix');
+        continue;
+      }
+      console.log('      ✅ SSH connection');
+      
+      // Software checks
+      if (check.git) {
+        console.log('      ✅ Git installed');
+      } else {
+        console.log('      ❌ Git not found');
+        console.log('         💡 Run: npx factiii init fix');
+      }
+      
+      if (check.docker) {
+        console.log('      ✅ Docker installed');
+      } else {
+        console.log('      ❌ Docker not found');
+        console.log('         💡 Install Docker manually');
+      }
+      
+      // Repo status
+      if (check.repo) {
+        console.log(`      ✅ Repo cloned at: ~/.factiii/${check.repoName}`);
+        if (check.branch) {
+          console.log(`         Branch: ${check.branch}`);
+        }
+      } else {
+        console.log(`      ⚠️  Repo not cloned yet`);
+        console.log('         💡 Will be cloned on first deploy');
+      }
+      
+      // Config validation
+      if (check.configValidation) {
+        const val = check.configValidation;
+        
+        if (val.expectedServices !== undefined && val.actualServices !== undefined) {
+          if (val.expectedServices === val.actualServices) {
+            console.log(`      ✅ Services match (${val.actualServices} deployed)`);
+          } else {
+            console.log(`      ❌ Service mismatch:`);
+            console.log(`         Expected: ${val.expectedServices} services`);
+            console.log(`         Deployed: ${val.actualServices} services`);
+            console.log('         💡 Run: npx factiii deploy to sync');
+          }
+        }
+        
+        if (val.dockerComposeUpToDate !== null) {
+          if (val.dockerComposeUpToDate) {
+            console.log(`      ✅ docker-compose.yml exists`);
+          } else {
+            console.log(`      ⚠️  docker-compose.yml needs regeneration`);
+            console.log('         💡 Run: npx factiii deploy');
+          }
+        }
+        
+        if (val.nginxMatches !== null) {
+          if (val.nginxMatches) {
+            console.log(`      ✅ nginx.conf exists`);
+          } else {
+            console.log(`      ⚠️  nginx.conf needs regeneration`);
+            console.log('         💡 Run: npx factiii deploy');
+          }
+        }
+      } else if (check.repo) {
+        console.log('      ⚠️  Deployed configs not validated (run deploy first)');
+      }
+    }
+  } else if (auditResults.githubSecrets && auditResults.githubSecrets.tokenAvailable) {
+    console.log('\n🖥️  Server Status:');
+    console.log('   ℹ️  Cannot check servers (SSH keys not in GitHub yet)');
+    console.log('      💡 Run: npx factiii init fix to set up SSH keys');
+  }
+
+  // Config Sync Validation
+  if (auditResults.configSync) {
+    console.log('\n⚙️  Configuration Sync:');
+    
+    if (auditResults.configSync.valid) {
+      console.log('   ✅ factiii.yml matches generated workflows');
+    } else if (auditResults.configSync.needsGeneration) {
+      console.log('   ⚠️  Workflows not generated yet');
+      console.log('      💡 Run: npx factiii init (will generate)');
+    } else if (auditResults.configSync.needsRegeneration) {
+      console.log('   ❌ Configuration drift detected');
+      if (auditResults.configSync.message) {
+        console.log(`      ${auditResults.configSync.message}`);
+      }
+      if (auditResults.configSync.mismatches) {
+        for (const mismatch of auditResults.configSync.mismatches) {
+          console.log(`      - ${mismatch}`);
+        }
+      }
+      console.log('      💡 Run: npx factiii init fix (will regenerate workflows)');
+    } else if (auditResults.configSync.error) {
+      console.log(`   ⚠️  ${auditResults.configSync.error}`);
+    }
+  }
+
+  // DNS Hostname Validation
+  if (auditResults.dnsValidation && Object.keys(auditResults.dnsValidation).length > 0) {
+    console.log('\n🌐 DNS Hostname Validation:');
+    
+    for (const [env, validation] of Object.entries(auditResults.dnsValidation)) {
+      console.log(`\n   ${env}:`);
+      console.log(`      Hostname: ${validation.hostname}`);
+      
+      if (validation.resolvable) {
+        console.log('      ✅ DNS resolves correctly');
+      } else {
+        console.log('      ❌ Hostname does not resolve');
+        
+        if (validation.alternative) {
+          console.log(`      💡 Found alternative: ${validation.alternative}`);
+          console.log('         Run: npx factiii init fix (will auto-correct)');
+        } else {
+          console.log('      💡 Check your DNS records or update factiii.yml manually');
+        }
+      }
+    }
+  }
+
+  // 9. Summary
   console.log('\n' + '='.repeat(60));
   console.log('📊 Summary:');
   
@@ -780,6 +948,53 @@ function displayAuditReport(auditResults) {
       critical++; // Missing secrets are critical
     } else {
       passed++; // All secrets present
+    }
+  }
+
+  // Server checks
+  if (servers && Object.keys(servers).length > 0) {
+    for (const [env, check] of Object.entries(servers)) {
+      if (check.ssh && check.git && check.docker) {
+        if (check.configValidation && 
+            check.configValidation.expectedServices === check.configValidation.actualServices &&
+            check.configValidation.dockerComposeUpToDate &&
+            check.configValidation.nginxMatches) {
+          passed++; // Server fully configured
+        } else if (check.repo) {
+          warnings++; // Server accessible but configs need sync
+        } else {
+          warnings++; // Server accessible but repo not cloned
+        }
+      } else if (check.ssh) {
+        warnings++; // Can connect but missing software
+      } else {
+        // Can't connect - this is only a warning if SSH key exists
+        warnings++;
+      }
+    }
+  }
+
+  // Config sync check
+  if (auditResults.configSync) {
+    if (auditResults.configSync.valid) {
+      passed++;
+    } else if (auditResults.configSync.needsRegeneration) {
+      warnings++; // Can be auto-fixed
+    } else {
+      warnings++;
+    }
+  }
+
+  // DNS validation check
+  if (auditResults.dnsValidation) {
+    for (const [env, validation] of Object.entries(auditResults.dnsValidation)) {
+      if (validation.resolvable) {
+        passed++;
+      } else if (validation.canAutoFix) {
+        warnings++; // Can be auto-fixed
+      } else {
+        critical++; // Needs manual intervention
+      }
     }
   }
 
@@ -952,9 +1167,117 @@ async function init(options = {}) {
   const loadedConfig = auditResults.coreYml.config || {};
   auditResults.envFiles = validateEnvFiles(rootDir, loadedConfig);
 
+  // Validate config version and schema (after config is available)
+  if (loadedConfig && Object.keys(loadedConfig).length > 0) {
+    const { validateConfigSchema, CURRENT_VERSION, semverLt, getMigrationsNeeded } = require('../utils/config-schema');
+    const configVersion = loadedConfig.config_version || '1.0.0';
+    
+    // Check if config has version field
+    if (!loadedConfig.config_version) {
+      auditResults.configOutdated = {
+        hasVersion: false,
+        currentVersion: '1.0.0',
+        latestVersion: CURRENT_VERSION,
+        message: 'factiii.yml missing config_version field (pre-1.1.0 format)',
+        canAutoFix: true
+      };
+    } else if (semverLt(configVersion, CURRENT_VERSION)) {
+      // Config is outdated
+      auditResults.configOutdated = {
+        hasVersion: true,
+        currentVersion: configVersion,
+        latestVersion: CURRENT_VERSION,
+        message: `factiii.yml is outdated (${configVersion} < ${CURRENT_VERSION})`,
+        canAutoFix: true,
+        migrations: getMigrationsNeeded(configVersion, CURRENT_VERSION)
+      };
+    }
+    
+    // Validate schema
+    const schemaValidation = validateConfigSchema(loadedConfig, CURRENT_VERSION);
+    if (!schemaValidation.valid || schemaValidation.newOptional.length > 0) {
+      auditResults.configSchema = schemaValidation;
+    }
+  }
+
   // Validate GitHub secrets (after config is available)
   if (loadedConfig.environments) {
     auditResults.githubSecrets = await validateGitHubSecrets(loadedConfig);
+  }
+
+  // Validate config sync with workflows (after workflows are generated)
+  auditResults.configSync = null;
+  if (loadedConfig) {
+    const { validateConfigSync } = require('../utils/config-validator');
+    auditResults.configSync = validateConfigSync(rootDir);
+  }
+
+  // Validate DNS hostnames (after config is available)
+  auditResults.dnsValidation = {};
+  if (loadedConfig.environments) {
+    const { isHostnameResolvable, findResolvableAlternative } = require('../utils/dns-validator');
+    
+    for (const [envName, envConfig] of Object.entries(loadedConfig.environments)) {
+      if (envConfig.host) {
+        const isResolvable = await isHostnameResolvable(envConfig.host);
+        
+        auditResults.dnsValidation[envName] = {
+          hostname: envConfig.host,
+          resolvable: isResolvable,
+          alternative: null,
+          canAutoFix: false
+        };
+        
+        if (!isResolvable) {
+          // Try to find alternative
+          const alternative = await findResolvableAlternative(envConfig.host);
+          if (alternative) {
+            auditResults.dnsValidation[envName].alternative = alternative;
+            auditResults.dnsValidation[envName].canAutoFix = true;
+          }
+        }
+      }
+    }
+  }
+
+  // Check servers if we have GitHub token and SSH keys
+  auditResults.servers = {};
+  if (loadedConfig.environments && auditResults.githubSecrets && auditResults.githubSecrets.tokenAvailable) {
+    const { GitHubSecretsStore } = require('../utils/github-secrets');
+    const { scanServerAndValidateConfigs } = require('../utils/server-check');
+    
+    const token = process.env.GITHUB_TOKEN;
+    if (token) {
+      const secretStore = new GitHubSecretsStore(token);
+      
+      for (const [envName, envConfig] of Object.entries(loadedConfig.environments)) {
+        try {
+          // Get SSH key for this environment
+          const sshKeyName = `${envName.toUpperCase()}_SSH`;
+          const secrets = await secretStore.getSecrets([sshKeyName]);
+          const sshKey = secrets[sshKeyName];
+          
+          if (sshKey) {
+            auditResults.servers[envName] = await scanServerAndValidateConfigs(
+              envName,
+              envConfig,
+              loadedConfig,
+              sshKey
+            );
+          } else {
+            auditResults.servers[envName] = {
+              ssh: false,
+              error: 'SSH key not found in GitHub secrets'
+            };
+          }
+        } catch (error) {
+          auditResults.servers[envName] = {
+            ssh: false,
+            error: error.message
+          };
+        }
+      }
+    }
   }
 
   // Generate workflows if needed
@@ -989,7 +1312,11 @@ async function init(options = {}) {
   }
 
   // Return summary for use by other commands (e.g., init-fix)
-  return summary;
+  // Return both summary and audit results for use by init-fix
+  return { 
+    ...summary,
+    auditResults 
+  };
 }
 
 module.exports = init;

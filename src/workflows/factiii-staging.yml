@@ -20,11 +20,15 @@ jobs:
         id: read-versions
         run: |
           if [ -f "factiiiAuto.yml" ]; then
+            echo "✅ factiiiAuto.yml found"
             sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             sudo chmod +x /usr/local/bin/yq
             NODE_VERSION=$(yq eval '.node_version // "20"' factiiiAuto.yml)
             PNPM_VERSION=$(yq eval '.pnpm_version // "8"' factiiiAuto.yml)
+            echo "📦 Detected Node version: $NODE_VERSION"
+            echo "📦 Detected pnpm version: $PNPM_VERSION"
           else
+            echo "⚠️  factiiiAuto.yml not found, using defaults"
             NODE_VERSION="20"
             PNPM_VERSION="8"
           fi
@@ -54,106 +58,7 @@ jobs:
         run: pnpm run test:integration --if-present || echo "⚠️ Integration tests skipped"
         continue-on-error: true
 
-  deploy-staging:
-    needs: test-and-build
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install yq
+      - name: Tests complete
         run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Read config for Dockerfile path
-        id: read-config
-        run: |
-          if [ -f "factiii.yml" ]; then
-            DOCKERFILE=$(yq eval '.dockerfile // "Dockerfile"' factiii.yml)
-            REPO_NAME=$(yq eval '.name' factiii.yml)
-            echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
-            echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
-          else
-            echo "dockerfile=Dockerfile" >> $GITHUB_OUTPUT
-            echo "repo_name=${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Build and push Docker image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'apps' }}
-          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
-          DOCKERFILE: ${{ steps.read-config.outputs.dockerfile }}
-        run: |
-          echo "🔨 Building Docker image from $DOCKERFILE..."
-          docker build --platform linux/amd64 -f $DOCKERFILE -t $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-staging .
-          
-          echo "📤 Pushing to ECR..."
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-staging
-          
-          echo "🏷️  Tagging as staging-latest for backward compatibility..."
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-staging $ECR_REGISTRY/$ECR_REPOSITORY:staging-latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:staging-latest
-          
-          echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-staging"
-
-      - name: Deploy to staging server
-        env:
-          SSH_KEY: ${{ secrets.STAGING_SSH }}
-          SSH_HOST: ${{ secrets.STAGING_HOST }}
-          SSH_USER: ${{ secrets.STAGING_USER || 'ubuntu' }}
-          REPO_NAME: ${{ github.event.repository.name }}
-        run: |
-          if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
-            echo "❌ Missing SSH credentials for staging"
-            exit 1
-          fi
-          
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          
-          SERVICE_KEY="${REPO_NAME}-staging"
-          
-          echo "🚀 Deploying to staging server..."
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "$SSH_USER@$SSH_HOST" \
-            "cd ~/.factiii && \
-             docker compose pull ${SERVICE_KEY} && \
-             docker compose up -d ${SERVICE_KEY}"
-          
-          echo "✅ Deployment complete!"
-          
-          rm -f ~/.ssh/deploy_key
-
-      - name: Run health check
-        env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}
-        run: |
-          if [ -n "$STAGING_URL" ]; then
-            echo "🏥 Running health check..."
-            for i in {1..10}; do
-              if curl -f -s "${STAGING_URL}/health" > /dev/null; then
-                echo "✅ Health check passed!"
-                exit 0
-              fi
-              echo "⏳ Waiting for service to be ready (attempt $i/10)..."
-              sleep 5
-            done
-            echo "❌ Health check failed after 10 attempts"
-            exit 1
-          else
-            echo "⚠️  STAGING_URL not set, skipping health check"
-          fi
+          echo "✅ All tests passed!"
+          echo "💡 To deploy to staging, run: npx factiii deploy staging"

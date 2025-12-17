@@ -25,11 +25,15 @@ jobs:
         id: read-versions
         run: |
           if [ -f "factiiiAuto.yml" ]; then
+            echo "✅ factiiiAuto.yml found"
             sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             sudo chmod +x /usr/local/bin/yq
             NODE_VERSION=$(yq eval '.node_version // "20"' factiiiAuto.yml)
             PNPM_VERSION=$(yq eval '.pnpm_version // "8"' factiiiAuto.yml)
+            echo "📦 Detected Node version: $NODE_VERSION"
+            echo "📦 Detected pnpm version: $PNPM_VERSION"
           else
+            echo "⚠️  factiiiAuto.yml not found, using defaults"
             NODE_VERSION="20"
             PNPM_VERSION="8"
           fi
@@ -75,12 +79,20 @@ jobs:
             STAGING_HOST=$(yq eval '.environments.staging.host // ""' factiii.yml)
             PROD_HOST=$(yq eval '.environments.production.host // ""' factiii.yml)
             
-            # SSH user from factiiiAuto.yml (defaults to ubuntu)
+            # SSH user - check per-environment first, then factiiiAuto.yml, then default to ubuntu
+            STAGING_SSH_USER=$(yq eval '.environments.staging.ssh_user // ""' factiii.yml)
+            PROD_SSH_USER=$(yq eval '.environments.production.ssh_user // ""' factiii.yml)
+            
+            # Fallback to global ssh_user from factiiiAuto.yml if not set per-environment
             if [ -f "factiiiAuto.yml" ]; then
-              SSH_USER=$(yq eval '.ssh_user // "ubuntu"' factiiiAuto.yml | cut -d' ' -f1)
+              GLOBAL_SSH_USER=$(yq eval '.ssh_user // "ubuntu"' factiiiAuto.yml | cut -d' ' -f1)
             else
-              SSH_USER="ubuntu"
+              GLOBAL_SSH_USER="ubuntu"
             fi
+            
+            # Use per-environment user if set, otherwise use global
+            STAGING_SSH_USER=${STAGING_SSH_USER:-$GLOBAL_SSH_USER}
+            PROD_SSH_USER=${PROD_SSH_USER:-$GLOBAL_SSH_USER}
             
             # Dockerfile from factiiiAuto.yml
             if [ -f "factiiiAuto.yml" ]; then
@@ -98,7 +110,8 @@ jobs:
             echo "aws_region=$AWS_REGION" >> $GITHUB_OUTPUT
             echo "staging_host=$STAGING_HOST" >> $GITHUB_OUTPUT
             echo "prod_host=$PROD_HOST" >> $GITHUB_OUTPUT
-            echo "ssh_user=$SSH_USER" >> $GITHUB_OUTPUT
+            echo "staging_ssh_user=$STAGING_SSH_USER" >> $GITHUB_OUTPUT
+            echo "prod_ssh_user=$PROD_SSH_USER" >> $GITHUB_OUTPUT
             echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
             echo "ecr_registry=$ECR_REGISTRY" >> $GITHUB_OUTPUT
             echo "ecr_repository=$ECR_REPOSITORY" >> $GITHUB_OUTPUT
@@ -107,113 +120,220 @@ jobs:
             exit 1
           fi
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (production only)
+        if: inputs.environment == 'production'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ steps.read-config.outputs.aws_access_key_id }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ steps.read-config.outputs.aws_region }}
 
-      - name: Login to Amazon ECR
+      - name: Login to Amazon ECR (production only)
+        if: inputs.environment == 'production'
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image to ECR (production only)
+        if: inputs.environment == 'production'
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ steps.read-config.outputs.ecr_repository }}
           REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
           DOCKERFILE: ${{ steps.read-config.outputs.dockerfile }}
-          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           echo "🔨 Building Docker image from $DOCKERFILE..."
-          docker build --platform linux/amd64 -f $DOCKERFILE -t $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-${ENVIRONMENT} .
+          docker build --platform linux/amd64 -f $DOCKERFILE -t $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-production .
           
           echo "📤 Pushing to ECR..."
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-${ENVIRONMENT}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-production
           
-          echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-${ENVIRONMENT}"
+          echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-production"
 
-      - name: Deploy to server
+      - name: Deploy to staging via SSH (direct build)
+        if: inputs.environment == 'staging'
         env:
-          ENVIRONMENT: ${{ inputs.environment }}
-          SSH_USER: ${{ steps.read-config.outputs.ssh_user }}
-          STAGING_HOST: ${{ steps.read-config.outputs.staging_host }}
-          PROD_HOST: ${{ steps.read-config.outputs.prod_host }}
+          SSH_KEY: ${{ secrets.STAGING_SSH }}
+          SSH_HOST: ${{ steps.read-config.outputs.staging_host }}
+          SSH_USER: ${{ steps.read-config.outputs.staging_ssh_user }}
+          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
         run: |
-          # Get SSH key from secrets, host from config
-          if [ "$ENVIRONMENT" = "staging" ]; then
-            SSH_KEY="${{ secrets.STAGING_SSH }}"
-            SSH_HOST="$STAGING_HOST"
-          else
-            SSH_KEY="${{ secrets.PROD_SSH }}"
-            SSH_HOST="$PROD_HOST"
-          fi
-          
-          # Validate required values
           if [ -z "$SSH_KEY" ]; then
-            echo "❌ Missing SSH key secret: ${ENVIRONMENT^^}_SSH"
+            echo "❌ Missing STAGING_SSH secret"
             exit 1
           fi
           
           if [ -z "$SSH_HOST" ]; then
-            echo "❌ Missing host in factiii.yml: environments.${ENVIRONMENT}.host"
+            echo "❌ Missing host in factiii.yml: environments.staging.host"
             exit 1
           fi
           
-          # Setup SSH key
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           
-          SERVICE_KEY="${{ steps.read-config.outputs.repo_name }}-${ENVIRONMENT}"
+          echo "🚀 Deploying to staging server ($SSH_HOST)..."
           
-          echo "🚀 Deploying to $ENVIRONMENT server ($SSH_HOST)..."
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "$SSH_USER@$SSH_HOST" \
-            "cd ~/.factiii && \
-             docker compose pull ${SERVICE_KEY} && \
-             docker compose up -d ${SERVICE_KEY}"
-          
-          echo "✅ Deployment complete!"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" bash -s << 'ENDSSH' "$REPO_NAME" "$GITHUB_REPO" "$GITHUB_BRANCH"
+            set -e
+            REPO_NAME=$1
+            GITHUB_REPO=$2
+            GITHUB_BRANCH=$3
+            REPO_DIR=~/.factiii/$REPO_NAME
+            
+            # Ensure ~/.factiii exists
+            mkdir -p ~/.factiii/scripts
+            
+            # Clone if doesn't exist
+            if [ ! -d "$REPO_DIR" ]; then
+              echo "📦 Cloning repo..."
+              git clone https://github.com/$GITHUB_REPO $REPO_DIR
+            fi
+            
+            cd $REPO_DIR
+            
+            echo "🔄 Pulling latest code..."
+            git fetch
+            git checkout $GITHUB_BRANCH
+            git pull origin $GITHUB_BRANCH
+            
+            echo "📦 Installing dependencies..."
+            pnpm install
+            
+            echo "🔨 Building Docker image..."
+            cd ~/.factiii
+            docker compose build ${REPO_NAME}-staging
+            
+            echo "🔄 Copying generate script..."
+            # Copy generate-all.js from repo's node_modules/@factiii/stack if available
+            if [ -f "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js" ]; then
+              cp "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js" ~/.factiii/scripts/
+            fi
+            
+            echo "🔄 Regenerating shared configs..."
+            cd ~/.factiii
+            if [ -f "scripts/generate-all.js" ]; then
+              node scripts/generate-all.js
+            else
+              echo "⚠️  generate-all.js not found, skipping config generation"
+            fi
+            
+            echo "🚀 Deploying..."
+            docker compose up -d ${REPO_NAME}-staging
+            
+            echo "✅ Staging deployment complete!"
+          ENDSSH
           
           rm -f ~/.ssh/deploy_key
 
-      - name: Run Prisma migrations (if configured)
+      - name: Deploy to production via SSH (ECR pull)
         if: inputs.environment == 'production'
         env:
-          ENVIRONMENT: ${{ inputs.environment }}
-          SSH_USER: ${{ steps.read-config.outputs.ssh_user }}
-          PROD_HOST: ${{ steps.read-config.outputs.prod_host }}
+          SSH_KEY: ${{ secrets.PROD_SSH }}
+          SSH_HOST: ${{ steps.read-config.outputs.prod_host }}
+          SSH_USER: ${{ steps.read-config.outputs.prod_ssh_user }}
+          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
         run: |
-          SSH_KEY="${{ secrets.PROD_SSH }}"
-          SSH_HOST="$PROD_HOST"
+          if [ -z "$SSH_KEY" ]; then
+            echo "❌ Missing PROD_SSH secret"
+            exit 1
+          fi
           
-          # Setup SSH key
+          if [ -z "$SSH_HOST" ]; then
+            echo "❌ Missing host in factiii.yml: environments.production.host"
+            exit 1
+          fi
+          
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           
-          SERVICE_KEY="${{ steps.read-config.outputs.repo_name }}-${ENVIRONMENT}"
+          echo "🚀 Deploying to production server ($SSH_HOST)..."
           
-          # Read Prisma config from factiiiAuto.yml
-          if [ -f "factiiiAuto.yml" ]; then
-            PRISMA_SCHEMA=$(yq eval '.prisma_schema // "prisma/schema.prisma"' factiiiAuto.yml | cut -d' ' -f1)
-            PRISMA_VERSION=$(yq eval '.prisma_version // "latest"' factiiiAuto.yml | cut -d' ' -f1)
-          else
-            PRISMA_SCHEMA="prisma/schema.prisma"
-            PRISMA_VERSION="latest"
-          fi
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" bash -s << 'ENDSSH' "$REPO_NAME" "$GITHUB_REPO" "$GITHUB_BRANCH"
+            set -e
+            REPO_NAME=$1
+            GITHUB_REPO=$2
+            GITHUB_BRANCH=$3
+            REPO_DIR=~/.factiii/$REPO_NAME
+            
+            # Ensure ~/.factiii exists
+            mkdir -p ~/.factiii/scripts
+            
+            # Clone if doesn't exist (need factiii.yml)
+            if [ ! -d "$REPO_DIR" ]; then
+              echo "📦 Cloning repo..."
+              git clone https://github.com/$GITHUB_REPO $REPO_DIR
+            fi
+            
+            cd $REPO_DIR
+            
+            echo "🔄 Pulling latest code (for configs)..."
+            git fetch
+            git checkout $GITHUB_BRANCH
+            git pull origin $GITHUB_BRANCH
+            
+            echo "🔄 Copying generate script..."
+            # Copy generate-all.js from repo's node_modules/@factiii/stack if available
+            if [ -f "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js" ]; then
+              cp "$REPO_DIR/node_modules/@factiii/stack/src/scripts/generate-all.js" ~/.factiii/scripts/
+            fi
+            
+            echo "📥 Pulling Docker image from ECR..."
+            cd ~/.factiii
+            docker compose pull ${REPO_NAME}-prod
+            
+            echo "🔄 Regenerating shared configs..."
+            if [ -f "scripts/generate-all.js" ]; then
+              node scripts/generate-all.js
+            else
+              echo "⚠️  generate-all.js not found, skipping config generation"
+            fi
+            
+            echo "🚀 Deploying..."
+            docker compose up -d ${REPO_NAME}-prod
+            
+            echo "✅ Production deployment complete!"
+          ENDSSH
+          
+          rm -f ~/.ssh/deploy_key
+
+      - name: Run Prisma migrations (production only)
+        if: inputs.environment == 'production'
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH }}
+          SSH_HOST: ${{ steps.read-config.outputs.prod_host }}
+          SSH_USER: ${{ steps.read-config.outputs.ssh_user }}
+          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
           
           echo "🔄 Running database migrations..."
-          echo "   Schema: $PRISMA_SCHEMA"
-          echo "   Version: $PRISMA_VERSION"
           
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "$SSH_USER@$SSH_HOST" \
-            "cd ~/.factiii && \
-             docker compose run --rm --no-deps ${SERVICE_KEY} \
-             npx -y prisma@${PRISMA_VERSION} migrate deploy --schema=${PRISMA_SCHEMA}" || true
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" bash << 'ENDSSH'
+            cd ~/.factiii/${REPO_NAME}
+            
+            # Read Prisma config from factiiiAuto.yml
+            if [ -f "factiiiAuto.yml" ]; then
+              PRISMA_SCHEMA=$(grep '^prisma_schema:' factiiiAuto.yml | cut -d: -f2 | tr -d ' ' || echo "prisma/schema.prisma")
+              PRISMA_VERSION=$(grep '^prisma_version:' factiiiAuto.yml | cut -d: -f2 | tr -d ' ' || echo "latest")
+            else
+              PRISMA_SCHEMA="prisma/schema.prisma"
+              PRISMA_VERSION="latest"
+            fi
+            
+            echo "   Schema: $PRISMA_SCHEMA"
+            echo "   Version: $PRISMA_VERSION"
+            
+            cd ~/.factiii
+            docker compose run --rm --no-deps ${REPO_NAME}-prod \
+              npx -y prisma@${PRISMA_VERSION} migrate deploy --schema=${PRISMA_SCHEMA} || true
+          ENDSSH
           
           rm -f ~/.ssh/deploy_key
 
@@ -221,19 +341,9 @@ jobs:
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           SSH_USER: ${{ steps.read-config.outputs.ssh_user }}
-          STAGING_HOST: ${{ steps.read-config.outputs.staging_host }}
-          PROD_HOST: ${{ steps.read-config.outputs.prod_host }}
+          SSH_KEY: ${{ inputs.environment == 'staging' && secrets.STAGING_SSH || secrets.PROD_SSH }}
+          SSH_HOST: ${{ inputs.environment == 'staging' && steps.read-config.outputs.staging_host || steps.read-config.outputs.prod_host }}
         run: |
-          # Get SSH key from secrets, host from config
-          if [ "$ENVIRONMENT" = "staging" ]; then
-            SSH_KEY="${{ secrets.STAGING_SSH }}"
-            SSH_HOST="$STAGING_HOST"
-          else
-            SSH_KEY="${{ secrets.PROD_SSH }}"
-            SSH_HOST="$PROD_HOST"
-          fi
-          
-          # Setup SSH key
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key

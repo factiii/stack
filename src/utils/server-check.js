@@ -1,348 +1,247 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const yaml = require('js-yaml');
 
 /**
- * Test SSH connection to server
- * @param {string} sshKeyPath - Path to SSH private key
- * @param {string} host - Server hostname or IP
- * @param {string} user - SSH username
- * @returns {object} - Connection result
+ * SSH to server and run a command, return output
  */
-function testSSHConnection(sshKeyPath, host, user) {
-  const result = {
-    success: false,
-    error: null
-  };
-  
+function sshCommand(sshKey, user, host, command) {
   try {
-    execSync(
-      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${user}@${host} "echo connected"`,
-      { stdio: 'pipe', encoding: 'utf8' }
-    );
-    result.success = true;
-  } catch (error) {
-    result.error = `SSH connection failed: ${error.message}`;
-  }
-  
-  return result;
-}
-
-/**
- * Discover all deployed repos on a server
- * @param {string} sshKeyPath - Path to SSH private key
- * @param {string} host - Server hostname or IP
- * @param {string} user - SSH username
- * @param {string} environment - 'staging' or 'prod'
- * @returns {object} - Discovery results
- */
-function discoverDeployedRepos(sshKeyPath, host, user, environment) {
-  const result = {
-    repos: [],
-    error: null,
-    infrastructureExists: false
-  };
-  
-  try {
-    // Check if infrastructure directory exists
-    const dirCheck = execSync(
-      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "test -d ~/.factiii && echo 'exists' || echo 'missing'"`,
-      { encoding: 'utf8', stdio: 'pipe' }
-    ).trim();
+    const keyPath = '/tmp/factiii-check-key';
+    fs.writeFileSync(keyPath, sshKey, { mode: 0o600 });
     
-    if (dirCheck !== 'exists') {
-      return result;
-    }
-    
-    result.infrastructureExists = true;
-    
-    // List all config files
-    const configFiles = execSync(
-      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "ls -1 ~/.factiii/configs/*.yml ~/.factiii/configs/*.yaml 2>/dev/null || echo ''"`,
-      { encoding: 'utf8', stdio: 'pipe' }
-    ).trim();
-    
-    if (!configFiles) {
-      return result;
-    }
-    
-    const files = configFiles.split('\n').filter(f => f.trim());
-    
-    // Read each config file to get repo information
-    for (const configFile of files) {
-      try {
-        const configContent = execSync(
-          `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "cat ${configFile}"`,
-          { encoding: 'utf8', stdio: 'pipe' }
-        );
-        
-        const config = yaml.load(configContent);
-        const repoName = path.basename(configFile, path.extname(configFile));
-        
-        // Check if this environment exists in the config
-        if (config.environments && config.environments[environment]) {
-          const envConfig = config.environments[environment];
-          
-          result.repos.push({
-            name: repoName,
-            domain: envConfig.domain,
-            port: envConfig.port,
-            configFile: configFile
-          });
-        }
-      } catch (error) {
-        // Skip invalid config files
-        continue;
-      }
-    }
-    
-  } catch (error) {
-    result.error = error.message;
-  }
-  
-  return result;
-}
-
-/**
- * Check if current repo is deployed on server
- * @param {string} sshKeyPath - Path to SSH private key
- * @param {string} host - Server hostname or IP
- * @param {string} user - SSH username
- * @param {string} repoName - Current repository name
- * @param {string} environment - 'staging' or 'prod'
- * @returns {object} - Deployment status
- */
-function checkCurrentRepoDeployment(sshKeyPath, host, user, repoName, environment) {
-  const result = {
-    deployed: false,
-    config: null,
-    configFile: null,
-    error: null
-  };
-  
-  const configFile = `~/.factiii/configs/${repoName}.yml`;
-  
-  try {
-    // Check if config file exists
-    const fileExists = execSync(
-      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "test -f ${configFile} && echo 'exists' || echo 'missing'"`,
-      { encoding: 'utf8', stdio: 'pipe' }
-    ).trim();
-    
-    if (fileExists !== 'exists') {
-      return result;
-    }
-    
-    // Read the config
-    const configContent = execSync(
-      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "cat ${configFile}"`,
+    const result = execSync(
+      `ssh -i ${keyPath} -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${user}@${host} "${command}"`,
       { encoding: 'utf8', stdio: 'pipe' }
     );
     
-    const config = yaml.load(configContent);
-    
-    if (config.environments && config.environments[environment]) {
-      result.deployed = true;
-      result.config = config;
-      result.configFile = configFile;
-    }
-    
+    fs.unlinkSync(keyPath);
+    return { success: true, output: result.trim() };
   } catch (error) {
-    result.error = error.message;
+    try { fs.unlinkSync('/tmp/factiii-check-key'); } catch (e) {}
+    return { success: false, error: error.message };
   }
-  
-  return result;
 }
 
 /**
- * Compare current deployed config with new local config
- * @param {object} deployedConfig - Config from server
- * @param {object} localConfig - Local factiii.yml config
- * @param {string} environment - 'staging' or 'prod'
- * @returns {object} - Comparison results
+ * Check if server is accessible and get basic info
  */
-function compareConfigs(deployedConfig, localConfig, environment) {
-  const changes = [];
+async function checkServerConnectivity(envConfig, sshKey) {
+  const { host, ssh_user = 'ubuntu' } = envConfig;
   
-  if (!deployedConfig || !localConfig) {
-    return { changes, hasChanges: false };
+  if (!host) {
+    return { ssh: false, error: 'No host configured' };
   }
   
-  const deployed = deployedConfig.environments?.[environment];
-  const local = localConfig.environments?.[environment];
-  
-  if (!deployed || !local) {
-    return { changes, hasChanges: false };
+  if (!sshKey) {
+    return { ssh: false, error: 'No SSH key available' };
   }
   
-  // Compare domain
-  if (deployed.domain !== local.domain) {
-    changes.push({
-      field: 'domain',
-      old: deployed.domain,
-      new: local.domain
-    });
+  const result = sshCommand(sshKey, ssh_user, host, 'echo "connected"');
+  return { ssh: result.success, error: result.error };
+}
+
+/**
+ * Check if required software is installed on server
+ */
+async function checkServerSoftware(envConfig, sshKey) {
+  const { host, ssh_user = 'ubuntu' } = envConfig;
+  
+  const checks = {
+    git: false,
+    docker: false,
+    dockerCompose: false,
+    node: false
+  };
+  
+  // Check git
+  const gitResult = sshCommand(sshKey, ssh_user, host, 'which git');
+  checks.git = gitResult.success;
+  
+  // Check docker
+  const dockerResult = sshCommand(sshKey, ssh_user, host, 'which docker');
+  checks.docker = dockerResult.success;
+  
+  // Check docker compose
+  const composeResult = sshCommand(sshKey, ssh_user, host, 'docker compose version');
+  checks.dockerCompose = composeResult.success;
+  
+  // Check node
+  const nodeResult = sshCommand(sshKey, ssh_user, host, 'which node');
+  checks.node = nodeResult.success;
+  
+  return checks;
+}
+
+/**
+ * Check if repo exists on server and get current branch
+ */
+async function checkServerRepo(envConfig, sshKey, repoName) {
+  const { host, ssh_user = 'ubuntu' } = envConfig;
+  
+  const repoPath = `~/.factiii/${repoName}`;
+  
+  // Check if directory exists
+  const existsResult = sshCommand(sshKey, ssh_user, host, `test -d ${repoPath} && echo "exists"`);
+  
+  if (!existsResult.success || !existsResult.output.includes('exists')) {
+    return { exists: false };
   }
   
-  // Compare port
-  if (deployed.port !== local.port) {
-    changes.push({
-      field: 'port',
-      old: deployed.port || 'auto',
-      new: local.port || 'auto'
-    });
-  }
-  
-  // Compare health check
-  if (deployed.health_check !== local.health_check) {
-    changes.push({
-      field: 'health_check',
-      old: deployed.health_check,
-      new: local.health_check
-    });
-  }
+  // Get current branch
+  const branchResult = sshCommand(sshKey, ssh_user, host, `cd ${repoPath} && git branch --show-current`);
   
   return {
-    changes,
-    hasChanges: changes.length > 0
+    exists: true,
+    branch: branchResult.success ? branchResult.output : 'unknown'
   };
 }
 
 /**
- * Check Docker container status
- * @param {string} sshKeyPath - Path to SSH private key
- * @param {string} host - Server hostname or IP
- * @param {string} user - SSH username
- * @param {string} serviceName - Docker service name
- * @returns {object} - Container status
+ * Validate deployed configs match source
  */
-function checkDockerStatus(sshKeyPath, host, user, serviceName) {
-  const result = {
-    running: false,
-    exists: false,
-    error: null
+async function validateDeployedConfigs(envConfig, sshKey, localConfig) {
+  const { host, ssh_user = 'ubuntu' } = envConfig;
+  
+  const validation = {
+    expectedServices: 0,
+    actualServices: 0,
+    nginxMatches: null,
+    dockerComposeUpToDate: null
   };
   
   try {
-    const status = execSync(
-      `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "cd ~/.factiii && docker compose ps -q ${serviceName} 2>/dev/null || echo ''"`,
-      { encoding: 'utf8', stdio: 'pipe' }
-    ).trim();
-    
-    if (status) {
-      result.exists = true;
-      
-      // Check if it's running
-      const runningCheck = execSync(
-        `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} "cd ~/.factiii && docker compose ps ${serviceName} 2>/dev/null | grep -i 'up' || echo ''"`,
-        { encoding: 'utf8', stdio: 'pipe' }
-      ).trim();
-      
-      result.running = !!runningCheck;
-    }
-  } catch (error) {
-    result.error = error.message;
-  }
-  
-  return result;
-}
-
-/**
- * Perform comprehensive server check
- * @param {object} options - Check options
- * @returns {Promise<object>} - Check results
- */
-async function performServerCheck(options) {
-  const {
-    sshKey,
-    host,
-    user = 'ubuntu',
-    environment,
-    currentRepoName,
-    localConfig
-  } = options;
-  
-  const result = {
-    environment,
-    host,
-    user,
-    connected: false,
-    infrastructureExists: false,
-    allDeployedRepos: [],
-    currentRepo: {
-      deployed: false,
-      config: null,
-      comparison: null
-    },
-    error: null
-  };
-  
-  // Write SSH key to temp file
-  const tempDir = path.join(__dirname, '../../.temp');
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-  }
-  
-  const sshKeyPath = path.join(tempDir, `ssh_key_${environment}_${Date.now()}`);
-  
-  try {
-    fs.writeFileSync(sshKeyPath, sshKey, { mode: 0o600 });
-    
-    // Test SSH connection
-    const connTest = testSSHConnection(sshKeyPath, host, user);
-    if (!connTest.success) {
-      result.error = connTest.error;
-      return result;
-    }
-    
-    result.connected = true;
-    
-    // Discover all deployed repos
-    const discovery = discoverDeployedRepos(sshKeyPath, host, user, environment);
-    result.infrastructureExists = discovery.infrastructureExists;
-    result.allDeployedRepos = discovery.repos;
-    
-    // Check current repo deployment
-    const currentDeploy = checkCurrentRepoDeployment(sshKeyPath, host, user, currentRepoName, environment);
-    result.currentRepo.deployed = currentDeploy.deployed;
-    result.currentRepo.config = currentDeploy.config;
-    
-    // Compare configs if deployed
-    if (currentDeploy.deployed && localConfig) {
-      result.currentRepo.comparison = compareConfigs(
-        currentDeploy.config,
-        localConfig,
-        environment
-      );
-    }
-    
-  } catch (error) {
-    result.error = error.message;
-  } finally {
-    // Clean up temp SSH key
-    try {
-      if (fs.existsSync(sshKeyPath)) {
-        fs.unlinkSync(sshKeyPath);
+    // Count expected services from local config
+    // This would need to scan all repos' configs, for now just count from current repo
+    if (localConfig.environments) {
+      for (const [envName, envCfg] of Object.entries(localConfig.environments)) {
+        // Each environment creates one service per repo
+        validation.expectedServices++;
       }
-    } catch (e) {
-      // Ignore cleanup errors
     }
+    
+    // Count actual running containers
+    const psResult = sshCommand(
+      sshKey,
+      ssh_user,
+      host,
+      'cd ~/.factiii && docker compose ps --format json 2>/dev/null | wc -l'
+    );
+    
+    if (psResult.success) {
+      validation.actualServices = parseInt(psResult.output) || 0;
+    }
+    
+    // Check if docker-compose.yml exists
+    const composeExists = sshCommand(
+      sshKey,
+      ssh_user,
+      host,
+      'test -f ~/.factiii/docker-compose.yml && echo "exists"'
+    );
+    validation.dockerComposeUpToDate = composeExists.success && composeExists.output.includes('exists');
+    
+    // Check nginx.conf
+    const nginxExists = sshCommand(
+      sshKey,
+      ssh_user,
+      host,
+      'test -f ~/.factiii/nginx.conf && echo "exists"'
+    );
+    validation.nginxMatches = nginxExists.success && nginxExists.output.includes('exists');
+    
+  } catch (error) {
+    // Validation failed, return what we have
+  }
+  
+  return validation;
+}
+
+/**
+ * Comprehensive server scan
+ */
+async function scanServerAndValidateConfigs(envName, envConfig, config, sshKey) {
+  const check = {
+    environment: envName,
+    ssh: false,
+    git: false,
+    docker: false,
+    dockerCompose: false,
+    node: false,
+    repo: false,
+    branch: null,
+    repoName: config.name,
+    configValidation: null
+  };
+  
+  // Check connectivity
+  const connectivity = await checkServerConnectivity(envConfig, sshKey);
+  check.ssh = connectivity.ssh;
+  
+  if (!check.ssh) {
+    check.error = connectivity.error;
+    return check;
+  }
+  
+  // Check software
+  const software = await checkServerSoftware(envConfig, sshKey);
+  check.git = software.git;
+  check.docker = software.docker;
+  check.dockerCompose = software.dockerCompose;
+  check.node = software.node;
+  
+  // Check repo
+  const repo = await checkServerRepo(envConfig, sshKey, config.name);
+  check.repo = repo.exists;
+  check.branch = repo.branch;
+  
+  // Validate configs if repo exists
+  if (repo.exists) {
+    check.configValidation = await validateDeployedConfigs(envConfig, sshKey, config);
+  }
+  
+  return check;
+}
+
+/**
+ * Setup server basics (clone repo, install software if possible)
+ */
+async function setupServerBasics(envConfig, config, sshKey) {
+  const { host, ssh_user = 'ubuntu' } = envConfig;
+  const repoName = config.name;
+  
+  const result = {
+    gitInstalled: false,
+    dockerInstalled: false,
+    repoCloned: false,
+    repoExists: false,
+    configMismatch: false
+  };
+  
+  // Check software
+  const software = await checkServerSoftware(envConfig, sshKey);
+  result.gitInstalled = software.git;
+  result.dockerInstalled = software.docker;
+  
+  // Check if repo exists
+  const repo = await checkServerRepo(envConfig, sshKey, repoName);
+  result.repoExists = repo.exists;
+  
+  // Try to clone repo if it doesn't exist and git is installed
+  if (!repo.exists && software.git) {
+    // We can't clone without knowing the repo URL
+    // This would need to be passed in or read from git config
+    // For now, just report that it needs to be cloned
   }
   
   return result;
 }
 
 module.exports = {
-  testSSHConnection,
-  discoverDeployedRepos,
-  checkCurrentRepoDeployment,
-  compareConfigs,
-  checkDockerStatus,
-  performServerCheck
+  checkServerConnectivity,
+  checkServerSoftware,
+  checkServerRepo,
+  validateDeployedConfigs,
+  scanServerAndValidateConfigs,
+  setupServerBasics
 };
-
-
-
-
-

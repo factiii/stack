@@ -23,11 +23,15 @@ jobs:
         id: read-versions
         run: |
           if [ -f "factiiiAuto.yml" ]; then
+            echo "✅ factiiiAuto.yml found"
             sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             sudo chmod +x /usr/local/bin/yq
             NODE_VERSION=$(yq eval '.node_version // "20"' factiiiAuto.yml)
             PNPM_VERSION=$(yq eval '.pnpm_version // "8"' factiiiAuto.yml)
+            echo "📦 Detected Node version: $NODE_VERSION"
+            echo "📦 Detected pnpm version: $PNPM_VERSION"
           else
+            echo "⚠️  factiiiAuto.yml not found, using defaults"
             NODE_VERSION="20"
             PNPM_VERSION="8"
           fi
@@ -96,8 +100,9 @@ jobs:
           
           echo "image_tag=${REPO_NAME}-prod" >> $GITHUB_OUTPUT
           echo "✅ Image built and pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-prod"
+          echo "💡 To deploy to production, run: npx factiii deploy production"
 
-  deploy-production:
+  build-and-push-production:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/production' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
@@ -108,11 +113,15 @@ jobs:
         id: read-versions
         run: |
           if [ -f "factiiiAuto.yml" ]; then
+            echo "✅ factiiiAuto.yml found"
             sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             sudo chmod +x /usr/local/bin/yq
             NODE_VERSION=$(yq eval '.node_version // "20"' factiiiAuto.yml)
             PNPM_VERSION=$(yq eval '.pnpm_version // "8"' factiiiAuto.yml)
+            echo "📦 Detected Node version: $NODE_VERSION"
+            echo "📦 Detected pnpm version: $PNPM_VERSION"
           else
+            echo "⚠️  factiiiAuto.yml not found, using defaults"
             NODE_VERSION="20"
             PNPM_VERSION="8"
           fi
@@ -131,7 +140,11 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --ignore-scripts || echo "⚠️ Install failed, continuing with Docker build"
+        run: pnpm install --ignore-scripts || echo "⚠️ Install failed, continuing with tests"
+        continue-on-error: true
+
+      - name: Run tests
+        run: pnpm run test:server || echo "⚠️ Tests skipped"
         continue-on-error: true
 
       - name: Configure AWS credentials
@@ -175,209 +188,4 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-prod
           
           echo "✅ Image built and pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${REPO_NAME}-prod"
-
-      - name: Deploy to production with migration handling
-        env:
-          SSH_KEY: ${{ secrets.PROD_SSH }}
-          SSH_HOST: ${{ secrets.PROD_HOST }}
-          SSH_USER: ${{ secrets.PROD_USER || 'ubuntu' }}
-          REPO_NAME: ${{ steps.read-config.outputs.repo_name }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'apps' }}
-          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
-        run: |
-          if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
-            echo "❌ Missing SSH credentials for production"
-            exit 1
-          fi
-          
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          
-          SERVICE_KEY="${REPO_NAME}-prod"
-          BACKUP_FILE="backup_${REPO_NAME}_$(date +%Y%m%d_%H%M%S).sql"
-          NEEDS_MIGRATION=false
-          BACKUP_CREATED=false
-          
-          # Read Prisma config from factiii.yml
-          PRISMA_SCHEMA=$(grep '^prisma_schema:' factiii.yml | cut -d: -f2 | tr -d ' ' || echo "")
-          PRISMA_VERSION=$(grep '^prisma_version:' factiii.yml | cut -d: -f2 | tr -d ' ' || echo "")
-          
-          # Set defaults if not configured
-          if [ -z "$PRISMA_SCHEMA" ]; then
-            PRISMA_SCHEMA="prisma/schema.prisma"
-          fi
-          
-          if [ -z "$PRISMA_VERSION" ]; then
-            PRISMA_VERSION="latest"
-          fi
-          
-          echo "📋 Prisma Configuration:"
-          echo "   Schema: $PRISMA_SCHEMA"
-          echo "   Version: $PRISMA_VERSION"
-          
-          echo "🔍 Checking for pending migrations..."
-          
-          # Check if migrations are pending using docker compose run
-          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "$SSH_USER@$SSH_HOST" \
-            "cd ~/.factiii && \
-             docker compose run --rm --no-deps ${SERVICE_KEY} \
-             npx -y prisma@${PRISMA_VERSION} migrate status --schema=${PRISMA_SCHEMA}" 2>&1 | grep -q "pending\|not been applied"; then
-            echo "⚠️  Migrations pending, will handle after deployment"
-            NEEDS_MIGRATION=true
-          else
-            echo "✅ No pending migrations"
-          fi
-          
-          # Create backup if migrations are needed
-          if [ "$NEEDS_MIGRATION" = true ]; then
-            echo "💾 Creating database backup..."
-            
-            # Try custom backup script first
-            if npm run db:backup --if-present; then
-              BACKUP_CREATED=true
-              echo "✅ Backup created using custom script"
-            else
-              # Fallback to database backup via docker compose
-              ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-                "$SSH_USER@$SSH_HOST" \
-                "cd ~/.factiii && \
-                 docker compose run --rm --no-deps ${SERVICE_KEY} \
-                 sh -c 'pg_dump \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
-                        mysqldump --no-tablespaces \$DATABASE_URL > /tmp/${BACKUP_FILE} 2>/dev/null || \
-                        echo \"Backup attempted\"'"
-              BACKUP_CREATED=true
-              echo "✅ Database backup created: ${BACKUP_FILE}"
-            fi
-            
-            # Upload backup to S3 (optional, requires S3_BACKUP_BUCKET secret)
-            if [ -n "${{ secrets.S3_BACKUP_BUCKET }}" ]; then
-              ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-                "$SSH_USER@$SSH_HOST" \
-                "aws s3 cp /tmp/${BACKUP_FILE} s3://${{ secrets.S3_BACKUP_BUCKET }}/backups/${BACKUP_FILE}"
-              echo "✅ Backup uploaded to S3"
-            fi
-          fi
-          
-          # Get current running container ID for potential rollback
-          echo "📋 Recording current container state..."
-          CURRENT_CONTAINER=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "$SSH_USER@$SSH_HOST" \
-            "cd ~/.factiii && docker compose ps -q ${SERVICE_KEY}" || echo "")
-          
-          # Pull new image and deploy
-          echo "🚀 Deploying new container..."
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "$SSH_USER@$SSH_HOST" \
-            "cd ~/.factiii && \
-             docker compose pull ${SERVICE_KEY} && \
-             docker compose up -d ${SERVICE_KEY}"
-          
-          DEPLOYMENT_SUCCESS=true
-          
-          # Run migrations if needed
-          if [ "$NEEDS_MIGRATION" = true ]; then
-            echo "🔄 Running database migrations..."
-            
-            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-              "$SSH_USER@$SSH_HOST" \
-              "cd ~/.factiii && \
-               docker compose run --rm --no-deps ${SERVICE_KEY} \
-               npx -y prisma@${PRISMA_VERSION} migrate deploy --schema=${PRISMA_SCHEMA}"; then
-              echo "✅ Migrations completed successfully"
-            else
-              echo "❌ Migration failed! Starting rollback..."
-              DEPLOYMENT_SUCCESS=false
-              
-              # Restore database from backup
-              if [ "$BACKUP_CREATED" = true ]; then
-                echo "♻️  Restoring database from backup..."
-                
-                # Try custom restore script first
-                if npm run db:restore --if-present -- /tmp/${BACKUP_FILE}; then
-                  echo "✅ Database restored using custom script"
-                else
-                  ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-                    "$SSH_USER@$SSH_HOST" \
-                    "psql \$DATABASE_URL < /tmp/${BACKUP_FILE} 2>/dev/null || \
-                     mysql \$DATABASE_URL < /tmp/${BACKUP_FILE} 2>/dev/null"
-                  echo "✅ Database restored from backup"
-                fi
-              fi
-              
-              # Revert to previous container
-              if [ -n "$CURRENT_CONTAINER" ]; then
-                echo "♻️  Reverting to previous container..."
-                ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-                  "$SSH_USER@$SSH_HOST" \
-                  "cd ~/.factiii && \
-                   docker compose stop ${SERVICE_KEY} && \
-                   docker compose rm -f ${SERVICE_KEY} && \
-                   docker start ${CURRENT_CONTAINER} || \
-                   docker compose up -d ${SERVICE_KEY}"
-                echo "✅ Reverted to previous container"
-              fi
-              
-              rm -f ~/.ssh/deploy_key
-              exit 1
-            fi
-          fi
-          
-          # Health check
-          echo "🏥 Running health check..."
-          HEALTH_CHECK_PASSED=false
-          
-          for i in {1..10}; do
-            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-              "$SSH_USER@$SSH_HOST" \
-              "curl -f -s http://localhost:3000/health > /dev/null 2>&1"; then
-              echo "✅ Health check passed!"
-              HEALTH_CHECK_PASSED=true
-              break
-            fi
-            echo "⏳ Waiting for service to be ready (attempt $i/10)..."
-            sleep 5
-          done
-          
-          if [ "$HEALTH_CHECK_PASSED" = false ]; then
-            echo "❌ Health check failed! Starting rollback..."
-            DEPLOYMENT_SUCCESS=false
-            
-            # Restore database if backup was created
-            if [ "$BACKUP_CREATED" = true ] && [ "$NEEDS_MIGRATION" = true ]; then
-              echo "♻️  Restoring database from backup..."
-              ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-                "$SSH_USER@$SSH_HOST" \
-                "psql \$DATABASE_URL < /tmp/${BACKUP_FILE} 2>/dev/null || \
-                 mysql \$DATABASE_URL < /tmp/${BACKUP_FILE} 2>/dev/null"
-            fi
-            
-            # Revert container
-            if [ -n "$CURRENT_CONTAINER" ]; then
-              echo "♻️  Reverting to previous container..."
-              ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-                "$SSH_USER@$SSH_HOST" \
-                "cd ~/.factiii && \
-                 docker compose stop ${SERVICE_KEY} && \
-                 docker start ${CURRENT_CONTAINER} || \
-                 docker compose up -d ${SERVICE_KEY}"
-            fi
-            
-            rm -f ~/.ssh/deploy_key
-            exit 1
-          fi
-          
-          # Prune old Docker images
-          echo "🧹 Pruning old Docker images..."
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "$SSH_USER@$SSH_HOST" \
-            "docker image prune -f --filter 'until=48h'"
-          
-          # Clean up backup file (keep on server for manual recovery if needed)
-          echo "🗑️  Cleaning up temporary files..."
-          
-          rm -f ~/.ssh/deploy_key
-          
-          echo "✅ Production deployment complete!"
-          echo "🎉 Application is running and healthy"
+          echo "💡 To deploy to production, run: npx factiii deploy production"

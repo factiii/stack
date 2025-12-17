@@ -261,6 +261,9 @@ async function initFix(options = {}) {
   // Track what we fix
   const fixReport = {
     local: [],
+    configMigration: null,  // NEW: Config version migration
+    configSync: null,  // Config drift fixes
+    dns: {},  // DNS hostname fixes
     github: [],
     servers: {},
     errors: []
@@ -273,13 +276,14 @@ async function initFix(options = {}) {
   console.log('   Running comprehensive check...\n');
   
   // Run init check to discover all issues
-  const initSummary = await init({ ...options, noRemote: true, skipWorkflow: true });
+  const initResult = await init({ ...options, noRemote: true, skipWorkflow: true });
+  const auditResults = initResult.auditResults || {};
   
   console.log('\n' + '─'.repeat(70));
   console.log('');
   
   // Check if init found critical issues - if so, exit before attempting fixes
-  if (initSummary && initSummary.critical > 0) {
+  if (initResult && initResult.critical > 0) {
     console.error('❌ Init found critical issues that must be fixed manually.');
     console.error('   Please address the issues shown above before running init fix.');
     process.exit(1);
@@ -291,7 +295,7 @@ async function initFix(options = {}) {
     process.exit(1);
   }
   
-  const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
+  let config = yaml.load(fs.readFileSync(configPath, 'utf8'));
   
   // Get GitHub token
   const token = options.token || process.env.GITHUB_TOKEN;
@@ -347,9 +351,142 @@ async function initFix(options = {}) {
   fixReport.local.push('Local environment configured');
   
   // ============================================================
+  // STAGE 2A1: CONFIG VERSION MIGRATION
+  // ============================================================
+  if (auditResults.configOutdated && auditResults.configOutdated.canAutoFix) {
+    console.log('🔄 Part 1A: Config Version Migration\n');
+    
+    const { migrateConfig } = require('../utils/config-migrations');
+    const { CURRENT_VERSION } = require('../utils/config-schema');
+    
+    try {
+      const migrationResult = migrateConfig(
+        config,
+        auditResults.configOutdated.currentVersion || '1.0.0',
+        CURRENT_VERSION
+      );
+      
+      if (migrationResult.success) {
+        // Write migrated config back to file
+        const configPath = path.join(process.cwd(), 'factiii.yml');
+        fs.writeFileSync(configPath, yaml.dump(migrationResult.config, { lineWidth: -1 }));
+        
+        console.log(`   ✅ Migrated from ${migrationResult.originalVersion} to ${migrationResult.targetVersion}\n`);
+        
+        if (migrationResult.migrationsApplied.length > 0) {
+          console.log('   Applied migrations:');
+          migrationResult.migrationsApplied.forEach(m => {
+            console.log(`      - ${m.id}: ${m.description}`);
+          });
+          console.log('');
+        }
+        
+        fixReport.configMigration = `Migrated to ${migrationResult.targetVersion}`;
+        
+        // Reload config after migration
+        config = yaml.load(fs.readFileSync(configPath, 'utf8'));
+      } else {
+        console.log(`   ⚠️  Migration failed: ${migrationResult.errors.join(', ')}\n`);
+        fixReport.errors.push('Config migration failed');
+      }
+    } catch (error) {
+      console.log(`   ⚠️  Migration error: ${error.message}\n`);
+      fixReport.errors.push('Config migration error');
+    }
+  }
+  
+  // Show new optional fields if any
+  if (auditResults.configSchema && auditResults.configSchema.newOptional && auditResults.configSchema.newOptional.length > 0) {
+    console.log('💡 New Optional Fields Available:\n');
+    auditResults.configSchema.newOptional.forEach(field => {
+      console.log(`   - ${field.path}`);
+      console.log(`     ${field.description}`);
+    });
+    console.log('\n   These fields are optional - add them to factiii.yml if needed\n');
+  }
+  
+  // ============================================================
+  // STAGE 2A2: CONFIG DRIFT FIXES
+  // ============================================================
+  console.log('⚙️  Part 1B: Configuration Sync\n');
+
+  const { validateConfigSync } = require('../utils/config-validator');
+  const configSync = validateConfigSync(process.cwd());
+
+  if (configSync.needsRegeneration || configSync.needsGeneration) {
+    console.log('   🔧 Regenerating workflows to match factiii.yml...\n');
+    
+    try {
+      const generateWorkflows = require('./generate-workflows');
+      generateWorkflows({ output: '.github/workflows' });
+      console.log('   ✅ Workflows regenerated\n');
+      fixReport.configSync = 'Workflows regenerated';
+    } catch (error) {
+      console.log(`   ⚠️  Failed to regenerate workflows: ${error.message}\n`);
+      fixReport.errors.push('Failed to regenerate workflows');
+    }
+  } else if (configSync.valid) {
+    console.log('   ✅ Configuration in sync\n');
+    fixReport.configSync = 'Already in sync';
+  }
+
+  // ============================================================
+  // STAGE 2A3: DNS HOSTNAME FIXES
+  // ============================================================
+  console.log('🌐 Part 1B: DNS Hostname Validation\n');
+
+  const { isHostnameResolvable, findResolvableAlternative } = require('../utils/dns-validator');
+
+  let hostnameFixed = false;
+  const environments = parseEnvironments(config);
+
+  for (const env of environments) {
+    const hostname = env.host;
+    
+    if (!hostname) {
+      console.log(`   ⚠️  ${env.name}: No hostname configured\n`);
+      continue;
+    }
+    
+    console.log(`   🔍 Checking ${env.name}: ${hostname}...`);
+    
+    const isResolvable = await isHostnameResolvable(hostname);
+    
+    if (isResolvable) {
+      console.log(`   ✅ ${env.name}: Hostname resolves correctly\n`);
+      fixReport.dns[env.name] = 'Hostname valid';
+    } else {
+      console.log(`   ❌ ${env.name}: Hostname does not resolve`);
+      
+      // Try to find alternative
+      const alternative = await findResolvableAlternative(hostname);
+      
+      if (alternative) {
+        console.log(`   💡 Found alternative: ${alternative}`);
+        console.log(`   🔧 Updating factiii.yml...\n`);
+        
+        // Update config
+        config.environments[env.name].host = alternative;
+        hostnameFixed = true;
+        
+        fixReport.dns[env.name] = `Fixed: ${hostname} → ${alternative}`;
+      } else {
+        console.log(`   ⚠️  No alternative found - please check DNS records\n`);
+        fixReport.errors.push(`${env.name}: Hostname '${hostname}' does not resolve`);
+      }
+    }
+  }
+
+  // Write updated config if hostnames were fixed
+  if (hostnameFixed) {
+    const configPath = path.join(process.cwd(), 'factiii.yml');
+    fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }));
+    console.log('   ✅ factiii.yml updated with corrected hostnames\n');
+  }
+  
+  // ============================================================
   // STAGE 2B: PARSE ENVIRONMENTS AND COLLECT SECRETS
   // ============================================================
-  const environments = parseEnvironments(config);
   
   console.log('🌍 Detected Environments:\n');
   for (const env of environments) {
@@ -528,77 +665,51 @@ async function initFix(options = {}) {
   // STAGE 2D: REMOTE SERVERS
   // ============================================================
   console.log('🖥️  Part 3: Remote Server Setup\n');
+  console.log('   Note: init fix only sets up basics. Deploy updates configs.\n');
   
-  // Copy factiii.yml and factiiiAuto.yml to servers
+  const { setupServerBasics } = require('../utils/server-check');
+  
   for (const env of environments) {
     const envName = env.name.toUpperCase();
     const sshKeyName = `${envName}_SSH`;
-    const hostKey = `${envName}_HOST`;
-    const userKey = `${envName}_USER`;
     
     try {
-      console.log(`   📤 Uploading config to ${env.name} server...`);
+      console.log(`   📤 Checking ${env.name} server...\n`);
       
-      // Get SSH credentials from secret store
-      const sshCredentials = await secretStore.getSecrets([sshKeyName]);
+      // Check if SSH key exists in GitHub (we can't read the value for security)
+      const secretsCheck = await secretStore.checkSecrets([sshKeyName]);
       
-      if (!sshCredentials[sshKeyName]) {
-        console.log(`   ⚠️  ${sshKeyName} not found in GitHub, skipping server setup`);
-        console.log(`      Config will be uploaded during first deployment\n`);
-        fixReport.servers[env.name].push('Ready for deployment');
+      if (secretsCheck.error) {
+        console.log(`   ⚠️  Error checking secrets: ${secretsCheck.error}\n`);
+        fixReport.servers[env.name].push('Error checking secrets');
         continue;
       }
       
-      // Get host and user from factiii.yml
-      const host = env.config.host;
-      const user = env.config.ssh_user || 'ubuntu';
+      if (!secretsCheck.present.includes(sshKeyName)) {
+        console.log(`   ⚠️  ${sshKeyName} not found in GitHub`);
+        console.log(`      Run: npx factiii secrets --env ${env.name}\n`);
+        fixReport.servers[env.name].push('Missing SSH key');
+        continue;
+      }
+      
+      // Get host from environment config
+      const host = env.host;
       
       if (!host) {
-        console.log(`   ⚠️  No host configured for ${env.name}, skipping server setup\n`);
-        fixReport.servers[env.name].push('Ready for deployment (no host configured)');
+        console.log(`   ⚠️  No host configured for ${env.name}\n`);
+        fixReport.servers[env.name].push('No host configured');
         continue;
       }
       
-      // Write SSH key to temporary file
-      const { execSync } = require('child_process');
-      const os = require('os');
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factiii-'));
-      const keyPath = path.join(tmpDir, 'deploy_key');
-      
-      fs.writeFileSync(keyPath, sshCredentials[sshKeyName], { mode: 0o600 });
-      
-      // Create infrastructure directory on server
-      try {
-        execSync(
-          `ssh -i "${keyPath}" -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${user}@${host}" "mkdir -p ~/.factiii/configs"`,
-          { stdio: 'pipe' }
-        );
-        
-        // Copy factiii.yml to server as {repo_name}.yml
-        const repoConfigName = `${config.name}.yml`;
-        execSync(
-          `scp -i "${keyPath}" -o StrictHostKeyChecking=no "${configPath}" "${user}@${host}:~/.factiii/configs/${repoConfigName}"`,
-          { stdio: 'pipe' }
-        );
-        
-        console.log(`   ✅ Config uploaded to ${env.name} server\n`);
-        fixReport.servers[env.name].push('Config uploaded');
-      } catch (sshError) {
-        console.log(`   ⚠️  Could not upload to ${env.name} server: ${sshError.message}`);
-        console.log(`      Config will be uploaded during deployment\n`);
-        fixReport.servers[env.name].push('Ready for deployment');
-      } finally {
-        // Clean up temp directory
-        try {
-          fs.rmSync(tmpDir, { recursive: true, force: true });
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
+      // Note: We can't read SSH keys from GitHub Secrets for security reasons
+      // Server setup will happen during first deployment via GitHub Actions
+      console.log(`   ✅ ${env.name} configuration valid`);
+      console.log(`      Server setup will occur during deployment\n`);
+      fixReport.servers[env.name].push('Ready for deployment');
       
     } catch (error) {
-      console.log(`   ⚠️  Error setting up ${env.name} server: ${error.message}`);
-      console.log(`      Config will be uploaded during deployment\n`);
+      console.log(`   ⚠️  Error checking ${env.name} server: ${error.message}`);
+      console.log(`      Will be set up during deployment\n`);
       fixReport.servers[env.name].push('Ready for deployment');
     }
   }
@@ -617,7 +728,34 @@ async function initFix(options = {}) {
     fixReport.local.forEach(fix => console.log(`      ✅ ${fix}`));
     console.log('');
   }
-  
+
+  // Config Migration
+  if (fixReport.configMigration) {
+    console.log('   Configuration Migration:');
+    console.log(`      ✅ ${fixReport.configMigration}`);
+    console.log('');
+  }
+
+  // Config Sync Fixes
+  if (fixReport.configSync) {
+    console.log('   Configuration Sync:');
+    console.log(`      ✅ ${fixReport.configSync}`);
+    console.log('');
+  }
+
+  // DNS Hostname Fixes
+  if (Object.keys(fixReport.dns).length > 0) {
+    console.log('   DNS Hostnames:');
+    for (const [env, status] of Object.entries(fixReport.dns)) {
+      if (status.startsWith('Fixed:')) {
+        console.log(`      ✅ ${env}: ${status}`);
+      } else {
+        console.log(`      ✅ ${env}: ${status}`);
+      }
+    }
+    console.log('');
+  }
+
   if (fixReport.github.length > 0) {
     console.log('   GitHub Secrets:');
     fixReport.github.forEach(fix => console.log(`      ✅ ${fix}`));
