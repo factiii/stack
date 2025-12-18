@@ -52,7 +52,7 @@ function loadConfig(rootDir) {
 /**
  * Generate env var fixes from plugin requiredEnvVars
  */
-function generateEnvVarFixes(plugin, rootDir) {
+function generateEnvVarFixes(plugin, rootDir, config) {
   const fixes = [];
   
   for (const varName of plugin.requiredEnvVars || []) {
@@ -73,14 +73,18 @@ function generateEnvVarFixes(plugin, rootDir) {
       manualFix: `Add ${varName}=your_value to .env.example`
     });
     
-    // Check .env.staging has the var
+    // Check .env.staging has the var (only if staging environment is defined)
     fixes.push({
       id: `missing-env-staging-${varName.toLowerCase()}`,
       stage: 'staging',
       severity: 'critical',
       description: `${varName} not found in .env.staging`,
       plugin: plugin.id,
-      scan: async () => {
+      scan: async (config) => {
+        // Only check if staging environment is defined in config
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false; // Skip check if staging not configured
+        
         const envPath = path.join(rootDir, '.env.staging');
         if (!fs.existsSync(envPath)) return true;
         const content = fs.readFileSync(envPath, 'utf8');
@@ -90,14 +94,18 @@ function generateEnvVarFixes(plugin, rootDir) {
       manualFix: `Add ${varName}=staging_value to .env.staging`
     });
     
-    // Check .env.prod has the var
+    // Check .env.prod has the var (only if prod environment is defined)
     fixes.push({
       id: `missing-env-prod-${varName.toLowerCase()}`,
       stage: 'prod',
       severity: 'critical',
       description: `${varName} not found in .env.prod`,
       plugin: plugin.id,
-      scan: async () => {
+      scan: async (config) => {
+        // Only check if prod environment is defined in config
+        const hasProdEnv = config?.environments?.prod || config?.environments?.production;
+        if (!hasProdEnv) return false; // Skip check if prod not configured
+        
         const envPath = path.join(rootDir, '.env.prod');
         if (!fs.existsSync(envPath)) return true;
         const content = fs.readFileSync(envPath, 'utf8');
@@ -176,7 +184,7 @@ async function scan(options = {}) {
     }
     
     // Add auto-generated env var fixes
-    const envFixes = generateEnvVarFixes(plugin, rootDir);
+    const envFixes = generateEnvVarFixes(plugin, rootDir, config);
     allFixes.push(...envFixes);
   }
   

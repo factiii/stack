@@ -117,10 +117,14 @@ class FactiiiPipeline {
       severity: 'critical',
       description: 'STAGING_SSH secret not found in GitHub',
       scan: async (config, rootDir) => {
+        // Only check if staging environment is defined in config
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false; // Skip check if staging not configured
+        
         const { GitHubSecretsStore } = require('./github-secrets-store');
         const store = new GitHubSecretsStore({});
         const result = await store.checkSecrets(['STAGING_SSH']);
-        return result.missing.includes('STAGING_SSH');
+        return result.missing?.includes('STAGING_SSH');
       },
       fix: async (config, rootDir) => {
         // This requires interactive prompting - handled by fix.js
@@ -135,10 +139,14 @@ class FactiiiPipeline {
       severity: 'critical',
       description: 'PROD_SSH secret not found in GitHub',
       scan: async (config, rootDir) => {
+        // Only check if prod environment is defined in config
+        const hasProdEnv = config?.environments?.prod || config?.environments?.production;
+        if (!hasProdEnv) return false; // Skip check if prod not configured
+        
         const { GitHubSecretsStore } = require('./github-secrets-store');
         const store = new GitHubSecretsStore({});
         const result = await store.checkSecrets(['PROD_SSH']);
-        return result.missing.includes('PROD_SSH');
+        return result.missing?.includes('PROD_SSH');
       },
       fix: async (config, rootDir) => {
         console.log('   Please provide PROD_SSH key when prompted');
@@ -158,7 +166,7 @@ class FactiiiPipeline {
         const { GitHubSecretsStore } = require('./github-secrets-store');
         const store = new GitHubSecretsStore({});
         const result = await store.checkSecrets(['AWS_SECRET_ACCESS_KEY']);
-        return result.missing.includes('AWS_SECRET_ACCESS_KEY');
+        return result.missing?.includes('AWS_SECRET_ACCESS_KEY');
       },
       fix: async (config, rootDir) => {
         console.log('   Please provide AWS_SECRET_ACCESS_KEY when prompted');

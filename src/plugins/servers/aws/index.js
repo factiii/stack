@@ -152,6 +152,10 @@ class AWSPlugin {
       severity: 'critical',
       description: 'Production host not configured in factiii.yml',
       scan: async (config, rootDir) => {
+        // Only check if prod environment is defined in config
+        const hasProdEnv = config?.environments?.prod || config?.environments?.production;
+        if (!hasProdEnv) return false; // Skip check if prod not configured
+        
         return !config?.environments?.prod?.host && 
                !config?.environments?.production?.host;
       },
@@ -164,6 +168,10 @@ class AWSPlugin {
       severity: 'critical',
       description: 'AWS configuration missing in factiii.yml',
       scan: async (config, rootDir) => {
+        // Only check if prod environment is defined in config
+        const hasProdEnv = config?.environments?.prod || config?.environments?.production;
+        if (!hasProdEnv) return false; // Skip check if prod not configured
+        
         return !config?.aws?.access_key_id || !config?.aws?.region;
       },
       fix: null,
@@ -175,6 +183,10 @@ class AWSPlugin {
       severity: 'critical',
       description: 'Cannot reach production server',
       scan: async (config, rootDir) => {
+        // Only check if prod environment is defined in config
+        const hasProdEnv = config?.environments?.prod || config?.environments?.production;
+        if (!hasProdEnv) return false; // Skip check if prod not configured
+        
         const host = config?.environments?.prod?.host || 
                     config?.environments?.production?.host;
         if (!host) return false;
@@ -195,7 +207,9 @@ class AWSPlugin {
       severity: 'critical',
       description: 'Docker not installed on production server',
       scan: async (config, rootDir) => {
+        // Only check if prod environment is defined in config
         const envConfig = config?.environments?.prod || config?.environments?.production;
+        if (!envConfig) return false; // Skip check if prod not configured
         if (!envConfig?.host) return false;
         
         try {

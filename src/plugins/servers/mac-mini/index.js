@@ -140,6 +140,10 @@ class MacMiniPlugin {
       severity: 'critical',
       description: 'Staging host not configured in factiii.yml',
       scan: async (config, rootDir) => {
+        // Only check if staging environment is defined in config
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false; // Skip check if staging not configured
+        
         return !config?.environments?.staging?.host;
       },
       fix: null,
@@ -151,6 +155,10 @@ class MacMiniPlugin {
       severity: 'critical',
       description: 'Cannot reach staging server',
       scan: async (config, rootDir) => {
+        // Only check if staging environment is defined in config
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false; // Skip check if staging not configured
+        
         const host = config?.environments?.staging?.host;
         if (!host) return false; // Will be caught by staging-host-missing
         
@@ -171,6 +179,10 @@ class MacMiniPlugin {
       severity: 'critical',
       description: 'Docker not installed on staging server',
       scan: async (config, rootDir) => {
+        // Only check if staging environment is defined in config
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false; // Skip check if staging not configured
+        
         const host = config?.environments?.staging?.host;
         if (!host) return false;
         
