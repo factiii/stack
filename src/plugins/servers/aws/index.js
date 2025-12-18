@@ -40,6 +40,29 @@ class AWSPlugin {
     aws_cli_installed: 'boolean'
   };
   
+  /**
+   * Determine if this plugin should be loaded for this project
+   * Loads if config has AWS settings, prod host looks like AWS, or on init (no config)
+   */
+  static async shouldLoad(rootDir, config = {}) {
+    // If config exists with AWS settings, load
+    if (config?.aws?.access_key_id && !config.aws.access_key_id.startsWith('EXAMPLE-')) {
+      return true;
+    }
+    
+    // If prod host looks like AWS, load
+    const prodHost = config?.environments?.prod?.host;
+    if (prodHost && !prodHost.startsWith('EXAMPLE-')) {
+      // Check if it's a public IP or AWS hostname
+      return /^(\d{1,3}\.){3}\d{1,3}$/.test(prodHost) || 
+             prodHost.includes('.compute.amazonaws.com') ||
+             prodHost.includes('.aws');
+    }
+    
+    // On init (no config or EXAMPLE values), load as default prod option
+    return Object.keys(config).length === 0 || !config.environments;
+  }
+  
   // Available configurations
   static configs = {
     'ec2': require('./configs/ec2'),

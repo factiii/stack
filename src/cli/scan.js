@@ -15,43 +15,20 @@ const path = require('path');
 const yaml = require('js-yaml');
 
 /**
- * Load all plugins and collect their fixes
+ * Load relevant plugins based on config
  */
-function loadPlugins(rootDir) {
-  const plugins = [];
+async function loadPlugins(rootDir) {
+  const config = loadConfig(rootDir);
   
-  // Load pipeline plugins
-  try {
-    const FactiiiPipeline = require('../plugins/pipelines/factiii');
-    plugins.push(FactiiiPipeline);
-  } catch (e) {
-    // Plugin not available
+  // If no config exists, tell user to run init
+  if (!config || Object.keys(config).length === 0) {
+    console.error('\n❌ No factiii.yml found.');
+    console.error('   Run: npx factiii init\n');
+    process.exit(1);
   }
   
-  // Load server plugins
-  try {
-    const MacMiniPlugin = require('../plugins/servers/mac-mini');
-    plugins.push(MacMiniPlugin);
-  } catch (e) {
-    // Plugin not available
-  }
-  
-  try {
-    const AWSPlugin = require('../plugins/servers/aws');
-    plugins.push(AWSPlugin);
-  } catch (e) {
-    // Plugin not available
-  }
-  
-  // Load framework plugins
-  try {
-    const PrismaTrpcPlugin = require('../plugins/frameworks/prisma-trpc');
-    plugins.push(PrismaTrpcPlugin);
-  } catch (e) {
-    // Plugin not available
-  }
-  
-  return plugins;
+  const { loadRelevantPlugins } = require('../plugins');
+  return await loadRelevantPlugins(rootDir, config);
 }
 
 /**
@@ -188,7 +165,7 @@ async function scan(options = {}) {
   else if (options.stages) stages = options.stages;
   
   // Load all plugins
-  const plugins = loadPlugins(rootDir);
+  const plugins = await loadPlugins(rootDir);
   
   // Collect all fixes from all plugins
   const allFixes = [];

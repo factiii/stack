@@ -63,7 +63,8 @@ async function generateFactiiiAuto(rootDir, options = {}) {
   
   console.log('🔍 Auto-detecting project configuration...\n');
   
-  const plugins = loadAllPlugins();
+  // Use provided plugins or load all
+  const plugins = options.plugins || loadAllPlugins();
   const autoConfig = {
     factiii_version: getFactiiiVersion(),
     factiii_min_version: getFactiiiVersion()

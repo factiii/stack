@@ -39,6 +39,24 @@ class PrismaTrpcPlugin {
     prisma_version: 'string'
   };
   
+  /**
+   * Determine if this plugin should be loaded for this project
+   * Loads if Prisma or tRPC is detected in package.json
+   */
+  static async shouldLoad(rootDir, config = {}) {
+    const pkgPath = path.join(rootDir, 'package.json');
+    if (!fs.existsSync(pkgPath)) return false;
+    
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      return !!(deps.prisma || deps['@prisma/client'] || 
+                deps['@trpc/server'] || deps['@trpc/client']);
+    } catch {
+      return false;
+    }
+  }
+  
   // ============================================================
   // FIXES - All issues this plugin can detect and resolve
   // ============================================================

@@ -44,9 +44,12 @@ function loadAllPlugins() {
 
 /**
  * Generate factiii.yml template from plugin schemas
+ * @param {Array} plugins - Optional array of plugin classes to use
  */
-function generateFactiiiYmlTemplate() {
-  const plugins = loadAllPlugins();
+function generateFactiiiYmlTemplate(plugins = null) {
+  if (!plugins) {
+    plugins = loadAllPlugins();
+  }
   
   // Base schema with core fields
   const schema = {
@@ -88,7 +91,8 @@ function generateFactiiiYml(rootDir, options = {}) {
     return false;
   }
   
-  const content = generateFactiiiYmlTemplate();
+  // Use provided plugins or load all
+  const content = generateFactiiiYmlTemplate(options.plugins);
   
   // Write file
   fs.writeFileSync(outputPath, content);

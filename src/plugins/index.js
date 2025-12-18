@@ -261,6 +261,44 @@ function loadExternalPlugins(packageNames = [], trustedPlugins = []) {
 }
 
 // ============================================================
+// SMART PLUGIN LOADING
+// ============================================================
+
+/**
+ * Load only relevant plugins based on project detection
+ * Each plugin's shouldLoad() method determines if it's relevant
+ * 
+ * @param {string} rootDir - Project root directory
+ * @param {Object} config - Existing config (if any)
+ * @returns {Promise<Array>} - Array of relevant plugin classes
+ */
+async function loadRelevantPlugins(rootDir, config = {}) {
+  const plugins = [];
+  
+  for (const category of ['pipelines', 'servers', 'frameworks', 'addons']) {
+    for (const [id, PluginClass] of Object.entries(registry[category] || {})) {
+      // Check if plugin should load
+      if (PluginClass.shouldLoad) {
+        try {
+          const shouldLoad = await PluginClass.shouldLoad(rootDir, config);
+          if (shouldLoad) {
+            plugins.push(PluginClass);
+          }
+        } catch (e) {
+          console.warn(`Warning: Error checking shouldLoad for ${id}: ${e.message}`);
+          // On error, don't load the plugin
+        }
+      } else {
+        // No shouldLoad method = always load (backwards compatibility)
+        plugins.push(PluginClass);
+      }
+    }
+  }
+  
+  return plugins;
+}
+
+// ============================================================
 // SCHEMA COLLECTION METHODS
 // ============================================================
 
@@ -338,6 +376,7 @@ module.exports = {
   getPluginsByCategory,
   listPlugins,
   loadAllPlugins,
+  loadRelevantPlugins,
   
   // Instance creation
   createPluginInstance,

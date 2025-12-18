@@ -8,13 +8,19 @@ Infrastructure management CLI for deploying full-stack applications with plugin-
 # Install in your project
 npm install @factiii/stack
 
-# Initialize configuration
-npx factiii
+# Initialize configuration (run this first!)
+npx factiii init
 
 # This creates:
 # - factiii.yml (user-editable config)
 # - factiiiAuto.yml (auto-detected config)
 # - .github/workflows/ (CI/CD workflows)
+
+# Edit factiii.yml to replace EXAMPLE- values
+# Then run:
+npx factiii scan    # Check for issues
+npx factiii fix     # Auto-fix issues
+npx factiii deploy --staging  # Deploy to staging
 ```
 
 ## How It Works
@@ -67,6 +73,21 @@ aws_cli_installed: true
 
 ## CLI Commands
 
+### Init (Run This First!)
+
+Scans your project and generates configuration files:
+
+```bash
+npx factiii init          # Initialize Factiii Stack
+npx factiii init --force  # Regenerate configs
+```
+
+**What it does:**
+- Detects which plugins are relevant to your project
+- Generates `factiii.yml` with only relevant sections
+- Generates `factiiiAuto.yml` with auto-detected values
+- Creates GitHub Actions workflows
+
 ### Scan
 
 Checks all environments for issues:
@@ -77,6 +98,8 @@ npx factiii scan --dev     # Scan dev only
 npx factiii scan --staging # Scan staging only
 npx factiii scan --prod    # Scan prod only
 ```
+
+**Note:** Requires `factiii.yml` to exist. Run `npx factiii init` first.
 
 ### Fix
 
@@ -89,6 +112,8 @@ npx factiii fix --staging # Fix staging only
 npx factiii fix --prod    # Fix prod only
 ```
 
+**Note:** Requires `factiii.yml` to exist. Run `npx factiii init` first.
+
 ### Deploy
 
 Deploys to environments (runs scan first, aborts on issues):
@@ -98,6 +123,8 @@ npx factiii deploy --dev      # Start local dev containers
 npx factiii deploy --staging  # Deploy to staging server
 npx factiii deploy --prod     # Deploy to production server
 ```
+
+**Note:** Requires `factiii.yml` to exist. Run `npx factiii init` first.
 
 ## The Four Stages
 

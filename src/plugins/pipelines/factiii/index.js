@@ -35,6 +35,14 @@ class FactiiiPipeline {
     dockerfile: 'string'
   };
   
+  /**
+   * Determine if this plugin should be loaded for this project
+   * Pipeline plugin always loads - it's the default CI/CD system
+   */
+  static async shouldLoad(rootDir, config = {}) {
+    return true; // Always load - this is the default pipeline
+  }
+  
   // ============================================================
   // FIXES - All issues this plugin can detect and resolve
   // ============================================================

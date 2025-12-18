@@ -16,43 +16,21 @@ const yaml = require('js-yaml');
 const scan = require('./scan');
 
 /**
- * Load all plugins
+ * Load relevant plugins based on config
  */
-function loadPlugins() {
-  const plugins = [];
-  
-  // Load pipeline plugins
-  try {
-    const FactiiiPipeline = require('../plugins/pipelines/factiii');
-    plugins.push(new FactiiiPipeline());
-  } catch (e) {
-    // Plugin not available
+async function loadPlugins(rootDir, config) {
+  // If no config exists, tell user to run init
+  if (!config || Object.keys(config).length === 0) {
+    console.error('\n❌ No factiii.yml found.');
+    console.error('   Run: npx factiii init\n');
+    process.exit(1);
   }
   
-  // Load server plugins
-  try {
-    const MacMiniPlugin = require('../plugins/servers/mac-mini');
-    plugins.push(new MacMiniPlugin());
-  } catch (e) {
-    // Plugin not available
-  }
+  const { loadRelevantPlugins } = require('../plugins');
+  const PluginClasses = await loadRelevantPlugins(rootDir, config);
   
-  try {
-    const AWSPlugin = require('../plugins/servers/aws');
-    plugins.push(new AWSPlugin());
-  } catch (e) {
-    // Plugin not available
-  }
-  
-  // Load framework plugins
-  try {
-    const PrismaTrpcPlugin = require('../plugins/frameworks/prisma-trpc');
-    plugins.push(new PrismaTrpcPlugin());
-  } catch (e) {
-    // Plugin not available
-  }
-  
-  return plugins;
+  // Instantiate plugins
+  return PluginClasses.map(PluginClass => new PluginClass(config));
 }
 
 /**
@@ -144,7 +122,7 @@ async function deploy(options = {}) {
   console.log('✅ All pre-deploy checks passed!\n');
   
   // 2. Load plugins
-  const plugins = loadPlugins();
+  const plugins = await loadPlugins(rootDir, config);
   
   // 3. Deploy each environment requested
   console.log('═'.repeat(60));

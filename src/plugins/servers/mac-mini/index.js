@@ -33,6 +33,22 @@ class MacMiniPlugin {
     ssh_user: 'string'
   };
   
+  /**
+   * Determine if this plugin should be loaded for this project
+   * Loads if config has staging host with local/private IP, or on init (no config)
+   */
+  static async shouldLoad(rootDir, config = {}) {
+    // If config exists with staging host, check if it's local/private IP
+    const stagingHost = config?.environments?.staging?.host;
+    if (stagingHost && !stagingHost.startsWith('EXAMPLE-')) {
+      // Check if it's a local/private IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+      return /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(stagingHost);
+    }
+    
+    // On init (no config or EXAMPLE values), load as default staging option
+    return Object.keys(config).length === 0 || !config.environments;
+  }
+  
   static helpText = {
     SSH: `
    SSH private key for accessing the server.

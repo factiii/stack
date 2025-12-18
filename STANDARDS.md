@@ -64,6 +64,12 @@ class MyPlugin {
   // REQUIRED: Fixes array
   static fixes = [];                 // Issues this plugin can detect/fix
   
+  // REQUIRED: shouldLoad method
+  static async shouldLoad(rootDir, config = {}) {
+    // Return true if plugin is relevant to this project
+    return false;
+  }
+  
   // OPTIONAL
   static requiredEnvVars = [];       // Environment variables needed
   static helpText = {};              // Help text for secrets/config
@@ -107,6 +113,55 @@ static autoConfigSchema = {
   my_plugin_version: 'string',
   my_plugin_config_path: 'string'
 };
+```
+
+#### shouldLoad() - Plugin Relevance Detection
+
+Determine if this plugin should be loaded for the project:
+
+```javascript
+static async shouldLoad(rootDir, config = {}) {
+  // Check if this plugin is relevant to the project
+  // Called during 'npx factiii init' to decide which plugins to include
+  
+  const pkgPath = path.join(rootDir, 'package.json');
+  if (!fs.existsSync(pkgPath)) return false;
+  
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+  
+  // Return true if plugin's dependencies are present
+  return !!deps['my-plugin'];
+}
+```
+
+**When shouldLoad() is called:**
+- During `npx factiii init` - to determine which plugins to include in configs
+- During `npx factiii scan/fix/deploy` - to load only relevant plugins
+
+**Examples:**
+
+```javascript
+// Always load (pipeline plugins)
+static async shouldLoad(rootDir, config = {}) {
+  return true;
+}
+
+// Load if detected in package.json (framework plugins)
+static async shouldLoad(rootDir, config = {}) {
+  const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+  return !!deps['my-framework'];
+}
+
+// Load if config exists or as default (server plugins)
+static async shouldLoad(rootDir, config = {}) {
+  // If config has our settings, load
+  if (config?.my_server?.api_key) return true;
+  
+  // On init (no config), load as default
+  return Object.keys(config).length === 0;
+}
 ```
 
 #### detectConfig() - Auto-Detection Logic

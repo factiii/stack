@@ -4,6 +4,7 @@ const { program } = require('commander');
 const path = require('path');
 
 // Import CLI commands
+const init = require('../src/cli/init');
 const scan = require('../src/cli/scan');
 const fix = require('../src/cli/fix');
 const deploy = require('../src/cli/deploy');
@@ -25,6 +26,15 @@ program
   .name('factiii')
   .description('Factiii Stack - Infrastructure management CLI')
   .version('1.0.0');
+
+// Init command (primary setup command)
+program
+  .command('init')
+  .description('Initialize Factiii Stack in your project (run this first)')
+  .option('-f, --force', 'Overwrite existing config files')
+  .action(async (options) => {
+    await init(options);
+  });
 
 // Default command: scan (npx factiii with no subcommand runs scan)
 program
