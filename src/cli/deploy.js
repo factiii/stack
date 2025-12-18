@@ -274,12 +274,22 @@ async function deployRemoteStagesOnServer(remoteStages, rootDir, config, options
     console.log('═'.repeat(60) + '\n');
     
     // Find server plugin for this environment
+    const envConfig = stage === 'staging' 
+      ? config.environments?.staging 
+      : (config.environments?.prod || config.environments?.production);
+    
+    const configuredServer = envConfig?.server;
+    
     const serverPlugin = plugins.find(p => 
-      p.constructor.category === 'server'
+      p.constructor.category === 'server' && 
+      (!configuredServer || p.constructor.id === configuredServer)
     );
     
     if (!serverPlugin) {
       console.error(`❌ No server plugin found for ${stage}`);
+      if (configuredServer) {
+        console.error(`   Expected server plugin: ${configuredServer}`);
+      }
       process.exit(1);
     }
     
