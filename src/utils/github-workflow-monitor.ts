@@ -53,13 +53,26 @@ class GitHubWorkflowMonitor {
 
   /**
    * Trigger a workflow and return the run ID
+   * 
+   * @param workflowFile - The workflow file name (e.g., 'factiii-scan-staging.yml')
+   * @param environment - Optional environment name (only used for workflows that accept inputs)
    */
-  async triggerWorkflow(workflowFile: string, environment: string): Promise<number> {
+  async triggerWorkflow(workflowFile: string, environment?: string): Promise<number> {
     try {
       console.log(`🚀 Triggering GitHub Actions workflow...`);
 
+      // Build command - only add environment input if provided and workflow expects it
+      // Scan/fix workflows don't need inputs (they're stage-specific by filename)
+      // Deploy workflow needs environment input
+      let command = `gh workflow run "${workflowFile}"`;
+      
+      // Only add environment input for deploy workflow
+      if (environment && workflowFile.includes('deploy')) {
+        command += ` -f environment="${environment}"`;
+      }
+
       // Trigger the workflow
-      execSync(`gh workflow run "${workflowFile}" -f environment="${environment}"`, {
+      execSync(command, {
         encoding: 'utf8',
         stdio: 'pipe',
       });
@@ -140,7 +153,7 @@ class GitHubWorkflowMonitor {
    */
   async triggerAndWatch(
     workflowFile: string,
-    environment: string
+    environment?: string
   ): Promise<TriggerAndWatchResult> {
     try {
       // Trigger the workflow

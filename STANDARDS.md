@@ -85,6 +85,71 @@ static canReach(stage: Stage, config: FactiiiConfig): Reachability {
 }
 ```
 
+## Stage Batching Architecture
+
+**CRITICAL: Avoid multiple SSH connections per stage.**
+
+All scan/fix operations must be batched by stage to minimize SSH overhead and maintain clean execution flow.
+
+### Scan Batching Flow
+
+1. **Collect** - Gather all fixes for requested stages from all plugins
+2. **Bundle** - Group fixes by stage (all dev, all staging, all prod)
+3. **Execute** - CLI checks `--on-server` ONCE per stage:
+   - If on server: run all scans locally in one pass
+   - If remote: trigger workflow (workflow SSHs once and runs with `--on-server`)
+4. **Return** - Results per stage: `{dev: Fix[], secrets: Fix[], staging: Fix[], prod: Fix[]}`
+
+### Fix Batching Flow
+
+1. **Scan first** - Get bundled results from scan
+2. **Execute fixes** - For each stage with problems:
+   - Run all fixes for that stage in ONE session
+   - No SSH calls from individual fix functions
+3. **Return** - Per stage: `{fixed: N, manual: N, failed: N}`
+
+### Deploy Flow
+
+1. **Scan with bundler** - Check all stages
+2. **Block if issues** - Show why, exit
+3. **Deploy if clean** - Proceed with deployment
+
+### Individual Fix Function Rules
+
+**NEVER in fix scan/fix functions:**
+- Check `isOnServer` or `GITHUB_ACTIONS`
+- Call SSH or remote execution
+- Assume execution context
+
+**ALWAYS in fix scan/fix functions:**
+- Assume running locally on target machine
+- Use `execSync` for local commands
+- Return boolean (scan) or boolean (fix)
+
+**CLI/Workflow handles:**
+- `--on-server` check (ONCE per stage)
+- SSH execution (ONE call per stage)
+- Workflow triggering for remote stages
+
+### Result Format
+
+Clean, per-stage breakdown:
+```
+────────────────────────────────────────────────────────────
+RESULTS BY STAGE
+────────────────────────────────────────────────────────────
+
+DEV:
+   Fixed: 2, Manual: 0, Failed: 0
+
+STAGING:
+   Fixed: 0, Manual: 1, Failed: 0
+   Manual: Repository will be cloned automatically on first deployment
+
+────────────────────────────────────────────────────────────
+TOTAL: Fixed: 2, Manual: 1, Failed: 0
+```
+
 **CRITICAL: Workflow Files Must Be Ultra-Thin**
 
 Pipeline plugins generate workflow files, but these files should contain MINIMAL logic:

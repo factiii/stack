@@ -240,23 +240,19 @@ class MacMiniPlugin {
         const host = config?.environments?.staging?.host;
         if (!host) return false;
 
+        // Executed locally - SSH handled by CLI wrapper
         try {
-          const result = await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'which docker'
-          );
-          return !result;
+          execSync('which docker', { stdio: 'pipe' });
+          return false; // Docker is installed
         } catch {
-          return true;
+          return true; // Docker is not installed
         }
       },
       fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        // Executed locally - SSH handled by CLI wrapper
         console.log('   Installing Docker on staging server...');
         try {
-          await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'brew install --cask docker || (curl -fsSL https://get.docker.com | sh)'
-          );
+          execSync('brew install --cask docker || (curl -fsSL https://get.docker.com | sh)', { stdio: 'inherit' });
           return true;
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
@@ -279,75 +275,30 @@ class MacMiniPlugin {
         const host = config?.environments?.staging?.host;
         if (!host) return false;
 
+        // Executed locally - SSH handled by CLI wrapper
         try {
-          // Check if we're running ON the server (in GitHub Actions workflow)
-          const isOnServer = process.env.GITHUB_ACTIONS === 'true';
-          
-          if (isOnServer) {
-            // We're on the server - check locally
-            try {
-              execSync('docker info', { stdio: 'pipe' });
-              return false; // Docker is running
-            } catch {
-              return true; // Docker is not running
-            }
-          } else {
-            // We're remote - check via SSH
-            const result = await MacMiniPlugin.sshExec(
-              config.environments!.staging!,
-              'docker info > /dev/null 2>&1 && echo "running" || echo "stopped"'
-            );
-            return result.includes('stopped');
-          }
+          execSync('docker info', { stdio: 'pipe' });
+          return false; // Docker is running
         } catch {
-          return true;
+          return true; // Docker is not running
         }
       },
       fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        // Executed locally - SSH handled by CLI wrapper
         try {
-          // Check if we're running ON the server (in GitHub Actions workflow)
-          const isOnServer = process.env.GITHUB_ACTIONS === 'true';
-          
           // Double-check Docker isn't already running
-          if (isOnServer) {
-            try {
-              execSync('docker info', { stdio: 'pipe' });
-              console.log('   ✅ Docker is already running');
-              return true;
-            } catch {
-              // Docker not running, proceed to start it
-            }
-          } else {
-            try {
-              const result = await MacMiniPlugin.sshExec(
-                config.environments!.staging!,
-                'docker info > /dev/null 2>&1 && echo "running" || echo "stopped"'
-              );
-              if (result.includes('running')) {
-                console.log('   ✅ Docker is already running');
-                return true;
-              }
-            } catch {
-              // Docker not running, proceed to start it
-            }
+          try {
+            execSync('docker info', { stdio: 'pipe' });
+            console.log('   ✅ Docker is already running');
+            return true;
+          } catch {
+            // Docker not running, proceed to start it
           }
           
           console.log('   🐳 Starting Docker Desktop on staging server...');
-          
-          if (isOnServer) {
-            // We're on the server - start Docker locally
-            execSync('open -a Docker && sleep 15 && docker info', { stdio: 'inherit' });
-            console.log('   ✅ Docker Desktop started successfully');
-            return true;
-          } else {
-            // We're remote - start via SSH
-            await MacMiniPlugin.sshExec(
-              config.environments!.staging!,
-              'open -a Docker && sleep 15 && docker info'
-            );
-            console.log('   ✅ Docker Desktop started successfully');
-            return true;
-          }
+          execSync('open -a Docker && sleep 15 && docker info', { stdio: 'inherit' });
+          console.log('   ✅ Docker Desktop started successfully');
+          return true;
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
           console.log(`   ❌ Failed to start Docker: ${errorMessage}`);
@@ -369,13 +320,9 @@ class MacMiniPlugin {
         const host = config?.environments?.staging?.host;
         if (!host) return false;
 
+        // Executed locally - SSH handled by CLI wrapper
         try {
-          // Check if Docker is in Login Items using osascript
-          const result = await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'osascript -e \'tell application "System Events" to get the name of every login item\' 2>/dev/null || echo ""'
-          );
-          // Check if Docker is in the list of login items
+          const result = execSync('osascript -e \'tell application "System Events" to get the name of every login item\' 2>/dev/null || echo ""', { encoding: 'utf8' });
           return !result.toLowerCase().includes('docker');
         } catch {
           // If we can't check, assume it's not configured
@@ -383,12 +330,10 @@ class MacMiniPlugin {
         }
       },
       fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        // Executed locally - SSH handled by CLI wrapper
         console.log('   Configuring Docker to start on login...');
         try {
-          await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'osascript -e \'tell application "System Events" to make login item at end with properties {path:"/Applications/Docker.app", hidden:false}\''
-          );
+          execSync('osascript -e \'tell application "System Events" to make login item at end with properties {path:"/Applications/Docker.app", hidden:false}\'', { stdio: 'inherit' });
           console.log('   ✅ Docker added to Login Items');
           return true;
         } catch (e) {
@@ -521,24 +466,19 @@ class MacMiniPlugin {
         const host = config?.environments?.staging?.host;
         if (!host) return false;
 
+        // Executed locally - SSH handled by CLI wrapper
         try {
-          const result = await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'which node'
-          );
-          return !result;
+          execSync('which node', { stdio: 'pipe' });
+          return false; // Node.js is installed
         } catch {
-          return true;
+          return true; // Node.js is not installed
         }
       },
       fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        // Executed locally - SSH handled by CLI wrapper
         console.log('   Installing Node.js on staging server...');
         try {
-          // Try Homebrew first (Mac), then fall back to NodeSource (Linux)
-          await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'brew install node || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs)'
-          );
+          execSync('brew install node || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs)', { stdio: 'inherit' });
           return true;
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
@@ -561,23 +501,19 @@ class MacMiniPlugin {
         const host = config?.environments?.staging?.host;
         if (!host) return false;
 
+        // Executed locally - SSH handled by CLI wrapper
         try {
-          const result = await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'which git'
-          );
-          return !result;
+          execSync('which git', { stdio: 'pipe' });
+          return false; // git is installed
         } catch {
-          return true;
+          return true; // git is not installed
         }
       },
       fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        // Executed locally - SSH handled by CLI wrapper
         console.log('   Installing git on staging server...');
         try {
-          await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'brew install git || sudo apt-get install -y git'
-          );
+          execSync('brew install git || sudo apt-get install -y git', { stdio: 'inherit' });
           return true;
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
@@ -614,23 +550,19 @@ class MacMiniPlugin {
         const host = config?.environments?.staging?.host;
         if (!host) return false;
 
+        // Executed locally - SSH handled by CLI wrapper
         try {
-          const result = await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'which pnpm'
-          );
-          return !result;
+          execSync('which pnpm', { stdio: 'pipe' });
+          return false; // pnpm is installed
         } catch {
-          return true;
+          return true; // pnpm is not installed
         }
       },
       fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        // Executed locally - SSH handled by CLI wrapper
         console.log('   Installing pnpm on staging server...');
         try {
-          await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'npm install -g pnpm@9'
-          );
+          execSync('npm install -g pnpm@9', { stdio: 'inherit' });
           return true;
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
@@ -654,12 +586,10 @@ class MacMiniPlugin {
 
         const repoName = config.name ?? 'app';
 
+        // Executed locally - SSH handled by CLI wrapper
         try {
-          const result = await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            `test -d ~/.factiii/${repoName}/.git && echo "exists" || echo "missing"`
-          );
-          return result.includes('missing');
+          const repoPath = path.join(process.env.HOME ?? '/Users/jon', '.factiii', repoName, '.git');
+          return !fs.existsSync(repoPath);
         } catch {
           return true;
         }

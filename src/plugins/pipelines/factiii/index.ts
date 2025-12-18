@@ -494,6 +494,8 @@ class FactiiiPipeline {
       'factiii-undeploy.yml',
       'factiii-scan-staging.yml',
       'factiii-scan-prod.yml',
+      'factiii-fix-staging.yml',
+      'factiii-fix-prod.yml',
       'factiii-dev-sync.yml',
     ];
 

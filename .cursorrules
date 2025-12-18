@@ -26,7 +26,26 @@ Factiii Stack scans application repositories to:
 - Validate `factiii.yml` manual settings
 - Deploy to staging (Mac) and production (Ubuntu) servers
 
-**Reference:** See [STANDARDS.md](STANDARDS.md) for complete architecture documentation.
+**CRITICAL: Always follow [STANDARDS.md](STANDARDS.md) for all patterns, conventions, and architectural decisions.**
+
+## Stage Batching (CRITICAL)
+
+**Individual fix scan/fix functions run LOCALLY only:**
+- NO isOnServer checks in fix functions
+- NO SSH calls in fix functions  
+- NO GITHUB_ACTIONS checks in fix functions
+- Assume running locally on target machine
+- Use execSync for local commands
+
+**CLI handles execution context:**
+- CLI checks --on-server ONCE per stage
+- CLI handles SSH batching (ONE call per stage)
+- Workflows SSH ONCE per stage, run with --on-server
+
+**Result format:**
+- Clean per-stage breakdown
+- Manual instructions shown inline
+- Errors with enough detail to identify issue
 
 ## Plugin Architecture
 
