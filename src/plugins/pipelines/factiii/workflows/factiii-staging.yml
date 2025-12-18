@@ -147,6 +147,8 @@ jobs:
              fi && \
              cd \"\$INFRA_DIR\" && \
              if [ ! -d \"node_modules\" ]; then npm install; fi && \
+             echo \"📦 Building infrastructure...\" && \
+             npm run build && \
              cd \"\$REPO_DIR\" && \
              GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
              node \"\$INFRA_DIR/bin/factiii\" deploy --staging --on-server --commit $COMMIT_HASH --branch $BRANCH"
