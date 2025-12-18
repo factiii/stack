@@ -12,6 +12,7 @@ import type {
   Reachability,
   Fix,
   DeployResult,
+  DeployOptions,
 } from '../../types/index.js';
 
 /**
@@ -103,7 +104,23 @@ export abstract class PipelinePlugin {
   // ============================================================
 
   /**
-   * Deploy to an environment
+   * Deploy to a stage - handles routing based on canReach()
+   *
+   * This is the main entry point for deployments. The pipeline plugin
+   * checks canReach() to determine how to reach the stage:
+   * - 'local': Execute deployment directly
+   * - 'workflow': Trigger a workflow (e.g., GitHub Actions)
+   * - Not reachable: Return error with reason
+   *
+   * @param stage - The stage to deploy to ('dev' | 'staging' | 'prod')
+   * @param options - Deployment options
+   * @returns Deployment result
+   */
+  abstract deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult>;
+
+  /**
+   * Deploy to an environment (called when running locally or on-server)
+   * @deprecated Use deployStage() which handles routing
    */
   abstract deploy(config: FactiiiConfig, environment: string): Promise<DeployResult>;
 

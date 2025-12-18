@@ -15,7 +15,75 @@ CI/CD systems that trigger deployments.
 - Generate workflow files (ultra-thin, only trigger + pass secrets)
 - Manage pipeline secrets (SSH keys, API tokens)
 - Check runtime prerequisites (Node.js, CLI tools)
+- **Control routing** via `canReach()` and `deployStage()` methods
 - Orchestrate plugin execution via scan/fix/deploy
+
+**Required Methods for Pipeline Plugins:**
+
+Pipeline plugins MUST implement these methods:
+
+```typescript
+// STATIC: How can this pipeline reach each stage?
+static canReach(stage: Stage, config: FactiiiConfig): Reachability {
+  // Returns: { reachable: true, via: 'local' | 'workflow' | 'github-api' }
+  // Or:      { reachable: false, reason: 'Missing GITHUB_TOKEN' }
+}
+
+// INSTANCE: Deploy to a stage - handles routing
+async deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult> {
+  const reach = MyPipeline.canReach(stage, this.config);
+  
+  if (!reach.reachable) {
+    return { success: false, error: reach.reason };
+  }
+  
+  if (reach.via === 'workflow') {
+    // Trigger workflow instead of direct execution
+    await this.triggerWorkflow('deploy.yml', { environment: stage });
+    return { success: true, message: 'Workflow triggered' };
+  }
+  
+  // via: 'local' - execute directly
+  return this.runLocalDeploy(stage, options);
+}
+```
+
+**The Four Stages:**
+
+All pipelines must understand these stages and how to reach them:
+
+| Stage | Description | Typical Access |
+|-------|-------------|----------------|
+| `dev` | Local development | Always local |
+| `secrets` | Secret store (GitHub Secrets, Vault, etc.) | API access |
+| `staging` | Staging server | Workflow or local (if on server) |
+| `prod` | Production server | Workflow or local (if on server) |
+
+**Example: GitHub Actions Pipeline Routing:**
+
+```typescript
+static canReach(stage: Stage, config: FactiiiConfig): Reachability {
+  switch (stage) {
+    case 'dev':
+      return { reachable: true, via: 'local' };
+    
+    case 'secrets':
+      if (!process.env.GITHUB_TOKEN) {
+        return { reachable: false, reason: 'Missing GITHUB_TOKEN' };
+      }
+      return { reachable: true, via: 'github-api' };
+    
+    case 'staging':
+    case 'prod':
+      // On server (in workflow): run locally
+      if (process.env.GITHUB_ACTIONS) {
+        return { reachable: true, via: 'local' };
+      }
+      // On dev machine: trigger workflow
+      return { reachable: true, via: 'workflow' };
+  }
+}
+```
 
 **CRITICAL: Workflow Files Must Be Ultra-Thin**
 
@@ -56,7 +124,10 @@ ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
 **The CLI handles everything:**
 1. `deploy.js` runs `scan` first (checks all plugins for issues)
 2. If issues found: abort or fix (depending on command)
-3. If no issues: calls server plugin's `ensureServerReady()` then `deploy()`
+3. If no issues: delegates to pipeline plugin's `deployStage()` method
+4. Pipeline checks `canReach()` to determine routing:
+   - `via: 'local'` → Calls server plugin's `ensureServerReady()` then `deploy()`
+   - `via: 'workflow'` → Triggers workflow (which runs CLI on server)
 
 **Plugin Orchestration:**
 

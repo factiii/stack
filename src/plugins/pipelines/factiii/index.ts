@@ -17,7 +17,10 @@ import type {
   Reachability,
   Fix,
   DeployResult,
+  DeployOptions,
 } from '../../../types/index.js';
+import { loadRelevantPlugins } from '../../index.js';
+import GitHubWorkflowMonitor from '../../../utils/github-workflow-monitor.js';
 import { GitHubSecretsStore } from './github-secrets-store.js';
 
 interface DetectedConfig {
@@ -437,13 +440,24 @@ class FactiiiPipeline {
       throw new Error('GITHUB_TOKEN required to trigger workflows');
     }
 
+    // Get current branch
+    let ref = 'main';
+    try {
+      ref = execSync('git rev-parse --abbrev-ref HEAD', {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'ignore'],
+      }).trim();
+    } catch {
+      // Fall back to main if we can't detect the branch
+    }
+
     const octokit = new Octokit({ auth: token });
 
     await octokit.rest.actions.createWorkflowDispatch({
       owner: repoInfo.owner,
       repo: repoInfo.repo,
       workflow_id: workflowName,
-      ref: 'main',
+      ref,
       inputs,
     });
   }
@@ -459,19 +473,108 @@ class FactiiiPipeline {
   }
 
   /**
-   * Deploy to an environment
-   * For pipeline plugins, this triggers the deployment process
+   * Deploy to a stage - handles routing based on canReach()
+   *
+   * This is the main entry point for deployments. Checks canReach() to determine:
+   * - 'local': Execute deployment directly (dev stage, or when running on server)
+   * - 'workflow': Trigger GitHub Actions workflow
+   * - Not reachable: Return error with reason
    */
-  async deploy(_config: FactiiiConfig, environment: string): Promise<DeployResult> {
-    if (environment === 'dev') {
-      // Dev doesn't use pipeline - handled by server plugin
-      return { success: true, message: 'Dev deploy handled by server plugin' };
+  async deployStage(stage: Stage, options: DeployOptions = {}): Promise<DeployResult> {
+    const reach = FactiiiPipeline.canReach(stage, this._config);
+
+    if (!reach.reachable) {
+      console.log(`\n❌ Cannot reach ${stage}: ${reach.reason}`);
+      return { success: false, error: reach.reason };
     }
 
-    // For staging/prod, we're already ON the server (called via SSH from workflow)
-    // The pipeline plugin doesn't do the actual deployment - server plugins do
-    console.log(`   Pipeline: ${environment} deployment initiated`);
-    return { success: true };
+    if (reach.via === 'workflow') {
+      // We're on dev machine, need to trigger GitHub Actions workflow
+      // Try to use gh CLI for live monitoring if available
+      try {
+        const monitor = new GitHubWorkflowMonitor();
+        const result = await monitor.triggerAndWatch('factiii-deploy.yml', stage);
+        return {
+          success: result.success,
+          message: result.success ? 'Deployment complete' : undefined,
+          error: result.error,
+        };
+      } catch {
+        // Fall back to API-based trigger without live monitoring
+        console.log(`   Triggering ${stage} deployment via GitHub Actions...`);
+
+        try {
+          await FactiiiPipeline.triggerWorkflow('factiii-deploy.yml', {
+            environment: stage,
+          });
+
+          const repoInfo = GitHubSecretsStore.getRepoInfo();
+          if (repoInfo) {
+            console.log(`   Check: https://github.com/${repoInfo.owner}/${repoInfo.repo}/actions\n`);
+          }
+
+          return { success: true, message: 'Workflow triggered - check GitHub Actions for progress' };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return { success: false, error: `Failed to trigger workflow: ${errorMessage}` };
+        }
+      }
+    }
+
+    // via: 'local' - we can run directly (dev stage, or on-server in workflow)
+    return this.runLocalDeploy(stage, options);
+  }
+
+  /**
+   * Run deployment locally by delegating to server plugin
+   */
+  private async runLocalDeploy(stage: Stage, options: DeployOptions): Promise<DeployResult> {
+    const rootDir = options.rootDir ?? process.cwd();
+
+    // Load plugins and find server plugin
+    const plugins = await loadRelevantPlugins(rootDir, this._config);
+    const ServerPluginClass = plugins.find((p) => p.category === 'server') as {
+      new (config: FactiiiConfig): {
+        ensureServerReady?(
+          config: FactiiiConfig,
+          environment: string,
+          options?: Record<string, string>
+        ): Promise<DeployResult>;
+        deploy(config: FactiiiConfig, environment: string): Promise<DeployResult>;
+      };
+    } | undefined;
+
+    if (!ServerPluginClass) {
+      return { success: false, error: 'No server plugin found' };
+    }
+
+    try {
+      const serverInstance = new ServerPluginClass(this._config);
+
+      // Ensure server is ready (install deps, clone repo, etc.)
+      if (serverInstance.ensureServerReady) {
+        console.log('   Preparing server...');
+        await serverInstance.ensureServerReady(this._config, stage, {
+          branch: options.branch ?? 'main',
+          commitHash: options.commit ?? '',
+        });
+      }
+
+      // Run the actual deployment
+      return serverInstance.deploy(this._config, stage);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Deploy to an environment
+   * @deprecated Use deployStage() which handles routing based on canReach()
+   */
+  async deploy(_config: FactiiiConfig, environment: string): Promise<DeployResult> {
+    // For backwards compatibility, delegate to deployStage
+    return this.deployStage(environment as Stage, {});
   }
 
   /**

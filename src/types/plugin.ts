@@ -5,6 +5,7 @@
  */
 
 import type { FactiiiConfig } from './config.js';
+import type { DeployOptions } from './cli.js';
 
 /**
  * Deployment stages
@@ -218,6 +219,22 @@ export interface PipelinePluginStatic extends PluginStatic {
   requiresFullRepo?(environment: string): boolean;
   generateWorkflows?(rootDir: string): Promise<void>;
   triggerWorkflow?(workflowName: string, inputs?: Record<string, string>): Promise<void>;
+}
+
+/**
+ * Pipeline plugin instance interface
+ */
+export interface PipelinePluginInstance extends PluginInstance {
+  /**
+   * Deploy to a stage - handles routing based on canReach()
+   *
+   * This is the main entry point for deployments. The pipeline plugin
+   * checks canReach() to determine how to reach the stage:
+   * - 'local': Execute deployment directly
+   * - 'workflow': Trigger a workflow (e.g., GitHub Actions)
+   * - Not reachable: Return error with reason
+   */
+  deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult>;
 }
 
 /**

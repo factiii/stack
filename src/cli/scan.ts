@@ -137,7 +137,51 @@ function generateEnvVarFixes(
 }
 
 /**
- * Display problems grouped by stage
+ * Get status icon and label for a stage based on reachability and problems
+ */
+function getStageStatus(
+  stage: Stage,
+  reach: Reachability | undefined,
+  problemCount: number
+): { icon: string; label: string; detail: string } {
+  // Stage is not reachable
+  if (reach && !reach.reachable) {
+    return {
+      icon: '❌',
+      label: 'Cannot reach',
+      detail: reach.reason,
+    };
+  }
+
+  // Stage is reachable via workflow (checked when workflow runs)
+  if (reach && reach.reachable && reach.via === 'workflow') {
+    return {
+      icon: '🔄',
+      label: 'Via workflow',
+      detail: 'Checked when workflow runs',
+    };
+  }
+
+  // Stage is directly reachable
+  const via = reach?.reachable && reach.via ? reach.via : 'local';
+
+  if (problemCount === 0) {
+    return {
+      icon: '✅',
+      label: 'Ready',
+      detail: via,
+    };
+  } else {
+    return {
+      icon: '❌',
+      label: `${problemCount} issue${problemCount > 1 ? 's' : ''}`,
+      detail: via,
+    };
+  }
+}
+
+/**
+ * Display problems grouped by stage with clear pipeline status
  */
 function displayProblems(
   problems: ScanProblems,
@@ -146,62 +190,107 @@ function displayProblems(
 ): void {
   if (options.silent) return;
 
-  // Only display stages that were checked (have reachability info)
-  const stages = Object.keys(reachability);
+  const stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
   let totalProblems = 0;
+  const unreachableStages: { stage: Stage; reason: string }[] = [];
 
-  console.log('\n' + '═'.repeat(60));
-  console.log('📋 SCAN RESULTS');
-  console.log('═'.repeat(60) + '\n');
-
+  // Count total problems
   for (const stage of stages) {
-    const reach = reachability[stage];
-    const stageProblems = problems[stage as Stage] ?? [];
-
-    // Check if stage is unreachable
-    if (reach && !reach.reachable) {
-      console.log(`⚠️  ${stage.toUpperCase()}: Cannot reach`);
-      console.log(`   💡 ${'reason' in reach ? reach.reason : 'Unknown reason'}`);
-      console.log('');
-      continue;
-    }
-
-    // Check if stage is reachable via workflow (not directly)
-    if (reach && reach.reachable && 'via' in reach && reach.via === 'workflow') {
-      console.log(`🔄 ${stage.toUpperCase()}: Checked via workflow`);
-      console.log(`   💡 Will be scanned when workflow runs`);
-      console.log('');
-      continue;
-    }
-
-    if (stageProblems.length === 0) {
-      const via = reach?.reachable && 'via' in reach ? ` (via: ${reach.via})` : '';
-      console.log(`✅ ${stage.toUpperCase()}: No issues found${via}`);
-    } else {
-      console.log(`❌ ${stage.toUpperCase()}: ${stageProblems.length} issue(s) found`);
-      for (const problem of stageProblems) {
-        const icon = problem.fix ? '🔧' : '📝';
-        const autoFix = problem.fix ? '(auto-fixable)' : '(manual fix required)';
-        console.log(`   ${icon} ${problem.description} ${autoFix}`);
+    if (reachability[stage]) {
+      const stageProblems = problems[stage] ?? [];
+      // Only count problems for stages that were actually scanned (not via workflow)
+      const reach = reachability[stage];
+      if (reach?.reachable && reach.via !== 'workflow') {
+        totalProblems += stageProblems.length;
       }
-      totalProblems += stageProblems.length;
     }
-    console.log('');
   }
 
-  console.log('─'.repeat(60));
-  if (totalProblems === 0) {
-    console.log('✅ All checks passed!\n');
-  } else {
-    const hasLocalIssues = (problems.dev?.length ?? 0) > 0 || (problems.secrets?.length ?? 0) > 0;
+  // Header
+  console.log('\n' + '═'.repeat(60));
+  console.log('PIPELINE STATUS');
+  console.log('═'.repeat(60) + '\n');
 
-    console.log(`❌ Found ${totalProblems} issue(s).`);
+  // Stage status overview
+  for (const stage of stages) {
+    const reach = reachability[stage];
+    if (!reach) continue; // Stage wasn't checked
 
-    if (hasLocalIssues) {
-      console.log('   💡 Fix local issues: npx factiii fix');
+    const problemCount = problems[stage]?.length ?? 0;
+    const status = getStageStatus(stage, reach, problemCount);
+
+    // Format: [STAGE]     icon Status (detail)
+    const stageLabel = `[${stage.toUpperCase()}]`.padEnd(10);
+    const statusLine = `${stageLabel} ${status.icon} ${status.label}`;
+
+    if (status.detail && status.label !== 'Cannot reach') {
+      console.log(`${statusLine} (${status.detail})`);
+    } else {
+      console.log(statusLine);
     }
 
-    console.log('');
+    // Track unreachable stages for blockers section
+    if (!reach.reachable) {
+      unreachableStages.push({ stage, reason: reach.reason });
+    }
+  }
+
+  // Blockers section (only if there are unreachable stages)
+  if (unreachableStages.length > 0) {
+    console.log('\n' + '─'.repeat(60));
+    console.log('BLOCKERS');
+    console.log('─'.repeat(60) + '\n');
+
+    for (const { stage, reason } of unreachableStages) {
+      // Determine which stage this blocks access FROM
+      const fromStage = stage === 'secrets' ? 'dev' : stage === 'staging' || stage === 'prod' ? 'secrets' : 'dev';
+      console.log(`❌ ${fromStage.toUpperCase()} → ${stage.toUpperCase()}: ${reason}`);
+
+      // Provide hint for common blockers
+      if (reason.includes('GITHUB_TOKEN')) {
+        console.log('   💡 Run: export GITHUB_TOKEN=your_token');
+      }
+    }
+  }
+
+  // Issues section (only if there are problems)
+  if (totalProblems > 0) {
+    console.log('\n' + '─'.repeat(60));
+    console.log('ISSUES BY STAGE');
+    console.log('─'.repeat(60) + '\n');
+
+    for (const stage of stages) {
+      const reach = reachability[stage];
+      if (!reach) continue;
+
+      const stageProblems = problems[stage] ?? [];
+
+      // Skip stages reached via workflow or not reachable
+      if (!reach.reachable || reach.via === 'workflow') {
+        continue;
+      }
+
+      if (stageProblems.length > 0) {
+        console.log(`${stage.toUpperCase()}:`);
+        for (const problem of stageProblems) {
+          const icon = problem.fix ? '🔧' : '📝';
+          const autoFix = problem.fix ? '(auto-fixable)' : '(manual)';
+          console.log(`   ${icon} ${problem.description} ${autoFix}`);
+        }
+        console.log('');
+      }
+    }
+  }
+
+  // Summary
+  console.log('─'.repeat(60));
+  if (totalProblems === 0 && unreachableStages.length === 0) {
+    console.log('✅ All checks passed!\n');
+  } else if (totalProblems === 0 && unreachableStages.length > 0) {
+    console.log('⚠️  Some stages cannot be reached. Fix blockers above.\n');
+  } else {
+    console.log(`Found ${totalProblems} issue${totalProblems > 1 ? 's' : ''}.`);
+    console.log('💡 Run: npx factiii fix\n');
   }
 }
 

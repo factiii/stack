@@ -1,7 +1,8 @@
 /**
  * Deploy Command
  *
- * Deploys to specified environment
+ * Deploys to specified environment by delegating to the pipeline plugin.
+ * The pipeline plugin decides how to reach the stage (local vs workflow trigger).
  */
 
 import * as fs from 'fs';
@@ -10,21 +11,22 @@ import yaml from 'js-yaml';
 
 import { scan } from './scan.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
-import type { FactiiiConfig, DeployOptions, DeployResult } from '../types/index.js';
+import type { FactiiiConfig, DeployOptions, DeployResult, Stage } from '../types/index.js';
 
-interface PluginClass {
+/**
+ * Pipeline plugin class interface
+ */
+interface PipelinePluginClass {
   id: string;
-  category: string;
-  new (config: FactiiiConfig): PluginInstance;
+  category: 'pipeline';
+  new (config: FactiiiConfig): PipelinePluginInstance;
 }
 
-interface PluginInstance {
-  deploy(config: FactiiiConfig, environment: string): Promise<DeployResult>;
-  ensureServerReady?(
-    config: FactiiiConfig,
-    environment: string,
-    options?: Record<string, string>
-  ): Promise<DeployResult>;
+/**
+ * Pipeline plugin instance interface
+ */
+interface PipelinePluginInstance {
+  deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult>;
 }
 
 /**
@@ -46,6 +48,15 @@ function loadConfig(rootDir: string): FactiiiConfig {
   }
 }
 
+/**
+ * Deploy to a specified environment
+ *
+ * This command delegates to the pipeline plugin, which decides how to reach
+ * the target stage based on canReach():
+ * - 'local': Execute deployment directly
+ * - 'workflow': Trigger a workflow (e.g., GitHub Actions)
+ * - Not reachable: Return error with reason
+ */
 export async function deploy(environment: string, options: DeployOptions = {}): Promise<DeployResult> {
   const rootDir = options.rootDir ?? process.cwd();
   const config = loadConfig(rootDir);
@@ -55,7 +66,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   // First run scan to check for blocking issues
   const problems = await scan({ ...options, silent: true });
 
-  // Check for critical issues
+  // Check for critical issues in the target environment
   const envProblems = problems[environment as keyof typeof problems] ?? [];
   const criticalIssues = envProblems.filter((p) => p.severity === 'critical');
 
@@ -68,33 +79,24 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     return { success: false, error: 'Critical issues found' };
   }
 
-  // Load plugins and deploy
-  const plugins = (await loadRelevantPlugins(rootDir, config)) as unknown as PluginClass[];
+  // Load plugins and find pipeline plugin
+  const plugins = await loadRelevantPlugins(rootDir, config);
+  const PipelineClass = plugins.find((p) => p.category === 'pipeline') as unknown as PipelinePluginClass | undefined;
 
-  // Find server plugin for this environment
-  const serverPlugin = plugins.find((p) => p.category === 'server');
-
-  if (!serverPlugin) {
-    return { success: false, error: 'No server plugin found' };
+  if (!PipelineClass) {
+    return { success: false, error: 'No pipeline plugin found' };
   }
 
   try {
-    const instance = new serverPlugin(config);
-
-    // Ensure server is ready
-    if (instance.ensureServerReady) {
-      console.log('   Preparing server...');
-      await instance.ensureServerReady(config, environment, {
-        branch: options.branch ?? 'main',
-        commitHash: options.commit ?? '',
-      });
-    }
-
-    // Deploy
-    const result = await instance.deploy(config, environment);
+    // Delegate to pipeline plugin - IT decides how to reach the stage
+    const pipeline = new PipelineClass(config);
+    const result = await pipeline.deployStage(environment as Stage, { ...options, rootDir });
 
     if (result.success) {
       console.log(`\n✅ Deployment to ${environment} complete!`);
+      if (result.message) {
+        console.log(`   ${result.message}`);
+      }
     } else {
       console.log(`\n❌ Deployment failed: ${result.error}`);
     }
