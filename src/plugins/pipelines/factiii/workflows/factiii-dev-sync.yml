@@ -94,6 +94,8 @@ jobs:
 
       - name: Get infrastructure from local (via rsync simulation)
         if: steps.check_env.outputs.has_env == 'true'
+        env:
+          SSH_KEY: ${{ inputs.environment == 'staging' && secrets.STAGING_SSH || secrets.PROD_SSH }}
         run: |
           echo "⚠️  DEV SYNC MODE - Using infrastructure from workflow trigger"
           echo "   This syncs the infrastructure package for testing beta features"
@@ -105,7 +107,9 @@ jobs:
           # which is complex from a local CLI
           
           echo "📦 Cloning infrastructure repo for dev sync..."
-          git clone https://github.com/${{ github.repository_owner }}/infrastructure.git infrastructure-sync
+          # Use SSH to clone private repo
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            git clone git@github.com:${{ github.repository_owner }}/infrastructure.git infrastructure-sync
           
           cd infrastructure-sync
           echo "📦 Installing dependencies..."
