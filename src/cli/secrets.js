@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
-const { GitHubSecretsStore } = require('../plugins/secrets/github');
+const { GitHubSecretsStore } = require('../plugins/pipelines/factiii/github-secrets-store');
 const { getPlugin } = require('../plugins');
 const { promptForSecret, confirm, multiSelect } = require('../utils/secret-prompts');
 const { parseEnvFile } = require('../utils/env-validator');

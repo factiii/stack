@@ -182,8 +182,8 @@ async function upgrade(options = {}) {
   console.log('   Regenerating workflows...');
   
   try {
-    const generateWorkflows = require('./generate-workflows');
-    generateWorkflows({ output: '.github/workflows' });
+    const FactiiiPipeline = require('../plugins/pipelines/factiii');
+    await FactiiiPipeline.generateWorkflows(process.cwd());
   } catch (e) {
     console.error(`   ❌ Failed to regenerate workflows: ${e.message}\n`);
   }

@@ -106,7 +106,7 @@ class FactiiiPipeline {
       severity: 'critical',
       description: 'STAGING_SSH secret not found in GitHub',
       scan: async (config, rootDir) => {
-        const { GitHubSecretsStore } = require('../../secrets/github');
+        const { GitHubSecretsStore } = require('./github-secrets-store');
         const store = new GitHubSecretsStore({});
         const result = await store.checkSecrets(['STAGING_SSH']);
         return result.missing.includes('STAGING_SSH');
@@ -124,7 +124,7 @@ class FactiiiPipeline {
       severity: 'critical',
       description: 'PROD_SSH secret not found in GitHub',
       scan: async (config, rootDir) => {
-        const { GitHubSecretsStore } = require('../../secrets/github');
+        const { GitHubSecretsStore } = require('./github-secrets-store');
         const store = new GitHubSecretsStore({});
         const result = await store.checkSecrets(['PROD_SSH']);
         return result.missing.includes('PROD_SSH');
@@ -144,7 +144,7 @@ class FactiiiPipeline {
         // Only check if AWS is configured
         if (!config?.aws?.access_key_id) return false;
         
-        const { GitHubSecretsStore } = require('../../secrets/github');
+        const { GitHubSecretsStore } = require('./github-secrets-store');
         const store = new GitHubSecretsStore({});
         const result = await store.checkSecrets(['AWS_SECRET_ACCESS_KEY']);
         return result.missing.includes('AWS_SECRET_ACCESS_KEY');

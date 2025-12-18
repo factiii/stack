@@ -9,7 +9,6 @@ const scan = require('../src/cli/scan');
 const fix = require('../src/cli/fix');
 const deploy = require('../src/cli/deploy');
 const undeploy = require('../src/cli/undeploy');
-const generateWorkflows = require('../src/cli/generate-workflows');
 const secrets = require('../src/cli/secrets');
 const upgrade = require('../src/cli/upgrade');
 
@@ -109,8 +108,9 @@ program
   .command('generate-workflows')
   .description('Generate GitHub workflow files')
   .option('-o, --output <dir>', 'Output directory', '.github/workflows')
-  .action((options) => {
-    generateWorkflows(options);
+  .action(async (options) => {
+    const FactiiiPipeline = require('../src/plugins/pipelines/factiii');
+    await FactiiiPipeline.generateWorkflows(process.cwd());
   });
 
 // Secrets command

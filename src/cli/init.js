@@ -62,8 +62,8 @@ async function init(options = {}) {
   
   // 4. Generate workflows
   console.log('📝 Generating GitHub workflows...');
-  const generateWorkflows = require('./generate-workflows');
-  await generateWorkflows({ output: '.github/workflows' });
+  const FactiiiPipeline = require('../plugins/pipelines/factiii');
+  await FactiiiPipeline.generateWorkflows(rootDir);
   
   console.log('\n' + '═'.repeat(60));
   console.log('✅ INITIALIZATION COMPLETE!');
