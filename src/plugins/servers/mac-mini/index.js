@@ -38,6 +38,11 @@ class MacMiniPlugin {
    * Loads if config has staging host with local/private IP, or on init (no config)
    */
   static async shouldLoad(rootDir, config = {}) {
+    // If explicitly configured as mac-mini server
+    if (config?.environments?.staging?.server === 'mac-mini') {
+      return true;
+    }
+    
     // If config exists with staging host, check if it's local/private IP
     const stagingHost = config?.environments?.staging?.host;
     if (stagingHost && !stagingHost.startsWith('EXAMPLE-')) {
