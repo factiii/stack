@@ -23,6 +23,22 @@ class PrismaTrpcPlugin {
     'DATABASE_URL'
   ];
   
+  // Schema for factiii.yml (user-editable)
+  static configSchema = {
+    prisma: {
+      schema_path: null,  // Optional override
+      version: null       // Optional override
+    }
+  };
+  
+  // Schema for factiiiAuto.yml (auto-detected)
+  static autoConfigSchema = {
+    has_prisma: 'boolean',
+    has_trpc: 'boolean',
+    prisma_schema: 'string',
+    prisma_version: 'string'
+  };
+  
   // ============================================================
   // FIXES - All issues this plugin can detect and resolve
   // ============================================================
@@ -193,6 +209,46 @@ class PrismaTrpcPlugin {
   // ============================================================
   // STATIC HELPER METHODS
   // ============================================================
+  
+  /**
+   * Auto-detect Prisma and tRPC configuration
+   */
+  static async detectConfig(rootDir) {
+    const hasPrisma = await this.hasPrisma(rootDir);
+    const hasTrpc = await this.detectTrpc(rootDir);
+    
+    if (!hasPrisma && !hasTrpc) return null;
+    
+    const config = {
+      has_trpc: hasTrpc
+    };
+    
+    if (hasPrisma) {
+      config.has_prisma = true;
+      config.prisma_schema = this.findPrismaSchema(rootDir);
+      config.prisma_version = this.getPrismaVersion(rootDir);
+    } else {
+      config.has_prisma = false;
+    }
+    
+    return config;
+  }
+  
+  /**
+   * Detect tRPC in the project
+   */
+  static async detectTrpc(rootDir) {
+    const pkgPath = path.join(rootDir, 'package.json');
+    if (!fs.existsSync(pkgPath)) return false;
+    
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      return !!(deps['@trpc/server'] || deps['@trpc/client']);
+    } catch {
+      return false;
+    }
+  }
   
   /**
    * Check if Prisma is installed in the project

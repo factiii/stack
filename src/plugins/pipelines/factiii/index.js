@@ -22,6 +22,19 @@ class FactiiiPipeline {
   // Env vars this plugin requires (none - pipeline doesn't need app env vars)
   static requiredEnvVars = [];
   
+  // Schema for factiii.yml (user-editable)
+  static configSchema = {
+    // No user config - workflows are auto-generated
+  };
+  
+  // Schema for factiiiAuto.yml (auto-detected)
+  static autoConfigSchema = {
+    package_manager: 'string',
+    node_version: 'string',
+    pnpm_version: 'string',
+    dockerfile: 'string'
+  };
+  
   // ============================================================
   // FIXES - All issues this plugin can detect and resolve
   // ============================================================
@@ -37,16 +50,11 @@ class FactiiiPipeline {
         return !fs.existsSync(path.join(rootDir, 'factiii.yml'));
       },
       fix: async (config, rootDir) => {
-        // Copy template
-        const templatePath = path.join(__dirname, '../../../../templates/factiii.yml.example');
-        const destPath = path.join(rootDir, 'factiii.yml');
-        if (fs.existsSync(templatePath)) {
-          fs.copyFileSync(templatePath, destPath);
-          return true;
-        }
-        return false;
+        // Generate from plugin schemas
+        const { generateFactiiiYml } = require('../../../generators/generate-factiii-yml');
+        return generateFactiiiYml(rootDir, { force: false });
       },
-      manualFix: 'Run: npx factiii fix (will create factiii.yml from template)'
+      manualFix: 'Run: npx factiii fix (will create factiii.yml from plugin schemas)'
     },
     {
       id: 'missing-workflows',
@@ -144,6 +152,105 @@ class FactiiiPipeline {
   // ============================================================
   // STATIC METHODS
   // ============================================================
+  
+  /**
+   * Auto-detect pipeline configuration
+   */
+  static async detectConfig(rootDir) {
+    return {
+      package_manager: this.detectPackageManager(rootDir),
+      node_version: this.detectNodeVersion(rootDir),
+      pnpm_version: this.detectPnpmVersion(rootDir),
+      dockerfile: this.findDockerfile(rootDir)
+    };
+  }
+  
+  /**
+   * Detect package manager
+   */
+  static detectPackageManager(rootDir) {
+    if (fs.existsSync(path.join(rootDir, 'pnpm-lock.yaml'))) {
+      return 'pnpm';
+    }
+    if (fs.existsSync(path.join(rootDir, 'yarn.lock'))) {
+      return 'yarn';
+    }
+    if (fs.existsSync(path.join(rootDir, 'package-lock.json'))) {
+      return 'npm';
+    }
+    return 'npm';
+  }
+  
+  /**
+   * Detect Node.js version from package.json
+   */
+  static detectNodeVersion(rootDir) {
+    const packageJsonPath = path.join(rootDir, 'package.json');
+    if (!fs.existsSync(packageJsonPath)) {
+      return null;
+    }
+    
+    try {
+      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      if (pkg?.engines?.node) {
+        const cleaned = pkg.engines.node.replace(/[^0-9.]/g, '');
+        return cleaned || null;
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Detect pnpm version from package.json
+   */
+  static detectPnpmVersion(rootDir) {
+    const packageJsonPath = path.join(rootDir, 'package.json');
+    if (!fs.existsSync(packageJsonPath)) {
+      return null;
+    }
+    
+    try {
+      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      
+      if (pkg?.packageManager?.startsWith('pnpm@')) {
+        const version = pkg.packageManager.split('@')[1];
+        return version.split('.')[0];
+      }
+      
+      if (pkg?.engines?.pnpm) {
+        const cleaned = pkg.engines.pnpm.replace(/[^0-9.]/g, '');
+        return cleaned.split('.')[0];
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Find Dockerfile
+   */
+  static findDockerfile(rootDir) {
+    const commonPaths = [
+      'Dockerfile',
+      'apps/server/Dockerfile',
+      'packages/server/Dockerfile',
+      'backend/Dockerfile',
+      'server/Dockerfile'
+    ];
+    
+    for (const relativePath of commonPaths) {
+      if (fs.existsSync(path.join(rootDir, relativePath))) {
+        return relativePath;
+      }
+    }
+    
+    return null;
+  }
   
   /**
    * Generate GitHub workflow files in the target repository

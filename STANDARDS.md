@@ -1,659 +1,555 @@
 # Factiii Stack Standards
 
-This document defines the architecture, plugin system, and development standards for the Factiii Stack infrastructure package.
+This document defines the architecture, patterns, and requirements for Factiii Stack plugins.
 
-## Philosophy
+## Plugin Categories
 
-**Single Approach:** Base package with auto-scanning plugins.
+All plugins must belong to one of four categories:
 
-Factiii scans your repository, identifies packages (Next.js, Expo, tRPC, Prisma), loads appropriate plugins, and handles deployment. Manual configuration is only required for settings that cannot be auto-detected.
+### 1. PIPELINES
+CI/CD systems that trigger deployments.
 
----
+**Examples:** GitHub Actions, GitLab CI, Jenkins
 
-## Plugin Architecture
+**Responsibilities:**
+- Generate workflow files
+- Trigger deployments via SSH
+- Manage pipeline secrets
 
-Factiii uses a plugin system with 5 categories:
+### 2. SERVERS
+Infrastructure where applications run.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     PLUGIN CATEGORIES                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  1. SERVERS     - Where code runs (compute targets)                 │
-│     ├── Simple: mac-mini, ubuntu-server                             │
-│     ├── Cloud: aws (free-tier, standard, enterprise configs)        │
-│     ├── Managed: vercel, fly-io, railway                            │
-│     └── Kubernetes: k8s (aws-eks, gke, self-hosted configs)         │
-│                                                                     │
-│  2. PIPELINES   - How code flows & where secrets are stored         │
-│     ├── github-actions (GitHub Secrets)                             │
-│     ├── gitlab-ci (GitLab Variables)                                │
-│     ├── jenkins (Jenkins Credentials)                               │
-│     └── manual (local env files)                                    │
-│                                                                     │
-│  3. FRAMEWORKS  - What gets deployed (app/service types)            │
-│     ├── Apps: expo, nextjs, static                                  │
-│     ├── Services: prisma-trpc-server, express                       │
-│     └── Data: postgres, mysql, redis                                │
-│                                                                     │
-│  4. ADDONS      - Extensions with plugin dependencies               │
-│     ├── aws-ses (requires: aws server + email-capable framework)    │
-│     ├── clerk-auth (requires: nextjs framework)                     │
-│     ├── stripe (requires: framework with API routes)                │
-│     └── s3-storage (requires: aws server + upload-capable framework)│
-│                                                                     │
-│  Plugin Dependencies: Addons declare requirements on other plugins  │
-│  Example: aws-ses addon needs aws server AND a framework that       │
-│  sends email. Factiii validates all dependencies are met.           │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+**Examples:** Mac Mini, AWS EC2, Vercel, Ubuntu Server
 
-### All Plugins Follow the Same Pattern
+**Responsibilities:**
+- Provision infrastructure
+- Deploy containers/applications
+- Manage server configuration
 
-Every plugin implements the **scan → fix → deploy** pattern:
+### 3. FRAMEWORKS
+Application frameworks and databases.
+
+**Examples:** Prisma+tRPC, Next.js, Expo
+
+**Responsibilities:**
+- Detect framework presence
+- Run migrations
+- Build and prepare applications
+
+### 4. ADDONS
+Extensions to frameworks.
+
+**Examples:** Auth (Clerk, Auth.js), Payments (Stripe), Storage (S3)
+
+**Responsibilities:**
+- Configure integrations
+- Validate API keys
+- Setup SDK clients
+
+## Plugin Structure
+
+### Required Static Properties
 
 ```javascript
-class Plugin {
-  // ============ SCAN (npx factiii) ============
-  async scanDev(config)      // Check local requirements
-  async scanGitHub(config)   // Check GitHub secrets exist
-  async scanServer(config)   // Check server state
+class MyPlugin {
+  // REQUIRED
+  static id = 'my-plugin';           // Unique identifier
+  static category = 'framework';      // pipeline|server|framework|addon
+  static version = '1.0.0';          // Semantic version
   
-  // ============ FIX (npx factiii fix) ============
-  async fixDev(issues)       // Fix local issues
-  async fixGitHub(issues)    // Upload secrets to GitHub
-  // NOTE: fixServer() is reserved for deploy
+  // REQUIRED: Config schemas
+  static configSchema = {};          // User-editable (factiii.yml)
+  static autoConfigSchema = {};      // Auto-detected (factiiiAuto.yml)
   
-  // ============ DEPLOY ============
-  async deploy(config)       // Deploy to server
-  async undeploy(config)     // Remove from server
+  // REQUIRED: Fixes array
+  static fixes = [];                 // Issues this plugin can detect/fix
   
-  // ============ METADATA ============
-  static requiredSecrets     // What secrets this plugin needs
-  static factiiiYmlSettings     // Manual settings (user configures)
-  static factiiiAutoSettings    // Auto-detected settings
-  static capabilities        // What this plugin provides
+  // OPTIONAL
+  static requiredEnvVars = [];       // Environment variables needed
+  static helpText = {};              // Help text for secrets/config
 }
 ```
 
----
+### Config Schemas
 
-## Init/Fix/Deploy Pattern
+#### configSchema - User-Editable Settings
 
-### The Fundamental Principle
+Define settings that users must or can configure:
 
-For **every issue** a plugin can detect, it MUST provide:
+```javascript
+static configSchema = {
+  my_plugin: {
+    api_key: 'EXAMPLE-your-api-key',  // EXAMPLE- prefix for required
+    endpoint: 'https://api.example.com',
+    timeout: 5000                       // Optional with default
+  }
+};
+```
 
-1. **SCAN function** - Detects the issue
-2. **FIX function** - Resolves the issue (or `null` if manual fix required)
-3. **EXPLANATION** - How to fix manually if no auto-fix
-4. **STAGE** - Which stage this applies to (dev/github/staging/prod)
+This gets merged into `factiii.yml`:
 
-### Issue Structure
+```yaml
+name: my-app
+environments: {...}
+my_plugin:
+  api_key: EXAMPLE-your-api-key
+  endpoint: https://api.example.com
+  timeout: 5000
+```
+
+#### autoConfigSchema - Auto-Detected Settings
+
+Define what your plugin can auto-detect:
+
+```javascript
+static autoConfigSchema = {
+  has_my_plugin: 'boolean',
+  my_plugin_version: 'string',
+  my_plugin_config_path: 'string'
+};
+```
+
+#### detectConfig() - Auto-Detection Logic
+
+Implement detection logic:
+
+```javascript
+static async detectConfig(rootDir) {
+  const pkgPath = path.join(rootDir, 'package.json');
+  if (!fs.existsSync(pkgPath)) return null;
+  
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+  
+  if (!deps['my-plugin']) return null;
+  
+  return {
+    has_my_plugin: true,
+    my_plugin_version: deps['my-plugin'].replace(/^[\^~]/, ''),
+    my_plugin_config_path: this.findConfig(rootDir)
+  };
+}
+```
+
+## Fixes Array
+
+The `fixes` array is the core of the plugin system. Each fix defines:
+- What to scan for (the `scan()` function)
+- How to fix it (the `fix()` function)
+- Manual instructions if auto-fix not possible
+
+### Fix Structure
+
+```javascript
+static fixes = [
+  {
+    id: 'unique-fix-id',
+    stage: 'dev',              // dev|secrets|staging|prod
+    severity: 'critical',      // critical|warning|info
+    description: 'Human-readable description',
+    
+    // Scan function - returns true if problem exists
+    scan: async (config, rootDir) => {
+      return !config.my_plugin?.api_key;
+    },
+    
+    // Fix function - returns true if fixed successfully
+    fix: async (config, rootDir) => {
+      // Auto-fix logic
+      return true;
+    },
+    
+    // Manual fix instructions
+    manualFix: 'Add api_key to factiii.yml'
+  }
+];
+```
+
+### The Four Stages
+
+Every fix must specify which stage it applies to:
+
+**dev** - Local development
+- Check local dependencies
+- Validate configuration files
+- Ensure dev tools installed
+
+**secrets** - GitHub/Pipeline secrets
+- Validate GitHub secrets exist
+- Check API keys are set
+- Verify credentials
+
+**staging** - Staging server
+- Check server connectivity
+- Validate staging environment
+- Ensure staging database exists
+
+**prod** - Production server
+- Check production connectivity
+- Validate production environment
+- Ensure production database exists
+
+### Severity Levels
+
+**critical** - Blocks deployment
+- Missing required configuration
+- Invalid credentials
+- Server unreachable
+
+**warning** - Should be fixed but not blocking
+- Outdated dependencies
+- Suboptimal configuration
+- Missing optional features
+
+**info** - Informational only
+- Suggestions for improvement
+- Best practice recommendations
+
+## Deploy Method
+
+Every plugin must implement a `deploy()` method:
+
+```javascript
+async deploy(config, environment) {
+  if (environment === 'dev') {
+    // Start local development
+    return this.deployDev(config);
+  } else if (environment === 'staging') {
+    // Deploy to staging
+    return this.deployStaging(config);
+  } else if (environment === 'prod') {
+    // Deploy to production
+    return this.deployProd(config);
+  }
+  
+  return { success: false, error: 'Unsupported environment' };
+}
+```
+
+Return format:
 
 ```javascript
 {
-  id: 'missing-ssh-key',
-  stage: 'github',           // dev | github | staging | prod
-  severity: 'critical',      // critical | warning | info
-  description: 'STAGING_SSH secret not found in GitHub',
-  canAutoFix: true,
-  fix: async () => { /* upload secret */ },
-  manualFix: 'Go to GitHub Settings → Secrets → Add STAGING_SSH'
+  success: true|false,
+  message: 'Optional success message',
+  error: 'Optional error message'
 }
 ```
 
-### Command Behavior by Stage
+## Environment Variables
 
-| Command | Dev | GitHub | Staging/Prod |
-|---------|-----|--------|--------------|
-| `npx factiii` | Scan + auto-fix minor | Scan only | Scan only |
-| `npx factiii fix` | Fix all | Fix all | WARN only (shows pending) |
-| `npx factiii deploy` | Scan | Scan | Fix + Deploy |
-
-### Stage Progression
-
-Plugins must understand what's required to reach the next stage:
-
-```
-DEV → GITHUB → STAGING → PROD
- │       │         │        │
- │       │         │        └── Requires: PROD_SSH
- │       │         └── Requires: STAGING_SSH  
- │       └── Requires: GITHUB_TOKEN, workflows pushed
- └── Requires: factiii.yml, factiiiAuto.yml
-```
-
-### What Each Stage Can Fix
-
-**Dev (local):**
-- Generate factiiiAuto.yml
-- Generate workflows
-- Update .gitignore
-- Create env templates
-- Install dependencies
-
-**GitHub (via API):**
-- Upload secrets (SSH keys, env vars)
-- Cannot: modify workflows (must be pushed via git)
-
-**Staging/Prod (via workflow/SSH):**
-- Upload factiii.yml as {repo}.yml
-- Regenerate docker-compose.yml
-- Regenerate nginx.conf
-- Deploy containers
-- Run migrations
-
----
-
-## Universal Interfaces
-
-Plugins can implement **universal interfaces** for interoperability. If two plugins implement the same interface, they use the same config and can work together.
-
-### Universal Environment Variables
+Plugins can declare required environment variables:
 
 ```javascript
-// Plugins MUST use these if they provide the capability
-
-// ============ DATABASE ============
-DATABASE_URL        // Primary connection string
-DATABASE_URL_READ   // Read replica (optional)
-DATABASE_POOL_SIZE  // Connection pool size
-
-// ============ STORAGE ============
-STORAGE_URL         // Object storage endpoint
-STORAGE_BUCKET      // Default bucket name
-STORAGE_ACCESS_KEY  // Access key (secret)
-STORAGE_SECRET_KEY  // Secret key (secret)
-
-// ============ CACHE ============
-CACHE_URL           // Cache connection string (redis://host:6379)
-
-// ============ EMAIL ============
-EMAIL_FROM          // Default from address
-EMAIL_PROVIDER_URL  // Email API endpoint
-EMAIL_API_KEY       // Email service API key (secret)
-
-// ============ SITE ============
-SITE_URL            // Public URL of the site
-API_URL             // API endpoint URL
-CDN_URL             // CDN URL for assets
-
-// ============ AUTH ============
-AUTH_SECRET         // Secret for signing tokens (secret)
-AUTH_URL            // Auth callback URL
+static requiredEnvVars = [
+  'DATABASE_URL',
+  'API_KEY',
+  'SECRET_TOKEN'
+];
 ```
 
-### Universal Settings
+The system automatically generates fixes to validate these exist in:
+- `.env.example` (dev stage)
+- `.env.staging` (staging stage)
+- `.env.prod` (prod stage)
 
-Standard settings that plugins can implement:
+## Plugin Lifecycle
 
-```yaml
-# REPLICATION - For databases that support it
-replication:
-  enabled: true
-  mode: async           # async | sync | semi-sync
-  replicas:
-    - target: production-replica
-      role: read        # read | failover | backup
+### 1. Load
+Plugins are loaded from:
+- `src/plugins/pipelines/`
+- `src/plugins/servers/`
+- `src/plugins/frameworks/`
+- `src/plugins/addons/`
+- `node_modules/@factiii/stack-plugin-*`
 
-# BACKUP - For databases and storage
-backup:
-  enabled: true
-  schedule: daily       # hourly | daily | weekly
-  retention_days: 7
-  storage: s3-backup    # Reference to storage plugin
+### 2. Scan
+When `npx factiii scan` runs:
+1. All plugins' `fixes` arrays are collected
+2. Each fix's `scan()` function is called
+3. Problems are grouped by stage
+4. Results are displayed to user
 
-# SCALING - For servers that support it
-scaling:
-  enabled: false
-  min_instances: 1
-  max_instances: 3
-  target_cpu: 70
-  target_memory: 80
+### 3. Fix
+When `npx factiii fix` runs:
+1. Scan is run first to find problems
+2. Fixes are reordered by stage (dev → secrets → staging → prod)
+3. Each fix's `fix()` function is called
+4. Manual fixes are displayed for unfixable issues
 
-# HEALTH CHECK - For all deployable apps
-healthCheck:
-  endpoint: /health
-  interval_seconds: 30
-  timeout_seconds: 5
-  healthy_threshold: 2
-  unhealthy_threshold: 3
+### 4. Deploy
+When `npx factiii deploy --{env}` runs:
+1. Scan is run first - aborts if problems found
+2. Environment-specific `.env` file is loaded
+3. Each plugin's `deploy()` method is called
+4. Health checks are performed
 
-# LOGGING - All frameworks should support
-logging:
-  level: info           # debug | info | warn | error
-  format: json          # json | text
-  destination: stdout   # stdout | file | service
-```
-
-### Interface Compatibility
-
-Plugins that implement the same interface can work together:
-
-| Interface | Env Vars | Settings | Implemented By |
-|-----------|----------|----------|----------------|
-| **Database** | DATABASE_URL | replication, backup | postgres, mysql, aws-rds |
-| **Storage** | STORAGE_URL, STORAGE_BUCKET | backup, lifecycle | s3, gcs, minio |
-| **Cache** | CACHE_URL | clustering, eviction | redis, memcached |
-| **Email** | EMAIL_FROM, EMAIL_API_KEY | templates, rate_limit | ses, sendgrid, postmark |
-
----
-
-## Framework/Server Compatibility
-
-Frameworks declare requirements, servers declare capabilities:
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                     FRAMEWORK / SERVER COMPATIBILITY                     │
-├────────────────┬─────────┬────────┬──────────────┬────────┬─────────────┤
-│                │mac-mini │ ubuntu │aws-free-tier │ vercel │ aws-k8s     │
-├────────────────┼─────────┼────────┼──────────────┼────────┼─────────────┤
-│ expo           │  ✓ full │ ✓ droid│      ✓       │   ✗    │     ✓       │
-│ nextjs         │    ✓    │   ✓    │      ✓       │ ✓ best │     ✓       │
-│ prisma-server  │  ✓ ext  │ ✓ ext  │    ✓ rds     │   ✗    │   ✓ ext     │
-│ postgres       │    ✓    │   ✓    │    ✓ rds     │   ✗    │     ✓       │
-│ static         │    ✓    │   ✓    │      ✓       │   ✓    │     ✓       │
-├────────────────┴─────────┴────────┴──────────────┴────────┴─────────────┤
-│ Legend: ✓ = supported, ✗ = not supported                                │
-│         full = full iOS+Android, droid = Android only                   │
-│         ext = external DB required, rds = managed DB included           │
-│         best = optimized for this platform                              │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-**Note:** Addons can further extend compatibility requirements. For example, the `auth` addon requires specific models in the Prisma schema.
-
----
-
-## Addons (Framework Extensions)
-
-Addons extend base frameworks with validation and enhanced functionality. They don't deploy independently - they validate and enhance the frameworks they attach to.
-
-### How Addons Work
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     FRAMEWORK + ADDON COMPOSITION                   │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  BASE FRAMEWORK: prisma-trpc-server                                 │
-│     └── Scans for: schema.prisma, trpc routes                       │
-│                                                                     │
-│  ADDONS (extend & validate):                                        │
-│     ├── auth      - Validates: User model, Session model, routes    │
-│     ├── payments  - Validates: Subscription model, Stripe config    │
-│     ├── storage   - Validates: File model, upload routes            │
-│     └── email     - Validates: EmailTemplate model, send config     │
-│                                                                     │
-│  ADDON COMPATIBILITY:                                               │
-│     └── auth addon works with: prisma-trpc-server, nextjs, expo     │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Addon Interface
-
-Addons follow the same scan/fix/deploy pattern but declare which frameworks they're compatible with:
+## Example Plugin Implementation
 
 ```javascript
-class AuthAddon extends Addon {
-  static id = 'auth';
-  static category = 'addon';
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
+class MyFrameworkPlugin {
+  // ============================================================
+  // STATIC METADATA
+  // ============================================================
   
-  // Which frameworks this addon can extend
-  static compatibleWith = ['prisma-trpc-server', 'nextjs', 'expo'];
+  static id = 'my-framework';
+  static name = 'My Framework';
+  static category = 'framework';
+  static version = '1.0.0';
   
-  // Schema requirements (for Prisma-based frameworks)
-  static schemaRequirements = {
-    models: ['User', 'Session'],
-    fields: {
-      User: ['id', 'email', 'passwordHash', 'createdAt'],
-      Session: ['id', 'userId', 'token', 'expiresAt']
+  static requiredEnvVars = ['DATABASE_URL'];
+  
+  // ============================================================
+  // CONFIG SCHEMAS
+  // ============================================================
+  
+  static configSchema = {
+    my_framework: {
+      migrations_path: null  // Optional override
     }
   };
   
-  // Route requirements (for tRPC-based frameworks)
-  static routeRequirements = [
-    'auth.login',
-    'auth.logout',
-    'auth.register',
-    'auth.refresh'
+  static autoConfigSchema = {
+    has_my_framework: 'boolean',
+    my_framework_version: 'string'
+  };
+  
+  // ============================================================
+  // AUTO-DETECTION
+  // ============================================================
+  
+  static async detectConfig(rootDir) {
+    const pkgPath = path.join(rootDir, 'package.json');
+    if (!fs.existsSync(pkgPath)) return null;
+    
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    
+    if (!deps['my-framework']) return null;
+    
+    return {
+      has_my_framework: true,
+      my_framework_version: deps['my-framework'].replace(/^[\^~]/, '')
+    };
+  }
+  
+  // ============================================================
+  // FIXES
+  // ============================================================
+  
+  static fixes = [
+    {
+      id: 'missing-my-framework',
+      stage: 'dev',
+      severity: 'info',
+      description: 'My Framework not detected',
+      scan: async (config, rootDir) => {
+        const detected = await this.detectConfig(rootDir);
+        return !detected;
+      },
+      fix: null,
+      manualFix: 'Install: npm install my-framework'
+    },
+    {
+      id: 'pending-migrations-staging',
+      stage: 'staging',
+      severity: 'warning',
+      description: 'Database migrations pending on staging',
+      scan: async (config, rootDir) => {
+        // Check if migrations are pending
+        return await this.hasPendingMigrations('staging');
+      },
+      fix: async (config, rootDir) => {
+        await this.runMigrations('staging');
+        return true;
+      },
+      manualFix: 'Run: npx my-framework migrate'
+    }
   ];
   
-  // Secrets this addon needs
-  static requiredSecrets = ['AUTH_SECRET'];
+  // ============================================================
+  // DEPLOYMENT
+  // ============================================================
   
-  // Settings in factiii.yml
-  static factiiiYmlSettings = {
-    jwt: {
-      access_expiry: '15m',
-      refresh_expiry: '7d'
+  async deploy(config, environment) {
+    if (environment === 'dev') {
+      console.log('   Running dev migrations...');
+      execSync('npx my-framework migrate:dev', { stdio: 'inherit' });
+    } else {
+      console.log(`   Running ${environment} migrations...`);
+      execSync('npx my-framework migrate:deploy', { stdio: 'inherit' });
     }
-  };
+    
+    return { success: true, message: 'Migrations complete' };
+  }
   
-  async scanDev(config) {
-    const issues = [];
-    // Validate schema.prisma has required models
-    // Validate trpc has required routes
-    // Check JWT config exists
-    return issues;
+  // ============================================================
+  // HELPER METHODS
+  // ============================================================
+  
+  async hasPendingMigrations(environment) {
+    // Implementation
+  }
+  
+  async runMigrations(environment) {
+    // Implementation
   }
 }
+
+module.exports = MyFrameworkPlugin;
 ```
 
-### Deployment Options
+## External Plugin Development
 
-Addons can be deployed in different ways:
-
-| Option | Description | Use Case |
-|--------|-------------|----------|
-| **Embedded** | Addon code runs inside the base framework | Simple apps, single container |
-| **Sidecar** | Addon runs as separate container on same server | Microservices, isolation |
-| **Split** | Addon runs on different server entirely | Scale independently |
-
-### factiii.yml with Addons
-
-```yaml
-apps:
-  # Embedded: auth runs inside the server
-  - framework: prisma-trpc-server
-    path: apps/server
-    addons:
-      - auth
-      - payments
-    auth:
-      jwt:
-        access_expiry: 15m
-        refresh_expiry: 7d
-    
-  # The auth addon also validates these frameworks
-  - framework: nextjs
-    path: apps/web
-    addons:
-      - auth    # Validates auth context, middleware
-    
-  - framework: expo
-    path: apps/mobile
-    addons:
-      - auth    # Validates auth storage, token handling
-```
-
-### Available Addons (Planned)
-
-| Addon | Compatible With | Validates |
-|-------|-----------------|-----------|
-| **auth** | prisma-trpc-server, nextjs, expo | User/Session models, JWT config, auth routes |
-| **payments** | prisma-trpc-server | Subscription model, Stripe config, webhook routes |
-| **storage** | prisma-trpc-server | File model, S3 config, upload routes |
-| **email** | prisma-trpc-server | Email templates, provider config |
-| **notifications** | prisma-trpc-server, expo | Push tokens, notification routes |
-
----
-
-## Configuration Standards
-
-### Two Configuration Files
-
-| File | Purpose | Editable By |
-|------|---------|-------------|
-| `factiii.yml` | Settings that **cannot** be auto-detected | User (manual) |
-| `factiiiAuto.yml` | Settings that **are** auto-detected | Factiii (automatic) |
-
-### factiii.yml (Manual Settings)
-
-Use the `EXAMPLE-` prefix for settings that need user input:
-
-```yaml
-name: EXAMPLE-myapp
-ssl_email: EXAMPLE-admin@example.com
-
-aws:
-  access_key_id: EXAMPLE-AKIAXXXXXXXXXXXXXXXX
-  region: us-east-1
-
-environments:
-  staging:
-    domain: EXAMPLE-staging.myapp.com
-    host: EXAMPLE-192.168.1.100
-```
-
-**Factiii blocks deployment if any `EXAMPLE-` values remain.**
-
-### factiiiAuto.yml (Auto-Detected Settings)
-
-Generated by `npx factiii`. Override with the `OVERRIDE` keyword:
-
-```yaml
-# Auto-detected
-ssh_user: ubuntu
-prisma_schema: apps/server/prisma/schema.prisma
-
-# User override
-dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
-```
-
----
-
-## Secrets vs Configuration
-
-Factiii minimizes secrets by putting non-sensitive values in config files.
-
-### What Goes Where
-
-| Setting | Location | Why |
-|---------|----------|-----|
-| `{ENV}_SSH` | GitHub Secrets | SSH private keys are sensitive |
-| `AWS_SECRET_ACCESS_KEY` | GitHub Secrets | AWS secret is sensitive |
-| `{ENV}_ENVS` | GitHub Secrets (optional) | App environment variables |
-| `aws.access_key_id` | factiii.yml | Identifies AWS user, not secret |
-| `aws.region` | factiii.yml | Not secret |
-| `environments.{env}.host` | factiii.yml | Server IP/hostname, not secret |
-| `ssh_user` | factiiiAuto.yml | Defaults to ubuntu |
-
-### Required GitHub Secrets (Minimal)
-
-| Secret | Description |
-|--------|-------------|
-| `STAGING_SSH` | SSH private key for staging server |
-| `PROD_SSH` | SSH private key for production server |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key (only secret AWS value) |
-
----
-
-## Commands
-
-### `npx factiii`
-
-**Purpose:** Scan everything, auto-fix dev only, report all issues.
-
-**What it does:**
-- **Dev:** Scan + auto-fix (generate configs, install deps)
-- **GitHub:** Scan only (check secrets exist)
-- **Servers:** Scan only (check deployment state)
-
-**Output:** Full report of all issues with what `npx factiii fix` would change.
-
-### `npx factiii fix`
-
-**Purpose:** Fix dev + GitHub issues, warn about server issues.
-
-**What it does:**
-1. Runs scan first to discover all issues
-2. Fixes all dev issues
-3. Uploads missing secrets to GitHub
-4. Reports pending server changes (for deploy to handle)
-
-**Does NOT:** Deploy containers, modify nginx/docker-compose on servers.
-
-### `npx factiii deploy`
-
-**Purpose:** Run scan, then fix servers and deploy.
-
-**What it does:**
-1. Runs scan - blocks if critical issues
-2. Uploads factiii.yml to servers
-3. Regenerates nginx/docker-compose
-4. Deploys containers
-5. Runs migrations (production only)
-
----
-
-## Pipeline Configuration
-
-The `github-actions` pipeline (default) generates these workflows:
-
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| `factiii-deploy.yml` | Manual (npx factiii deploy) | Direct deployment |
-| `factiii-staging.yml` | PR/push to main | Auto-deploy to staging |
-| `factiii-production.yml` | Merge to production | Auto-deploy to production |
-| `factiii-undeploy.yml` | Manual | Cleanup/remove deployment |
-
----
-
-## Current Status & Roadmap
-
-### Currently Implemented
-
-- Factiii engine with scan/fix/deploy commands
-- Secrets plugin: `github`
-- Server plugins: `mac-mini`, `aws-ec2` (partial)
-- Pipeline: `github-actions` (hardcoded)
-- Framework detection: Prisma only
-
-### Roadmap
-
-| Phase | Plugin | Description |
-|-------|--------|-------------|
-| 1 | **Factiii Stack** | Stabilize plugin architecture (Current) |
-| 2 | **Expo** | Mobile app builds (iOS + Android) |
-| 3 | **Prisma/tRPC Server** | API server framework |
-| 4 | **AWS Free Tier** | Bundled EC2 + RDS + ECR + S3 |
-| 5 | **Next.js/Vercel** | Managed Next.js hosting |
-| 6 | **Next.js/Server** | Self-hosted Next.js |
-
-### Future Universal Interfaces
-
-- Database replication across clouds (postgres ↔ aws-rds)
-- Cross-platform storage (S3-compatible everywhere)
-- Unified logging and monitoring
-- Multi-cloud deployments
-
----
-
-## Development in This Repository
-
-**Important:** This repository IS the Factiii Stack package itself.
-
-**DO NOT** run `npx factiii` commands inside this repository.
-
-### Testing Changes
+### 1. Create Plugin Package
 
 ```bash
-cd /path/to/test-app
-npm link /path/to/infrastructure
-npx factiii
+mkdir my-factiii-plugin
+cd my-factiii-plugin
+npm init -y
 ```
 
-### Key Directories
+### 2. Implement Plugin
 
-```
-/infrastructure/
-├── bin/factiii              # CLI entry point
-├── src/
-│   ├── cli/              # Command implementations
-│   ├── plugins/          # Plugin implementations
-│   │   ├── secrets/      # Secrets plugins (github, etc.)
-│   │   ├── server/       # Server plugins (mac-mini, etc.)
-│   │   └── interfaces/   # Plugin interfaces
-│   ├── generators/       # Config generators
-│   ├── universal/        # Universal interfaces & env vars
-│   ├── utils/            # Utilities
-│   └── workflows/        # Workflow templates
-├── templates/            # Config templates
-└── test/                 # Test suites
-```
+Create `index.js` following the structure above.
 
----
-
-## Writing Plugins
-
-### Plugin Checklist
-
-Every plugin MUST:
-
-1. Implement `scanDev()`, `scanGitHub()`, `scanServer()`
-2. Implement `fixDev()`, `fixGitHub()`
-3. Implement `deploy()`, `undeploy()`
-4. Define `requiredSecrets` - what secrets it needs
-5. Define `factiiiYmlSettings` - manual settings
-6. Define `factiiiAutoSettings` - auto-detected settings
-7. For every issue it can detect, provide a fix or explanation
-
-### Plugin Template
+### 3. Export Plugin
 
 ```javascript
-const { Plugin } = require('@factiii/stack');
-
-class MyPlugin extends Plugin {
-  static id = 'my-plugin';
-  static category = 'framework';  // secrets | server | framework | pipeline
-  
-  static requiredSecrets = ['MY_API_KEY'];
-  
-  static factiiiYmlSettings = {
-    my_setting: 'EXAMPLE-value'
-  };
-  
-  static factiiiAutoSettings = {
-    detected_setting: null  // Will be auto-detected
-  };
-  
-  async scanDev(config) {
-    const issues = [];
-    // Check for issues, add to array
-    return issues;
-  }
-  
-  async fixDev(issues) {
-    for (const issue of issues) {
-      if (issue.canAutoFix) {
-        await issue.fix();
-      }
-    }
-  }
-  
-  async deploy(config) {
-    // Deploy logic
-  }
+// index.js
+class MyPlugin {
+  // ... implementation
 }
 
 module.exports = MyPlugin;
 ```
 
-### Using Universal Interfaces
+### 4. Publish
 
-If your plugin provides a universal capability, use the standard env vars:
-
-```javascript
-class PostgresPlugin extends Plugin {
-  static implements = ['database', 'replication', 'backup'];
-  
-  // Use universal env vars
-  static envVars = {
-    DATABASE_URL: { required: true },
-    DATABASE_URL_READ: { required: false }
-  };
-  
-  // Use universal settings
-  static settings = {
-    replication: UniversalSettings.replication,
-    backup: UniversalSettings.backup
-  };
-}
+```bash
+npm publish
 ```
 
-This ensures your plugin is compatible with any other plugin that uses the database interface.
+### 5. Use in Projects
+
+```bash
+npm install my-factiii-plugin
+```
+
+Add to `factiii.yml`:
+
+```yaml
+plugins:
+  - my-factiii-plugin
+```
+
+## Best Practices
+
+### 1. Single Responsibility
+Each plugin should handle one domain (one framework, one server type, etc.)
+
+### 2. Idempotent Operations
+Fixes and deployments should be safe to run multiple times.
+
+### 3. Clear Error Messages
+Always provide actionable error messages and manual fix instructions.
+
+### 4. Fail Fast
+Validate configuration early in the scan phase, not during deployment.
+
+### 5. Minimal Workflows
+Keep GitHub Actions workflows thin - just SSH and call CLI.
+
+### 6. Test Locally
+All deployment logic should be testable locally via `npx factiii deploy --dev`.
+
+### 7. Document Everything
+Provide clear `helpText` for all secrets and configuration options.
+
+## Plugin Approval
+
+To get your plugin approved and listed in `approved.json`:
+
+1. Open a PR to this repository
+2. Add your plugin to `src/plugins/approved.json`
+3. Include:
+   - Plugin source code or npm package link
+   - Documentation
+   - Example usage
+   - Test results
+
+Approved plugins load without warnings. Unapproved plugins show a warning but still work.
+
+## Architecture Diagrams
+
+### Plugin Lifecycle
+
+```
+┌─────────────┐
+│   npx       │
+│  factiii    │
+└──────┬──────┘
+       │
+       ├─ scan ──────┐
+       │             │
+       ├─ fix ───────┼──► Load Plugins
+       │             │
+       └─ deploy ────┘
+                     │
+                     ▼
+            ┌────────────────┐
+            │ Plugin Loader  │
+            └────────┬───────┘
+                     │
+         ┌───────────┼───────────┐
+         │           │           │
+    ┌────▼────┐ ┌───▼────┐ ┌───▼────┐
+    │Pipeline │ │ Server │ │Framework│
+    │ Plugins │ │Plugins │ │ Plugins │
+    └─────────┘ └────────┘ └─────────┘
+```
+
+### Config Generation
+
+```
+Plugin.configSchema ──┐
+                      ├──► Merge ──► factiii.yml
+Plugin.configSchema ──┘
+
+Plugin.detectConfig() ──┐
+                        ├──► Merge ──► factiiiAuto.yml
+Plugin.detectConfig() ──┘
+```
+
+### Deployment Flow
+
+```
+npx factiii deploy --staging
+         │
+         ├─ 1. Scan (abort if problems)
+         │
+         ├─ 2. Load .env.staging
+         │
+         ├─ 3. Call Plugin.deploy(config, 'staging')
+         │      │
+         │      ├─ Pipeline: Trigger workflow
+         │      ├─ Server: Build & start containers
+         │      └─ Framework: Run migrations
+         │
+         └─ 4. Health checks
+```
+
+## Summary
+
+Factiii Stack's plugin architecture enables:
+- **Modularity**: Each plugin handles one domain
+- **Extensibility**: Easy to add new frameworks/servers
+- **Testability**: All logic in JavaScript, not bash
+- **Clarity**: Clear separation of concerns
+- **Maintainability**: Config logic lives with the plugin
+
+For questions or contributions, see the main repository.

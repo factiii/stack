@@ -14,6 +14,8 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const scan = require('./scan');
+const { generateFactiiiYml } = require('../generators/generate-factiii-yml');
+const { generateFactiiiAuto } = require('../generators/generate-factiii-auto');
 
 /**
  * Reorder fixes based on dependencies (stage order, then severity)
@@ -66,6 +68,21 @@ async function fix(options = {}) {
   console.log('═'.repeat(60));
   console.log('🔧 FACTIII FIX');
   console.log('═'.repeat(60) + '\n');
+  
+  // 0. Generate missing config files first
+  console.log('📋 Stage 0: Checking configuration files...\n');
+  
+  if (!fs.existsSync(path.join(rootDir, 'factiii.yml'))) {
+    console.log('📝 Generating factiii.yml from plugin schemas...\n');
+    generateFactiiiYml(rootDir);
+  }
+  
+  if (!fs.existsSync(path.join(rootDir, 'factiiiAuto.yml'))) {
+    console.log('📝 Generating factiiiAuto.yml from plugin detection...\n');
+    await generateFactiiiAuto(rootDir);
+  }
+  
+  console.log('');
   
   // 1. Run scan to get all problems (fixes needed)
   console.log('📋 Stage 1: Discovering issues...\n');

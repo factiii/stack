@@ -26,6 +26,20 @@ class AWSPlugin {
   // Env vars this plugin requires
   static requiredEnvVars = [];
   
+  // Schema for factiii.yml (user-editable)
+  static configSchema = {
+    aws: {
+      config: 'ec2',  // Options: ec2, free-tier, standard, enterprise
+      access_key_id: 'EXAMPLE-AKIAXXXXXXXX',
+      region: 'us-east-1'
+    }
+  };
+  
+  // Schema for factiiiAuto.yml (auto-detected)
+  static autoConfigSchema = {
+    aws_cli_installed: 'boolean'
+  };
+  
   // Available configurations
   static configs = {
     'ec2': require('./configs/ec2'),
@@ -188,6 +202,18 @@ class AWSPlugin {
   // ============================================================
   // STATIC HELPER METHODS
   // ============================================================
+  
+  /**
+   * Auto-detect AWS configuration
+   */
+  static async detectConfig(rootDir) {
+    try {
+      execSync('which aws', { stdio: 'pipe' });
+      return { aws_cli_installed: true };
+    } catch {
+      return { aws_cli_installed: false };
+    }
+  }
   
   /**
    * Execute a command on a remote server via SSH

@@ -23,6 +23,16 @@ class MacMiniPlugin {
   // Env vars this plugin requires
   static requiredEnvVars = [];
   
+  // Schema for factiii.yml (user-editable)
+  static configSchema = {
+    // No user config needed - uses environments.staging.host
+  };
+  
+  // Schema for factiiiAuto.yml (auto-detected)
+  static autoConfigSchema = {
+    ssh_user: 'string'
+  };
+  
   static helpText = {
     SSH: `
    SSH private key for accessing the server.
@@ -175,6 +185,15 @@ class MacMiniPlugin {
   // ============================================================
   // STATIC HELPER METHODS
   // ============================================================
+  
+  /**
+   * Auto-detect Mac Mini configuration
+   */
+  static async detectConfig(rootDir) {
+    return {
+      ssh_user: 'ubuntu'  // Default SSH user
+    };
+  }
   
   /**
    * Execute a command on a remote server via SSH

@@ -66,13 +66,7 @@ try {
   // Plugin not available
 }
 
-// Legacy plugins (for backwards compatibility during migration)
-try {
-  const { GitHubSecretsStore } = require('./secrets/github');
-  registry.secrets['github'] = GitHubSecretsStore;
-} catch (e) {
-  // Plugin not available
-}
+// Note: Legacy secrets plugin removed - GitHub secrets now handled by pipeline plugin
 
 // ============================================================
 // REGISTRATION FUNCTIONS
@@ -267,6 +261,72 @@ function loadExternalPlugins(packageNames = [], trustedPlugins = []) {
 }
 
 // ============================================================
+// SCHEMA COLLECTION METHODS
+// ============================================================
+
+/**
+ * Collect all config schemas from plugins
+ * @returns {Object} Merged config schema from all plugins
+ */
+function collectConfigSchemas() {
+  const schema = {};
+  
+  for (const category of ['pipelines', 'servers', 'frameworks', 'addons']) {
+    for (const [id, PluginClass] of Object.entries(registry[category] || {})) {
+      if (PluginClass.configSchema) {
+        Object.assign(schema, PluginClass.configSchema);
+      }
+    }
+  }
+  
+  return schema;
+}
+
+/**
+ * Collect all auto config schemas from plugins
+ * @returns {Object} Merged auto config schema from all plugins
+ */
+function collectAutoConfigSchemas() {
+  const schema = {};
+  
+  for (const category of ['pipelines', 'servers', 'frameworks', 'addons']) {
+    for (const [id, PluginClass] of Object.entries(registry[category] || {})) {
+      if (PluginClass.autoConfigSchema) {
+        Object.assign(schema, PluginClass.autoConfigSchema);
+      }
+    }
+  }
+  
+  return schema;
+}
+
+/**
+ * Run detectConfig on all plugins
+ * @param {string} rootDir - Root directory to scan
+ * @returns {Promise<Object>} Merged detected config from all plugins
+ */
+async function detectAllConfigs(rootDir) {
+  const config = {};
+  
+  for (const category of ['pipelines', 'servers', 'frameworks', 'addons']) {
+    for (const [id, PluginClass] of Object.entries(registry[category] || {})) {
+      if (PluginClass.detectConfig) {
+        try {
+          const detected = await PluginClass.detectConfig(rootDir);
+          if (detected) {
+            Object.assign(config, detected);
+          }
+        } catch (e) {
+          console.warn(`Warning: Failed to detect config for ${id}: ${e.message}`);
+        }
+      }
+    }
+  }
+  
+  return config;
+}
+
+// ============================================================
 // EXPORTS
 // ============================================================
 
@@ -286,6 +346,11 @@ module.exports = {
   // External plugins
   loadExternalPlugins,
   isApprovedPlugin,
+  
+  // Schema collection
+  collectConfigSchemas,
+  collectAutoConfigSchemas,
+  detectAllConfigs,
   
   // Direct access to registries
   registry,
