@@ -201,8 +201,15 @@ class FactiiiPipeline {
         if (!fs.existsSync(workflowPath)) return false;
 
         const content = fs.readFileSync(workflowPath, 'utf8');
-        // Check if using old bloated workflow (has inline bash logic)
-        return content.includes('docker compose build') || content.length > 5000;
+        // Check if using old bloated workflow (has inline bash logic not from template)
+        if (content.includes('docker compose build')) return true;
+
+        // Compare against current template to see if outdated
+        const templatePath = path.join(__dirname, 'workflows', 'factiii-deploy.yml');
+        if (!fs.existsSync(templatePath)) return false;
+
+        const templateContent = fs.readFileSync(templatePath, 'utf8');
+        return content.trim() !== templateContent.trim();
       },
       fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         await FactiiiPipeline.generateWorkflows(rootDir);

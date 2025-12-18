@@ -1,6 +1,6 @@
 {
   "name": "@factiii/stack",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Infrastructure management package for deploying services to servers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,9 +14,10 @@
     "scripts/"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-assets",
     "build:watch": "tsc --watch",
     "clean": "rm -rf dist",
+    "copy-assets": "cp src/plugins/approved.json dist/plugins/ && mkdir -p dist/plugins/pipelines/factiii/workflows && cp src/plugins/pipelines/factiii/workflows/*.yml dist/plugins/pipelines/factiii/workflows/",
     "prebuild": "npm run clean",
     "prepublishOnly": "npm run build",
     "test": "jest",
