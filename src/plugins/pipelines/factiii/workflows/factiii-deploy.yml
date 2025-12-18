@@ -61,14 +61,33 @@ jobs:
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
+      - name: Bootstrap Node.js (one-time)
+        env:
+          HOST: ${{ steps.config.outputs.host }}
+          USER: ${{ steps.config.outputs.ssh_user }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          echo "🔍 Checking Node.js on server..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
+            'if ! command -v node &> /dev/null; then
+               echo "📦 Installing Node.js...";
+               if command -v brew &> /dev/null; then
+                 brew install node;
+               else
+                 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs;
+               fi;
+             else
+               echo "✅ Node.js already installed";
+             fi'
+
       - name: Deploy via CLI
         env:
           HOST: ${{ steps.config.outputs.host }}
           USER: ${{ steps.config.outputs.ssh_user }}
-          REPO_NAME: ${{ steps.config.outputs.repo_name }}
           ENVIRONMENT: ${{ inputs.environment }}
+          COMMIT_HASH: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
           GITHUB_REPO: ${{ github.repository }}
-          GITHUB_BRANCH: ${{ github.ref_name }}
         run: |
           if [ -z "$HOST" ]; then
             echo "❌ Missing host in factiii.yml: environments.$ENVIRONMENT.host"
@@ -77,37 +96,9 @@ jobs:
           
           echo "🚀 Deploying to $ENVIRONMENT ($HOST)..."
           
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" bash -s << EOF
-            set -e
-            REPO_DIR=~/.factiii/$REPO_NAME
-            
-            # Ensure directory exists and clone if needed
-            mkdir -p ~/.factiii
-            if [ ! -d "\$REPO_DIR" ]; then
-              echo "📦 Cloning repo..."
-              git clone git@github.com:$GITHUB_REPO.git \$REPO_DIR
-            fi
-            
-            cd \$REPO_DIR
-            
-            echo "🔄 Pulling latest code..."
-            git fetch
-            git checkout $GITHUB_BRANCH
-            git pull origin $GITHUB_BRANCH
-            
-            # Only install dependencies for staging (prod pulls pre-built images)
-            if [ "$ENVIRONMENT" == "staging" ]; then
-              echo "📦 Installing dependencies..."
-              if ! command -v pnpm &> /dev/null; then
-                echo "   Installing pnpm..."
-                npm install -g pnpm@9
-              fi
-              pnpm install
-            fi
-            
-            echo "🚀 Running deploy..."
-            npx factiii deploy --$ENVIRONMENT
-          EOF
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
+            "COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+             npx factiii deploy --$ENVIRONMENT --commit=$COMMIT_HASH --branch=$BRANCH"
           
           rm -f ~/.ssh/deploy_key
           echo "✅ Deployment complete!"

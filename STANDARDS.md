@@ -12,9 +12,98 @@ CI/CD systems that trigger deployments.
 **Examples:** GitHub Actions, GitLab CI, Jenkins
 
 **Responsibilities:**
-- Generate workflow files
-- Trigger deployments via SSH
-- Manage pipeline secrets
+- Generate workflow files (ultra-thin, only trigger + pass secrets)
+- Manage pipeline secrets (SSH keys, API tokens)
+- Check runtime prerequisites (Node.js, CLI tools)
+- Orchestrate plugin execution via scan/fix/deploy
+
+**CRITICAL: Workflow Files Must Be Ultra-Thin**
+
+Pipeline plugins generate workflow files, but these files should contain MINIMAL logic:
+
+**Workflows should ONLY:**
+- Trigger the deployment
+- Pass secrets (SSH keys, AWS credentials)
+- **Bootstrap Node.js (one-time prerequisite)** - Check if Node.js exists, install if missing
+- SSH to server and run CLI command
+
+**Workflows should NEVER contain:**
+- Server setup logic (Docker, git installation, pnpm, etc.)
+- Repository cloning/pulling
+- Dependency installation
+- Build logic
+- Bash scripts longer than 10 lines
+
+**Why?** All logic belongs in plugins (scan/fix/deploy methods), not workflows.
+
+**Exception: Node.js Bootstrap**
+
+Workflows include a one-time Node.js bootstrap step to solve the chicken-and-egg problem:
+- `npx factiii` requires Node.js to run
+- But we want plugins to handle Node.js installation
+- Solution: Workflows check if Node.js exists and install if missing (one-time)
+- After bootstrap, plugins verify Node.js is present for ongoing operations
+
+This is the ONLY server setup logic allowed in workflows.
+
+**Correct workflow pattern:**
+```yaml
+ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
+  "COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+   npx factiii deploy --staging --commit=$COMMIT_HASH --branch=$BRANCH"
+```
+
+**The CLI handles everything:**
+1. `deploy.js` runs `scan` first (checks all plugins for issues)
+2. If issues found: abort or fix (depending on command)
+3. If no issues: calls server plugin's `ensureServerReady()` then `deploy()`
+
+**Plugin Orchestration:**
+
+Pipeline plugins must implement scan/fix/deploy methods that check their own prerequisites:
+
+```javascript
+static fixes = [
+  {
+    id: 'node-not-installed-staging',
+    stage: 'staging',
+    severity: 'critical',
+    description: 'Node.js not installed on staging server',
+    scan: async (config, rootDir) => {
+      // Check if Node.js exists on server
+      const { sshExec } = require('../../utils/ssh-helper');
+      try {
+        await sshExec(config.environments.staging, 'which node');
+        return false; // Node.js exists
+      } catch {
+        return true; // Node.js missing
+      }
+    },
+    fix: async (config, rootDir) => {
+      // Install Node.js on server
+      const { sshExec } = require('../../utils/ssh-helper');
+      await sshExec(config.environments.staging, 'brew install node || ...');
+      return true;
+    }
+  }
+]
+```
+
+**How Plugins Merge:**
+
+When `deploy.js` runs, it:
+1. Loads ALL plugins (pipeline, server, framework, addon)
+2. Collects ALL fixes from all plugins
+3. Runs scan on all fixes
+4. Merges results by stage (dev, secrets, staging, prod)
+5. If blocking issues found: abort or fix
+6. If no issues: proceed with deployment
+
+This ensures:
+- Pipeline checks Node.js availability
+- Server plugins check Docker, git, pnpm
+- Framework plugins check dependencies, configs
+- All checks run together, issues reported together
 
 ### 2. SERVERS
 Infrastructure where applications run.

@@ -209,6 +209,75 @@ class MacMiniPlugin {
       manualFix: 'SSH to server and install Docker: brew install --cask docker'
     },
     {
+      id: 'staging-node-missing',
+      stage: 'staging',
+      severity: 'critical',
+      description: 'Node.js not installed on staging server',
+      scan: async (config, rootDir) => {
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false;
+        
+        const host = config?.environments?.staging?.host;
+        if (!host) return false;
+        
+        try {
+          const result = await MacMiniPlugin.sshExec(config.environments.staging, 'which node');
+          return !result;
+        } catch {
+          return true;
+        }
+      },
+      fix: async (config, rootDir) => {
+        console.log('   Installing Node.js on staging server...');
+        try {
+          // Try Homebrew first (Mac), then fall back to NodeSource (Linux)
+          await MacMiniPlugin.sshExec(
+            config.environments.staging,
+            'brew install node || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs)'
+          );
+          return true;
+        } catch (e) {
+          console.log(`   Failed: ${e.message}`);
+          return false;
+        }
+      },
+      manualFix: 'SSH to server and install Node.js: brew install node (Mac) or use NodeSource (Linux)'
+    },
+    {
+      id: 'staging-git-missing',
+      stage: 'staging',
+      severity: 'critical',
+      description: 'Git not installed on staging server',
+      scan: async (config, rootDir) => {
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false;
+        
+        const host = config?.environments?.staging?.host;
+        if (!host) return false;
+        
+        try {
+          const result = await MacMiniPlugin.sshExec(config.environments.staging, 'which git');
+          return !result;
+        } catch {
+          return true;
+        }
+      },
+      fix: async (config, rootDir) => {
+        console.log('   Installing git on staging server...');
+        try {
+          await MacMiniPlugin.sshExec(
+            config.environments.staging,
+            'brew install git || sudo apt-get install -y git'
+          );
+          return true;
+        } catch (e) {
+          console.log(`   Failed: ${e.message}`);
+          return false;
+        }
+      },
+      manualFix: 'SSH to server and install git: brew install git (Mac) or sudo apt-get install git (Linux)'
+    },
+    {
       id: 'staging-pnpm-missing',
       stage: 'staging',
       severity: 'warning',
@@ -257,6 +326,33 @@ class MacMiniPlugin {
         }
       },
       manualFix: 'SSH to server and run: npm install -g pnpm@9'
+    },
+    {
+      id: 'staging-repo-not-cloned',
+      stage: 'staging',
+      severity: 'warning',
+      description: 'Repository not cloned on staging server',
+      scan: async (config, rootDir) => {
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false;
+        
+        const host = config?.environments?.staging?.host;
+        if (!host) return false;
+        
+        const repoName = config.name || 'app';
+        
+        try {
+          const result = await MacMiniPlugin.sshExec(
+            config.environments.staging,
+            `test -d ~/.factiii/${repoName}/.git && echo "exists" || echo "missing"`
+          );
+          return result.includes('missing');
+        } catch {
+          return true;
+        }
+      },
+      fix: null, // Will be handled by ensureServerReady()
+      manualFix: 'Repository will be cloned automatically on first deployment'
     }
   ];
   
@@ -277,33 +373,8 @@ class MacMiniPlugin {
    * Execute a command on a remote server via SSH
    */
   static async sshExec(envConfig, command) {
-    const host = envConfig.host;
-    const user = envConfig.ssh_user || 'ubuntu';
-    
-    // Try to find SSH key
-    const keyPaths = [
-      path.join(os.homedir(), '.ssh', 'id_ed25519'),
-      path.join(os.homedir(), '.ssh', 'id_rsa')
-    ];
-    
-    let keyPath = null;
-    for (const kp of keyPaths) {
-      if (fs.existsSync(kp)) {
-        keyPath = kp;
-        break;
-      }
-    }
-    
-    if (!keyPath) {
-      throw new Error('No SSH key found');
-    }
-    
-    const result = execSync(
-      `ssh -i ${keyPath} -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${user}@${host} "${command.replace(/"/g, '\\"')}"`,
-      { encoding: 'utf8', stdio: 'pipe' }
-    );
-    
-    return result.trim();
+    const { sshExec } = require('../../utils/ssh-helper');
+    return await sshExec(envConfig, command);
   }
   
   // ============================================================
@@ -312,6 +383,151 @@ class MacMiniPlugin {
   
   constructor(config = {}) {
     this.config = config;
+  }
+  
+  /**
+   * Ensure server is ready for deployment
+   * Installs Node.js, git, pnpm, clones repo, checks out commit
+   */
+  async ensureServerReady(config, environment, options = {}) {
+    if (environment !== 'staging') {
+      return { success: true, message: 'Mac Mini only handles staging' };
+    }
+    
+    const envConfig = config.environments?.staging;
+    if (!envConfig?.host) {
+      throw new Error('Staging host not configured');
+    }
+    
+    const { commitHash, branch = 'main', repoUrl } = options;
+    const repoName = config.name || 'app';
+    const repoDir = `~/.factiii/${repoName}`;
+    
+    try {
+      // 1. Ensure Node.js is installed
+      console.log('   Checking Node.js...');
+      await this.ensureNodeInstalled(envConfig);
+      
+      // 2. Ensure git is installed
+      console.log('   Checking git...');
+      await this.ensureGitInstalled(envConfig);
+      
+      // 3. Ensure repo is cloned and up to date
+      console.log('   Syncing repository...');
+      await this.ensureRepoCloned(envConfig, repoUrl, repoDir, repoName);
+      await this.pullAndCheckout(envConfig, repoDir, branch, commitHash);
+      
+      // 4. Ensure pnpm is installed
+      console.log('   Checking pnpm...');
+      await this.ensurePnpmInstalled(envConfig);
+      
+      // 5. Install dependencies
+      console.log('   Installing dependencies...');
+      await this.installDependencies(envConfig, repoDir);
+      
+      return { success: true, message: 'Server ready' };
+    } catch (error) {
+      throw new Error(`Failed to prepare server: ${error.message}`);
+    }
+  }
+  
+  /**
+   * Ensure Node.js is installed on the server
+   */
+  async ensureNodeInstalled(envConfig) {
+    try {
+      await MacMiniPlugin.sshExec(envConfig, 'which node');
+    } catch {
+      console.log('      Installing Node.js...');
+      await MacMiniPlugin.sshExec(
+        envConfig,
+        'brew install node || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs)'
+      );
+    }
+  }
+  
+  /**
+   * Ensure git is installed on the server
+   */
+  async ensureGitInstalled(envConfig) {
+    try {
+      await MacMiniPlugin.sshExec(envConfig, 'which git');
+    } catch {
+      console.log('      Installing git...');
+      await MacMiniPlugin.sshExec(
+        envConfig,
+        'brew install git || sudo apt-get install -y git'
+      );
+    }
+  }
+  
+  /**
+   * Ensure pnpm is installed on the server
+   */
+  async ensurePnpmInstalled(envConfig) {
+    try {
+      await MacMiniPlugin.sshExec(envConfig, 'which pnpm');
+    } catch {
+      console.log('      Installing pnpm...');
+      await MacMiniPlugin.sshExec(envConfig, 'npm install -g pnpm@9');
+    }
+  }
+  
+  /**
+   * Ensure repository is cloned
+   */
+  async ensureRepoCloned(envConfig, repoUrl, repoDir, repoName) {
+    const checkExists = await MacMiniPlugin.sshExec(
+      envConfig,
+      `test -d ${repoDir}/.git && echo "exists" || echo "missing"`
+    );
+    
+    if (checkExists.includes('missing')) {
+      console.log('      Cloning repository...');
+      
+      // Extract GitHub repo from URL if provided, otherwise use GITHUB_REPO env var
+      let gitUrl = repoUrl;
+      if (repoUrl && !repoUrl.startsWith('git@') && !repoUrl.startsWith('https://')) {
+        // Format: owner/repo
+        gitUrl = `git@github.com:${repoUrl}.git`;
+      }
+      
+      await MacMiniPlugin.sshExec(
+        envConfig,
+        `mkdir -p ~/.factiii && cd ~/.factiii && git clone ${gitUrl} ${repoName}`
+      );
+    }
+  }
+  
+  /**
+   * Pull latest changes and checkout specific commit
+   */
+  async pullAndCheckout(envConfig, repoDir, branch, commitHash) {
+    console.log(`      Checking out ${branch}${commitHash ? ' @ ' + commitHash.substring(0, 7) : ''}...`);
+    
+    let commands = [
+      `cd ${repoDir}`,
+      'git fetch --all',
+      `git checkout ${branch}`,
+      `git pull origin ${branch}`
+    ];
+    
+    // If commit hash provided, checkout that specific commit
+    if (commitHash) {
+      commands.push(`git checkout ${commitHash}`);
+    }
+    
+    await MacMiniPlugin.sshExec(envConfig, commands.join(' && '));
+  }
+  
+  /**
+   * Install dependencies using pnpm
+   */
+  async installDependencies(envConfig, repoDir) {
+    await MacMiniPlugin.sshExec(
+      envConfig,
+      `cd ${repoDir} && pnpm install`
+    );
   }
   
   /**

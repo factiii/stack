@@ -202,6 +202,68 @@ class AWSPlugin {
       manualFix: 'Check network connectivity to production server'
     },
     {
+      id: 'prod-node-missing',
+      stage: 'prod',
+      severity: 'critical',
+      description: 'Node.js not installed on production server',
+      scan: async (config, rootDir) => {
+        const envConfig = config?.environments?.prod || config?.environments?.production;
+        if (!envConfig) return false;
+        if (!envConfig?.host) return false;
+        
+        try {
+          const result = await AWSPlugin.sshExec(envConfig, 'which node');
+          return !result;
+        } catch {
+          return true;
+        }
+      },
+      fix: async (config, rootDir) => {
+        console.log('   Installing Node.js on production server...');
+        const envConfig = config?.environments?.prod || config?.environments?.production;
+        try {
+          await AWSPlugin.sshExec(envConfig,
+            'curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs'
+          );
+          return true;
+        } catch (e) {
+          console.log(`   Failed: ${e.message}`);
+          return false;
+        }
+      },
+      manualFix: 'SSH to server and install Node.js via NodeSource'
+    },
+    {
+      id: 'prod-git-missing',
+      stage: 'prod',
+      severity: 'critical',
+      description: 'Git not installed on production server',
+      scan: async (config, rootDir) => {
+        const envConfig = config?.environments?.prod || config?.environments?.production;
+        if (!envConfig) return false;
+        if (!envConfig?.host) return false;
+        
+        try {
+          const result = await AWSPlugin.sshExec(envConfig, 'which git');
+          return !result;
+        } catch {
+          return true;
+        }
+      },
+      fix: async (config, rootDir) => {
+        console.log('   Installing git on production server...');
+        const envConfig = config?.environments?.prod || config?.environments?.production;
+        try {
+          await AWSPlugin.sshExec(envConfig, 'sudo apt-get update && sudo apt-get install -y git');
+          return true;
+        } catch (e) {
+          console.log(`   Failed: ${e.message}`);
+          return false;
+        }
+      },
+      manualFix: 'SSH to server and install git: sudo apt-get install git'
+    },
+    {
       id: 'prod-docker-missing',
       stage: 'prod',
       severity: 'critical',
@@ -233,6 +295,31 @@ class AWSPlugin {
         }
       },
       manualFix: 'SSH to server and install Docker: curl -fsSL https://get.docker.com | sh'
+    },
+    {
+      id: 'prod-repo-not-cloned',
+      stage: 'prod',
+      severity: 'warning',
+      description: 'Repository not cloned on production server',
+      scan: async (config, rootDir) => {
+        const envConfig = config?.environments?.prod || config?.environments?.production;
+        if (!envConfig) return false;
+        if (!envConfig?.host) return false;
+        
+        const repoName = config.name || 'app';
+        
+        try {
+          const result = await AWSPlugin.sshExec(
+            envConfig,
+            `test -d ~/.factiii/${repoName}/.git && echo "exists" || echo "missing"`
+          );
+          return result.includes('missing');
+        } catch {
+          return true;
+        }
+      },
+      fix: null, // Will be handled by ensureServerReady()
+      manualFix: 'Repository will be cloned automatically on first deployment'
     }
   ];
   
@@ -256,32 +343,8 @@ class AWSPlugin {
    * Execute a command on a remote server via SSH
    */
   static async sshExec(envConfig, command) {
-    const host = envConfig.host;
-    const user = envConfig.ssh_user || 'ubuntu';
-    
-    const keyPaths = [
-      path.join(os.homedir(), '.ssh', 'id_ed25519'),
-      path.join(os.homedir(), '.ssh', 'id_rsa')
-    ];
-    
-    let keyPath = null;
-    for (const kp of keyPaths) {
-      if (fs.existsSync(kp)) {
-        keyPath = kp;
-        break;
-      }
-    }
-    
-    if (!keyPath) {
-      throw new Error('No SSH key found');
-    }
-    
-    const result = execSync(
-      `ssh -i ${keyPath} -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${user}@${host} "${command.replace(/"/g, '\\"')}"`,
-      { encoding: 'utf8', stdio: 'pipe' }
-    );
-    
-    return result.trim();
+    const { sshExec } = require('../../utils/ssh-helper');
+    return await sshExec(envConfig, command);
   }
   
   // ============================================================
@@ -294,6 +357,121 @@ class AWSPlugin {
     // Load the appropriate AWS config based on factiii.yml
     const configName = config?.aws?.config || 'ec2';
     this.awsConfig = AWSPlugin.configs[configName];
+  }
+  
+  /**
+   * Ensure server is ready for deployment
+   * Installs Node.js, git, clones repo, checks out commit
+   * Note: Production doesn't install dependencies (pulls pre-built images)
+   */
+  async ensureServerReady(config, environment, options = {}) {
+    if (environment !== 'prod' && environment !== 'production') {
+      return { success: true, message: 'AWS only handles production' };
+    }
+    
+    const envConfig = config.environments?.prod || config.environments?.production;
+    if (!envConfig?.host) {
+      throw new Error('Production host not configured');
+    }
+    
+    const { commitHash, branch = 'main', repoUrl } = options;
+    const repoName = config.name || 'app';
+    const repoDir = `~/.factiii/${repoName}`;
+    
+    try {
+      // 1. Ensure Node.js is installed
+      console.log('   Checking Node.js...');
+      await this.ensureNodeInstalled(envConfig);
+      
+      // 2. Ensure git is installed
+      console.log('   Checking git...');
+      await this.ensureGitInstalled(envConfig);
+      
+      // 3. Ensure repo is cloned and up to date
+      console.log('   Syncing repository...');
+      await this.ensureRepoCloned(envConfig, repoUrl, repoDir, repoName);
+      await this.pullAndCheckout(envConfig, repoDir, branch, commitHash);
+      
+      // Note: Production doesn't install dependencies - it pulls pre-built images from ECR
+      
+      return { success: true, message: 'Server ready' };
+    } catch (error) {
+      throw new Error(`Failed to prepare server: ${error.message}`);
+    }
+  }
+  
+  /**
+   * Ensure Node.js is installed on the server
+   */
+  async ensureNodeInstalled(envConfig) {
+    try {
+      await AWSPlugin.sshExec(envConfig, 'which node');
+    } catch {
+      console.log('      Installing Node.js...');
+      await AWSPlugin.sshExec(
+        envConfig,
+        'curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs'
+      );
+    }
+  }
+  
+  /**
+   * Ensure git is installed on the server
+   */
+  async ensureGitInstalled(envConfig) {
+    try {
+      await AWSPlugin.sshExec(envConfig, 'which git');
+    } catch {
+      console.log('      Installing git...');
+      await AWSPlugin.sshExec(envConfig, 'sudo apt-get update && sudo apt-get install -y git');
+    }
+  }
+  
+  /**
+   * Ensure repository is cloned
+   */
+  async ensureRepoCloned(envConfig, repoUrl, repoDir, repoName) {
+    const checkExists = await AWSPlugin.sshExec(
+      envConfig,
+      `test -d ${repoDir}/.git && echo "exists" || echo "missing"`
+    );
+    
+    if (checkExists.includes('missing')) {
+      console.log('      Cloning repository...');
+      
+      // Extract GitHub repo from URL if provided, otherwise use GITHUB_REPO env var
+      let gitUrl = repoUrl;
+      if (repoUrl && !repoUrl.startsWith('git@') && !repoUrl.startsWith('https://')) {
+        // Format: owner/repo
+        gitUrl = `git@github.com:${repoUrl}.git`;
+      }
+      
+      await AWSPlugin.sshExec(
+        envConfig,
+        `mkdir -p ~/.factiii && cd ~/.factiii && git clone ${gitUrl} ${repoName}`
+      );
+    }
+  }
+  
+  /**
+   * Pull latest changes and checkout specific commit
+   */
+  async pullAndCheckout(envConfig, repoDir, branch, commitHash) {
+    console.log(`      Checking out ${branch}${commitHash ? ' @ ' + commitHash.substring(0, 7) : ''}...`);
+    
+    let commands = [
+      `cd ${repoDir}`,
+      'git fetch --all',
+      `git checkout ${branch}`,
+      `git pull origin ${branch}`
+    ];
+    
+    // If commit hash provided, checkout that specific commit
+    if (commitHash) {
+      commands.push(`git checkout ${commitHash}`);
+    }
+    
+    await AWSPlugin.sshExec(envConfig, commands.join(' && '));
   }
   
   /**

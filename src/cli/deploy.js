@@ -36,6 +36,21 @@ async function loadPlugins(rootDir, config) {
 }
 
 /**
+ * Load relevant plugin classes (without instantiation)
+ */
+async function loadPluginClasses(rootDir, config) {
+  const { loadRelevantPlugins } = require('../plugins');
+  return await loadRelevantPlugins(rootDir, config);
+}
+
+/**
+ * Get pipeline plugin from loaded plugin classes
+ */
+function getPipelinePlugin(pluginClasses) {
+  return pluginClasses.find(p => p.category === 'pipeline');
+}
+
+/**
  * Load config from factiii.yml
  */
 function loadConfig(rootDir) {
@@ -129,52 +144,35 @@ async function deploy(options = {}) {
   
   console.log('✅ All pre-deploy checks passed!\n');
   
-  // 2. Check if we should use GitHub Actions workflow monitoring
+  // 2. Determine deployment mode using canReach()
+  const pluginClasses = await loadPluginClasses(rootDir, config);
+  const pipelinePlugin = getPipelinePlugin(pluginClasses);
+  
   const remoteStages = stages.filter(s => s === 'staging' || s === 'prod');
   const localStages = stages.filter(s => s === 'dev');
   
-  // Deploy remote stages via GitHub Actions
-  if (remoteStages.length > 0 && localStages.length === 0) {
-    // Check if GitHub CLI is available
-    let hasGhCli = false;
-    try {
-      execSync('which gh', { stdio: 'pipe' });
-      execSync('gh auth status', { stdio: 'pipe' });
-      hasGhCli = true;
-    } catch {
-      hasGhCli = false;
-    }
-    
-    if (hasGhCli) {
-      // Use workflow monitoring for remote deployments
-      const GitHubWorkflowMonitor = require('../utils/github-workflow-monitor');
+  // Deploy remote stages
+  if (remoteStages.length > 0) {
+    for (const stage of remoteStages) {
+      // Check how to reach this stage
+      let reach = { reachable: true, via: 'workflow' }; // Default assumption
       
-      for (const stage of remoteStages) {
-        console.log('═'.repeat(60));
-        console.log(`🚀 DEPLOYING ${stage.toUpperCase()}`);
-        console.log('═'.repeat(60) + '\n');
-        
-        try {
-          const monitor = new GitHubWorkflowMonitor();
-          const result = await monitor.triggerAndWatch('factiii-deploy.yml', stage);
-          
-          if (!result.success) {
-            console.error(`\n❌ ${stage} deployment failed!`);
-            process.exit(1);
-          }
-        } catch (error) {
-          console.error(`\n❌ Error deploying ${stage}: ${error.message}`);
-          process.exit(1);
-        }
-        
-        console.log('');
+      if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
+        reach = pipelinePlugin.canReach(stage, config);
       }
-    } else {
-      console.log('⚠️  GitHub CLI not found - cannot monitor remote deployments');
-      console.log('   Install with: brew install gh');
-      console.log('   Then run: gh auth login\n');
-      console.log('💡 Remote deployments must be triggered manually via GitHub Actions UI\n');
-      process.exit(1);
+      
+      if (!reach.reachable) {
+        console.error(`❌ Cannot deploy to ${stage}: ${reach.reason}`);
+        process.exit(1);
+      }
+      
+      if (reach.via === 'workflow') {
+        // We're on local machine - trigger GitHub Actions workflow
+        await deployRemoteStagesViaWorkflow([stage]);
+      } else if (reach.via === 'local') {
+        // We're ON the server - do the actual deployment
+        await deployRemoteStagesOnServer([stage], rootDir, config, options);
+      }
     }
   }
   
@@ -214,6 +212,113 @@ async function deploy(options = {}) {
     console.log('✅ LOCAL DEPLOYMENT COMPLETE');
     console.log('═'.repeat(60) + '\n');
   }
+}
+
+/**
+ * Deploy remote stages via GitHub Actions workflow (from local machine)
+ */
+async function deployRemoteStagesViaWorkflow(remoteStages) {
+  // Check if GitHub CLI is available
+  let hasGhCli = false;
+  try {
+    execSync('which gh', { stdio: 'pipe' });
+    execSync('gh auth status', { stdio: 'pipe' });
+    hasGhCli = true;
+  } catch {
+    hasGhCli = false;
+  }
+  
+  if (hasGhCli) {
+    // Use workflow monitoring for remote deployments
+    const GitHubWorkflowMonitor = require('../utils/github-workflow-monitor');
+    
+    for (const stage of remoteStages) {
+      console.log('═'.repeat(60));
+      console.log(`🚀 DEPLOYING ${stage.toUpperCase()}`);
+      console.log('═'.repeat(60) + '\n');
+      
+      try {
+        const monitor = new GitHubWorkflowMonitor();
+        const result = await monitor.triggerAndWatch('factiii-deploy.yml', stage);
+        
+        if (!result.success) {
+          console.error(`\n❌ ${stage} deployment failed!`);
+          process.exit(1);
+        }
+      } catch (error) {
+        console.error(`\n❌ Error deploying ${stage}: ${error.message}`);
+        process.exit(1);
+      }
+      
+      console.log('');
+    }
+  } else {
+    console.log('⚠️  GitHub CLI not found - cannot monitor remote deployments');
+    console.log('   Install with: brew install gh');
+    console.log('   Then run: gh auth login\n');
+    console.log('💡 Remote deployments must be triggered manually via GitHub Actions UI\n');
+    process.exit(1);
+  }
+}
+
+/**
+ * Deploy remote stages directly on the server (called by workflow)
+ */
+async function deployRemoteStagesOnServer(remoteStages, rootDir, config, options) {
+  // Load plugins
+  const plugins = await loadPlugins(rootDir, config);
+  
+  for (const stage of remoteStages) {
+    console.log('═'.repeat(60));
+    console.log(`🚀 DEPLOYING ${stage.toUpperCase()}`);
+    console.log('═'.repeat(60) + '\n');
+    
+    // Find server plugin for this environment
+    const serverPlugin = plugins.find(p => 
+      p.constructor.category === 'server'
+    );
+    
+    if (!serverPlugin) {
+      console.error(`❌ No server plugin found for ${stage}`);
+      process.exit(1);
+    }
+    
+    try {
+      // 1. Ensure server is ready (Node.js, git, repo, dependencies)
+      console.log(`📦 Preparing ${stage} server...\n`);
+      await serverPlugin.ensureServerReady(config, stage, {
+        commitHash: options.commit || process.env.COMMIT_HASH,
+        branch: options.branch || process.env.BRANCH || 'main',
+        repoUrl: process.env.GITHUB_REPO
+      });
+      
+      console.log('');
+      
+      // 2. Load environment file
+      const envFile = stage === 'staging' ? '.env.staging' : '.env.prod';
+      loadEnvFile(path.join(rootDir, envFile));
+      
+      // 3. Run deployment
+      console.log(`🚀 Deploying ${stage}...\n`);
+      const result = await serverPlugin.deploy(config, stage);
+      
+      if (result.success) {
+        console.log(`   ✅ ${result.message || 'Deployment complete'}`);
+      } else {
+        console.error(`   ❌ ${result.error || 'Deployment failed'}`);
+        process.exit(1);
+      }
+      
+      console.log('');
+    } catch (error) {
+      console.error(`\n❌ Error deploying ${stage}: ${error.message}`);
+      process.exit(1);
+    }
+  }
+  
+  console.log('═'.repeat(60));
+  console.log('✅ DEPLOYMENT COMPLETE');
+  console.log('═'.repeat(60) + '\n');
 }
 
 module.exports = deploy;

@@ -122,7 +122,7 @@ function generateEnvVarFixes(plugin, rootDir, config) {
 /**
  * Display problems grouped by stage
  */
-function displayProblems(problems, options = {}) {
+function displayProblems(problems, reachability, options = {}) {
   if (options.silent) return;
   
   const stages = ['dev', 'secrets', 'staging', 'prod'];
@@ -133,10 +133,28 @@ function displayProblems(problems, options = {}) {
   console.log('═'.repeat(60) + '\n');
   
   for (const stage of stages) {
+    const reach = reachability[stage];
     const stageProblems = problems[stage] || [];
     
+    // Check if stage is unreachable
+    if (reach && !reach.reachable) {
+      console.log(`⚠️  ${stage.toUpperCase()}: Cannot reach`);
+      console.log(`   💡 ${reach.reason}`);
+      console.log('');
+      continue;
+    }
+    
+    // Check if stage is reachable via workflow (not directly)
+    if (reach && reach.via === 'workflow') {
+      console.log(`🔄 ${stage.toUpperCase()}: Checked via workflow`);
+      console.log(`   💡 Will be scanned when workflow runs`);
+      console.log('');
+      continue;
+    }
+    
     if (stageProblems.length === 0) {
-      console.log(`✅ ${stage.toUpperCase()}: No issues found`);
+      const via = reach?.via ? ` (via: ${reach.via})` : '';
+      console.log(`✅ ${stage.toUpperCase()}: No issues found${via}`);
     } else {
       console.log(`❌ ${stage.toUpperCase()}: ${stageProblems.length} issue(s) found`);
       for (const problem of stageProblems) {
@@ -153,8 +171,23 @@ function displayProblems(problems, options = {}) {
   if (totalProblems === 0) {
     console.log('✅ All checks passed!\n');
   } else {
-    console.log(`❌ Found ${totalProblems} issue(s). Run: npx factiii fix\n`);
+    const hasLocalIssues = (problems.dev?.length > 0) || (problems.secrets?.length > 0);
+    
+    console.log(`❌ Found ${totalProblems} issue(s).`);
+    
+    if (hasLocalIssues) {
+      console.log('   💡 Fix local issues: npx factiii fix');
+    }
+    
+    console.log('');
   }
+}
+
+/**
+ * Get pipeline plugin from loaded plugins
+ */
+function getPipelinePlugin(plugins) {
+  return plugins.find(p => p.category === 'pipeline');
 }
 
 /**
@@ -163,6 +196,27 @@ function displayProblems(problems, options = {}) {
 async function scan(options = {}) {
   const rootDir = options.rootDir || process.cwd();
   const config = loadConfig(rootDir);
+  
+  // If commit hash provided, verify we're scanning the right code
+  if (options.commit) {
+    try {
+      const { execSync } = require('child_process');
+      const currentCommit = execSync('git rev-parse HEAD', { 
+        cwd: rootDir, 
+        encoding: 'utf8' 
+      }).trim();
+      
+      if (!options.silent) {
+        console.log(`📍 Scanning commit: ${options.commit.substring(0, 7)}`);
+      }
+      
+      if (currentCommit !== options.commit) {
+        console.warn(`⚠️  Warning: Expected commit ${options.commit.substring(0, 7)} but found ${currentCommit.substring(0, 7)}`);
+      }
+    } catch (e) {
+      // Not a git repo or git not available, skip verification
+    }
+  }
   
   // Determine which stages to scan
   let stages = ['dev', 'secrets', 'staging', 'prod'];
@@ -174,6 +228,28 @@ async function scan(options = {}) {
   
   // Load all plugins
   const plugins = await loadPlugins(rootDir);
+  
+  // Get pipeline plugin to check reachability
+  const pipelinePlugin = getPipelinePlugin(plugins);
+  
+  // Check reachability for each stage
+  const reachability = {};
+  const reachableStages = [];
+  
+  for (const stage of stages) {
+    if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
+      reachability[stage] = pipelinePlugin.canReach(stage, config);
+      
+      // Only scan stages that are reachable directly (not via workflow)
+      if (reachability[stage].reachable && reachability[stage].via !== 'workflow') {
+        reachableStages.push(stage);
+      }
+    } else {
+      // No pipeline plugin or no canReach method - assume all reachable
+      reachability[stage] = { reachable: true, via: 'local' };
+      reachableStages.push(stage);
+    }
+  }
   
   // Collect all fixes from all plugins
   const allFixes = [];
@@ -201,8 +277,8 @@ async function scan(options = {}) {
   }
   
   for (const fix of allFixes) {
-    // Skip if stage not in requested stages
-    if (!stages.includes(fix.stage)) continue;
+    // Skip if stage not in reachable stages
+    if (!reachableStages.includes(fix.stage)) continue;
     
     try {
       // Run the scan function
@@ -220,7 +296,7 @@ async function scan(options = {}) {
   }
   
   // Display problems grouped by stage
-  displayProblems(problems, options);
+  displayProblems(problems, reachability, options);
   
   // Return the fixes needed (problems found)
   return problems;

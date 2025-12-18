@@ -165,6 +165,42 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 - Missing GitHub secrets
 - Missing host in factiii.yml
 
+## ⚠️ CRITICAL: Workflow YML Files Must Be Ultra-Thin
+
+**GitHub workflow YML files should ONLY:**
+- Trigger the deployment
+- Pass secrets (SSH keys, AWS credentials)
+- SSH to server and run CLI command
+
+**Workflows should NEVER contain:**
+- Server setup logic (Node.js, Docker, git installation)
+- Repository cloning/pulling
+- Dependency installation
+- Build logic
+- Any bash scripts longer than 5 lines
+
+**Why?** All logic belongs in plugins (scan/fix/deploy methods), not workflows.
+
+**Correct workflow pattern:**
+```yaml
+ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
+  "COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+   npx factiii deploy --staging --commit=$COMMIT_HASH --branch=$BRANCH"
+```
+
+**The CLI handles everything:**
+1. deploy.js runs scan first (checks all plugins for issues)
+2. If issues found: abort or fix (depending on command)
+3. If no issues: calls server plugin's ensureServerReady() then deploy()
+
+**Each plugin owns its checks:**
+- Pipeline plugin: Checks Node.js availability on servers
+- Server plugins: Check Docker, git, pnpm
+- Framework plugins: Check dependencies, configs
+
+All checks merge together in the scan phase.
+
+
 ## GitHub Actions Workflows
 
 **Factiii generates workflows for repos:**
@@ -172,6 +208,20 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 - `factiii-staging.yml` - Auto-deploy on PR/push to main
 - `factiii-production.yml` - Auto-deploy on merge to production
 - `factiii-undeploy.yml` - Manual cleanup trigger
+
+
+**Workflow responsibilities (ultra-thin):**
+1. Read configuration from factiii.yml
+2. Setup SSH keys from GitHub Secrets
+3. **Bootstrap Node.js (one-time prerequisite)** - Check if Node.js exists, install if missing
+4. SSH to server and execute \`npx factiii deploy --{env}\`
+5. Pass environment variables: COMMIT_HASH, BRANCH, GITHUB_REPO
+
+**Why workflows bootstrap Node.js:**
+- Chicken-and-egg problem: \`npx factiii\` requires Node.js to run
+- Workflows handle this one-time prerequisite check
+- Plugins verify Node.js is present for ongoing operations
+- After bootstrap, all logic lives in plugins (not workflows)
 
 **Workflow reads config from:**
 - `factiii.yml`: aws.access_key_id, aws.region, environments.{env}.host

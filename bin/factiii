@@ -37,17 +37,10 @@ program
 
 // Default command: scan (npx factiii with no subcommand runs scan)
 program
-  .option('--dev', 'Scan dev environment only')
-  .option('--staging', 'Scan staging environment only')
-  .option('--prod', 'Scan production environment only')
-  .option('--secrets', 'Scan secrets only')
-  .option('-f, --force', 'Overwrite existing config file')
-  .option('--no-remote', 'Skip auto-triggering the scan workflow')
-  .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .action(async (options, command) => {
     // Only run scan if no subcommand was provided
     if (command.args.length === 0) {
-      await scan(options);
+      await scan({});
     }
   });
 
@@ -59,6 +52,7 @@ program
   .option('--staging', 'Scan staging environment only')
   .option('--prod', 'Scan production environment only')
   .option('--secrets', 'Scan secrets only')
+  .option('--commit <hash>', 'Commit hash to verify (for deployment verification)')
   .action(async (options) => {
     await scan(options);
   });
@@ -86,6 +80,7 @@ program
   .option('--prod', 'Deploy production environment only')
   .option('-e, --environment <env>', 'Environment (staging|prod)')
   .option('-b, --branch <branch>', 'Branch to deploy from (defaults to current branch)')
+  .option('--commit <hash>', 'Commit hash to deploy (passed by workflow)')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .action(async (options) => {
     await deploy(options);

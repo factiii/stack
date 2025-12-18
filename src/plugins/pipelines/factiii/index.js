@@ -54,6 +54,48 @@ class FactiiiPipeline {
     return environment === 'staging';
   }
   
+  /**
+   * Check if this pipeline can reach a specific stage from current environment
+   * 
+   * @param {string} stage - 'dev' | 'secrets' | 'staging' | 'prod'
+   * @param {Object} config - factiii.yml config
+   * @returns {Object} { reachable: boolean, reason?: string, via?: string }
+   */
+  static canReach(stage, config) {
+    switch (stage) {
+      case 'dev':
+        // Dev is always reachable locally
+        return { reachable: true, via: 'local' };
+        
+      case 'secrets':
+        // Need GITHUB_TOKEN to check/set GitHub secrets
+        if (!process.env.GITHUB_TOKEN) {
+          return { 
+            reachable: false, 
+            reason: 'Missing GITHUB_TOKEN environment variable' 
+          };
+        }
+        return { reachable: true, via: 'github-api' };
+        
+      case 'staging':
+      case 'prod':
+        // Check if running FROM a workflow (on server)
+        if (process.env.GITHUB_ACTIONS) {
+          return { reachable: true, via: 'local' }; // We ARE on the server
+        }
+        
+        // From dev: need to trigger workflow
+        // Cannot SSH directly - must use workflow
+        return { 
+          reachable: true, 
+          via: 'workflow'
+        };
+        
+      default:
+        return { reachable: false, reason: `Unknown stage: ${stage}` };
+    }
+  }
+  
   // ============================================================
   // FIXES - All issues this plugin can detect and resolve
   // ============================================================
@@ -205,7 +247,12 @@ class FactiiiPipeline {
         return false;
       },
       manualFix: 'Add AWS_SECRET_ACCESS_KEY secret at: https://github.com/{owner}/{repo}/settings/secrets/actions'
-    }
+    },
+    
+    // NOTE: STAGING and PROD fixes are handled by:
+    // 1. Workflow bootstrap step (Node.js installation)
+    // 2. Server plugins (mac-mini, aws) via ensureServerReady()
+    // Pipeline plugin does NOT SSH directly - uses workflows instead
   ];
   
   // ============================================================

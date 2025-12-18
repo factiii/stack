@@ -18,6 +18,21 @@ const { generateFactiiiYml } = require('../generators/generate-factiii-yml');
 const { generateFactiiiAuto } = require('../generators/generate-factiii-auto');
 
 /**
+ * Load relevant plugins based on config
+ */
+async function loadPlugins(rootDir, config) {
+  const { loadRelevantPlugins } = require('../plugins');
+  return await loadRelevantPlugins(rootDir, config);
+}
+
+/**
+ * Get pipeline plugin from loaded plugins
+ */
+function getPipelinePlugin(plugins) {
+  return plugins.find(p => p.category === 'pipeline');
+}
+
+/**
  * Reorder fixes based on dependencies (stage order, then severity)
  */
 function reorderFixes(fixes) {
@@ -57,14 +72,6 @@ function loadConfig(rootDir) {
 async function fix(options = {}) {
   const rootDir = options.rootDir || process.cwd();
   
-  // Determine which stages to fix
-  let stages = ['dev', 'secrets', 'staging', 'prod'];
-  if (options.dev) stages = ['dev'];
-  else if (options.secrets) stages = ['secrets'];
-  else if (options.staging) stages = ['staging'];
-  else if (options.prod) stages = ['prod'];
-  else if (options.stages) stages = options.stages;
-  
   console.log('═'.repeat(60));
   console.log('🔧 FACTIII FIX');
   console.log('═'.repeat(60) + '\n');
@@ -74,6 +81,38 @@ async function fix(options = {}) {
     console.log('❌ No factiii.yml found.');
     console.log('   Run: npx factiii init\n');
     process.exit(1);
+  }
+  
+  const config = loadConfig(rootDir);
+  
+  // Load plugins to get pipeline's canReach method
+  const plugins = await loadPlugins(rootDir, config);
+  const pipelinePlugin = getPipelinePlugin(plugins);
+  
+  // Determine which stages to fix based on canReach()
+  let stages;
+  if (options.dev) stages = ['dev'];
+  else if (options.secrets) stages = ['secrets'];
+  else if (options.staging) stages = ['staging'];
+  else if (options.prod) stages = ['prod'];
+  else if (options.stages) stages = options.stages;
+  else {
+    // Default: only fix stages that are reachable directly (not via workflow)
+    stages = [];
+    const allStages = ['dev', 'secrets', 'staging', 'prod'];
+    
+    for (const stage of allStages) {
+      if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
+        const reach = pipelinePlugin.canReach(stage, config);
+        // Only include stages reachable directly (not via workflow)
+        if (reach.reachable && reach.via !== 'workflow') {
+          stages.push(stage);
+        }
+      } else {
+        // No pipeline plugin - assume all reachable
+        stages.push(stage);
+      }
+    }
   }
   
   // 1. Run scan to get all problems (fixes needed)
@@ -111,7 +150,6 @@ async function fix(options = {}) {
   console.log('📋 Stage 2: Applying fixes...');
   console.log('═'.repeat(60) + '\n');
   
-  const config = loadConfig(rootDir);
   const results = {
     fixed: 0,
     manual: 0,
