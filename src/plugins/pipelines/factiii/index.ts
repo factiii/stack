@@ -138,6 +138,16 @@ class FactiiiPipeline {
         }
 
         // ============================================================
+        // CRITICAL: Dev machine CANNOT SSH to staging/prod
+        // ============================================================
+        // SSH keys (STAGING_SSH, PROD_SSH) are ONLY in GitHub Secrets.
+        // Dev machine does NOT have these keys and CANNOT SSH directly.
+        // All staging/prod operations MUST trigger workflows.
+        // Workflows have access to secrets, SSH to servers, run with --on-server.
+        // NEVER try to SSH from dev machine - it will always fail.
+        // ============================================================
+        
+        // ============================================================
         // CRITICAL: GITHUB_TOKEN dependency check
         // ============================================================
         // Why this exists: Staging/prod require GITHUB_TOKEN because SSH keys

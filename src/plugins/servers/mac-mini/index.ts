@@ -227,6 +227,16 @@ class MacMiniPlugin {
       fix: null,
       manualFix: 'Check network connectivity to staging server',
     },
+    // ============================================================
+    // CRITICAL: NO SSH IN FIX FUNCTIONS
+    // ============================================================
+    // SSH keys for staging/prod are ONLY in GitHub Secrets, NOT on dev machines.
+    // Dev machine CANNOT SSH to staging/prod.
+    // Workflows SSH ONCE and run CLI with --on-server flag.
+    // When --on-server is set, fix functions run locally (we're already on the server).
+    // NEVER add isOnServer checks or SSH calls to individual fix functions.
+    // CLI handles execution context at the wrapper level.
+    // ============================================================
     {
       id: 'staging-docker-missing',
       stage: 'staging',

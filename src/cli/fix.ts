@@ -133,11 +133,16 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   // ============================================================
   // CRITICAL: --on-server flag bypasses canReach checks
   // ============================================================
+  // SSH keys for staging/prod are ONLY in GitHub Secrets, NOT on dev machines.
+  // Dev machine CANNOT SSH to staging/prod directly.
+  // 
   // Why this exists: When workflows SSH to staging/prod and run commands,
   // we're already on the target server. canReach() would try to SSH again
   // causing connection loops and failures.
+  // 
   // What breaks if changed: Fix from staging/prod server tries to SSH
   // back to itself, causing "Connection refused" or infinite loops.
+  // 
   // Dependencies: Workflows MUST use --on-server flag when running commands
   // on staging/prod servers.
   // ============================================================
