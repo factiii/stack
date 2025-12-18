@@ -130,6 +130,9 @@ jobs:
                git fetch origin; \
              fi && \
              cd \"\$REPO_DIR\" && \
+             echo \"📦 Resetting any local changes...\" && \
+             git reset --hard && \
+             git clean -fd && \
              git checkout \"$COMMIT_HASH\" && \
              if [ ! -d \"node_modules\" ]; then \
                echo \"📦 Installing dependencies...\" && \
