@@ -4,6 +4,20 @@ name: Factiii Production
 # Auto-deploy to production on push to production branch
 # Thin workflow - just SSH and call CLI
 
+# ============================================================
+# CRITICAL: Always use --prod with --on-server in workflows
+# ============================================================
+# Why this exists: Workflows SSH to the target server and run commands there.
+# The --prod flag limits the command to production environment only.
+# The --on-server flag tells the CLI we're already on the server, so:
+#   - Skip canReach() checks (we're already here)
+#   - Run all checks locally (no SSH loops)
+#   - Execute deployment directly (no workflow triggering)
+# What breaks if changed: Without --on-server, the CLI will try to SSH
+# from prod back to prod, or trigger workflows, causing loops.
+# Dependencies: ALL commands in workflows MUST use --prod + --on-server
+# ============================================================
+
 on:
   push:
     branches:
@@ -131,7 +145,7 @@ jobs:
              if [ ! -d \"node_modules\" ]; then npm install; fi && \
              cd \"\$REPO_DIR\" && \
              GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-             node \"\$INFRA_DIR/bin/factiii\" deploy --prod --commit $COMMIT_HASH --branch $BRANCH"
+             node \"\$INFRA_DIR/bin/factiii\" deploy --prod --on-server --commit $COMMIT_HASH --branch $BRANCH"
           
           rm -f ~/.ssh/deploy_key
           echo "✅ Production deployment complete!"

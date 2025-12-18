@@ -49,6 +49,7 @@ program
   .option('--prod', 'Scan production environment only')
   .option('--secrets', 'Scan secrets only')
   .option('--commit <hash>', 'Commit hash to verify (for deployment verification)')
+  .option('--on-server', 'Running on target server (skip canReach checks, run locally)')
   .action(async (options) => {
     await scan(options);
   });
@@ -63,6 +64,7 @@ program
   .option('--secrets', 'Fix secrets only')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .option('--continue-on-error', 'Continue even if some fixes fail')
+  .option('--on-server', 'Running on target server (skip canReach checks, run locally)')
   .action(async (options) => {
     await fix(options);
   });
@@ -78,6 +80,7 @@ program
   .option('-b, --branch <branch>', 'Branch to deploy from (defaults to current branch)')
   .option('--commit <hash>', 'Commit hash to deploy (passed by workflow)')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
+  .option('--on-server', 'Running on target server (skip canReach checks, run locally)')
   .action(async (options) => {
     // Determine which environment to deploy
     let environment = options.environment;

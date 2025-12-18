@@ -349,31 +349,51 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   const reachability: Record<string, Reachability> = {};
   const reachableStages: Stage[] = [];
 
-  for (const stage of stages) {
-    if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
-      reachability[stage] = pipelinePlugin.canReach(stage, config);
-
-      // ============================================================
-      // CRITICAL: DO NOT REMOVE THIS WORKFLOW FILTER
-      // ============================================================
-      // Why this exists: Prevents scanning staging/prod from dev machine
-      // which would fail because SSH keys are only in GitHub Secrets.
-      // What breaks if changed: Scan tries to SSH without keys, fails with
-      // "No SSH key found" errors for all staging/prod checks.
-      // Dependencies: Staging/prod scans must run via GitHub Actions workflows
-      // that have access to STAGING_SSH and PROD_SSH secrets.
-      // ============================================================
-      if (
-        reachability[stage]?.reachable &&
-        'via' in reachability[stage]! &&
-        reachability[stage]!.via !== 'workflow'
-      ) {
-        reachableStages.push(stage);
-      }
-    } else {
-      // No pipeline plugin or no canReach method - assume all reachable
+  // ============================================================
+  // CRITICAL: --on-server flag bypasses canReach checks
+  // ============================================================
+  // Why this exists: When workflows SSH to staging/prod and run commands,
+  // we're already on the target server. canReach() would try to SSH again
+  // causing connection loops and failures.
+  // What breaks if changed: Scan from staging/prod server tries to SSH
+  // back to itself, causing "Connection refused" or infinite loops.
+  // Dependencies: Workflows MUST use --on-server flag when running commands
+  // on staging/prod servers.
+  // ============================================================
+  if (options.onServer) {
+    // Skip canReach checks - we're already on the target server
+    for (const stage of stages) {
       reachability[stage] = { reachable: true, via: 'local' };
       reachableStages.push(stage);
+    }
+  } else {
+    // Normal canReach checks for dev environment
+    for (const stage of stages) {
+      if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
+        reachability[stage] = pipelinePlugin.canReach(stage, config);
+
+        // ============================================================
+        // CRITICAL: DO NOT REMOVE THIS WORKFLOW FILTER
+        // ============================================================
+        // Why this exists: Prevents scanning staging/prod from dev machine
+        // which would fail because SSH keys are only in GitHub Secrets.
+        // What breaks if changed: Scan tries to SSH without keys, fails with
+        // "No SSH key found" errors for all staging/prod checks.
+        // Dependencies: Staging/prod scans must run via GitHub Actions workflows
+        // that have access to STAGING_SSH and PROD_SSH secrets.
+        // ============================================================
+        if (
+          reachability[stage]?.reachable &&
+          'via' in reachability[stage]! &&
+          reachability[stage]!.via !== 'workflow'
+        ) {
+          reachableStages.push(stage);
+        }
+      } else {
+        // No pipeline plugin or no canReach method - assume all reachable
+        reachability[stage] = { reachable: true, via: 'local' };
+        reachableStages.push(stage);
+      }
     }
   }
 

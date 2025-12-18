@@ -569,8 +569,28 @@ class FactiiiPipeline {
    * - 'local': Execute deployment directly (dev stage, or when running on server)
    * - 'workflow': Trigger GitHub Actions workflow
    * - Not reachable: Return error with reason
+   *
+   * When --on-server flag is set, canReach is bypassed and deployment executes locally.
    */
   async deployStage(stage: Stage, options: DeployOptions = {}): Promise<DeployResult> {
+    // ============================================================
+    // CRITICAL: --on-server flag bypasses canReach checks
+    // ============================================================
+    // Why this exists: When workflows SSH to staging/prod and run commands,
+    // we're already on the target server. canReach() would try to trigger
+    // workflows or SSH again, causing loops.
+    // What breaks if changed: Deploy from staging/prod server tries to trigger
+    // workflow or SSH back to itself.
+    // Dependencies: Workflows MUST use --on-server flag when running commands
+    // on staging/prod servers.
+    // ============================================================
+    if (options.onServer) {
+      // Skip canReach - we're already on the target server, execute directly
+      console.log(`🚀 Deploying ${stage}...\n`);
+      return this.runLocalDeploy(stage, options);
+    }
+
+    // Normal canReach checks for dev environment
     const reach = FactiiiPipeline.canReach(stage, this._config);
 
     if (!reach.reachable) {
@@ -644,9 +664,14 @@ class FactiiiPipeline {
       // Ensure server is ready (install deps, clone repo, etc.)
       if (serverInstance.ensureServerReady) {
         console.log('   Preparing server...');
+        
+        // Get repo URL from environment or config
+        const repoUrl = process.env.GITHUB_REPO || this._config.github_repo || '';
+        
         await serverInstance.ensureServerReady(this._config, stage, {
           branch: options.branch ?? 'main',
           commitHash: options.commit ?? '',
+          repoUrl: repoUrl,
         });
       }
 

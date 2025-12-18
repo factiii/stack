@@ -24,6 +24,7 @@ export interface ScanOptions extends BaseOptions {
   stages?: Stage[];
   commit?: string;
   silent?: boolean;
+  onServer?: boolean;
 }
 
 /**

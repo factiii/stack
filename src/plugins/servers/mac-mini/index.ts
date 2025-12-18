@@ -270,12 +270,25 @@ class MacMiniPlugin {
         if (!host) return false;
 
         try {
-          // Check if Docker daemon is running (not just installed)
-          const result = await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'docker info > /dev/null 2>&1 && echo "running" || echo "stopped"'
-          );
-          return result.includes('stopped');
+          // Check if we're running ON the server (in GitHub Actions workflow)
+          const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+          
+          if (isOnServer) {
+            // We're on the server - check locally
+            try {
+              execSync('docker info', { stdio: 'pipe' });
+              return false; // Docker is running
+            } catch {
+              return true; // Docker is not running
+            }
+          } else {
+            // We're remote - check via SSH
+            const result = await MacMiniPlugin.sshExec(
+              config.environments!.staging!,
+              'docker info > /dev/null 2>&1 && echo "running" || echo "stopped"'
+            );
+            return result.includes('stopped');
+          }
         } catch {
           return true;
         }
@@ -283,12 +296,23 @@ class MacMiniPlugin {
       fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
         console.log('   Starting Docker Desktop on staging server...');
         try {
-          await MacMiniPlugin.sshExec(
-            config.environments!.staging!,
-            'open -a Docker && sleep 15 && docker info'
-          );
-          console.log('   ✅ Docker Desktop started successfully');
-          return true;
+          // Check if we're running ON the server (in GitHub Actions workflow)
+          const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+          
+          if (isOnServer) {
+            // We're on the server - start Docker locally
+            execSync('open -a Docker && sleep 15 && docker info', { stdio: 'inherit' });
+            console.log('   ✅ Docker Desktop started successfully');
+            return true;
+          } else {
+            // We're remote - start via SSH
+            await MacMiniPlugin.sshExec(
+              config.environments!.staging!,
+              'open -a Docker && sleep 15 && docker info'
+            );
+            console.log('   ✅ Docker Desktop started successfully');
+            return true;
+          }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
           console.log(`   Failed to start Docker: ${errorMessage}`);
@@ -857,7 +881,7 @@ class MacMiniPlugin {
     build:
       context: .
       dockerfile: apps/server/Dockerfile
-    container_name: ${repoName}-server-staging
+    container_name: ${repoName}-staging
     restart: always
     ports:
       - "3000:3000"
@@ -874,6 +898,36 @@ volumes:
   }
 
   private async deployStaging(config: FactiiiConfig): Promise<DeployResult> {
+    // ============================================================
+    // CRITICAL: Deployment Flow - Staging vs Production
+    // ============================================================
+    // STAGING (this method):
+    //   - Workflow SSHes to staging server
+    //   - Runs: deploy --staging --on-server
+    //   - Builds container locally from source
+    //   - Deploys locally-built container (factiii-staging)
+    //
+    // PRODUCTION (different flow):
+    //   - Workflow SSHes to STAGING server (not prod!)
+    //   - Builds production image on staging
+    //   - Pushes to ECR
+    //   - Workflow SSHes to prod server
+    //   - Pulls from ECR and deploys
+    //
+    // Why workflows SSH first: Allows using GitHub Secrets (SSH keys)
+    // without storing them on servers. Workflow passes secrets via SSH.
+    //
+    // Why --on-server flag exists: Tells CLI we're already on target
+    // server, so don't SSH again (would cause infinite loops).
+    //
+    // Why both paths exist: Code checks GITHUB_ACTIONS env var:
+    //   - GITHUB_ACTIONS=true → on-server path (Factiii workflows)
+    //   - GITHUB_ACTIONS not set → remote SSH path (other workflows)
+    //
+    // What breaks if changed: Removing --on-server causes SSH loops.
+    // Removing remote SSH path breaks non-Factiii workflow compatibility.
+    // ============================================================
+
     const envConfig = config.environments?.staging;
     if (!envConfig?.host) {
       return { success: false, error: 'Staging host not configured' };
@@ -890,6 +944,8 @@ volumes:
       // When GITHUB_ACTIONS=true, we're executing on the server itself
       const isOnServer = process.env.GITHUB_ACTIONS === 'true';
 
+      console.log(`   📍 Deployment mode: ${isOnServer ? 'on-server' : 'remote'}`);
+
       // ============================================================
       // CRITICAL: Ensure Docker is running BEFORE building
       // ============================================================
@@ -900,21 +956,50 @@ volumes:
       // "Cannot connect to the Docker daemon" error.
       // Dependencies: Docker Desktop must be installed and startable.
       // ============================================================
+      console.log('   🐳 Checking Docker status...');
       await this.ensureDockerRunning(envConfig, isOnServer);
 
       if (isOnServer) {
         // We're on the server - run commands directly
         const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
 
+        console.log(`   📝 Writing docker-compose.staging.yml to ${expandedRepoDir}`);
         // Write docker-compose.staging.yml
         fs.writeFileSync(
           path.join(expandedRepoDir, 'docker-compose.staging.yml'),
           composeContent
         );
 
-        // Build and deploy with proper shell and PATH
+        // ============================================================
+        // CRITICAL: Build BEFORE Deploy
+        // ============================================================
+        // Why: docker compose up --build doesn't reliably build images
+        // that don't exist yet. It tries to start the container first,
+        // fails with "unable to get image", then tries to build.
+        //
+        // What breaks: Deployment fails with Docker daemon errors.
+        //
+        // Solution: Always build explicitly first, then deploy.
+        // ============================================================
+
+        // Step 1: Build the image
+        console.log('   🔨 Building container image...');
         execSync(
-          `cd ${expandedRepoDir} && docker compose -f docker-compose.staging.yml up -d --build`,
+          `cd ${expandedRepoDir} && docker compose -f docker-compose.staging.yml build`,
+          {
+            stdio: 'inherit',
+            shell: '/bin/bash',
+            env: {
+              ...process.env,
+              PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+            },
+          }
+        );
+
+        // Step 2: Deploy the built image
+        console.log('   🚀 Starting containers...');
+        execSync(
+          `cd ${expandedRepoDir} && docker compose -f docker-compose.staging.yml up -d`,
           {
             stdio: 'inherit',
             shell: '/bin/bash',
@@ -926,31 +1011,51 @@ volumes:
         );
       } else {
         // We're remote - SSH to the server
-        // First write the compose file
-        const tmpFile = `/tmp/docker-compose.staging.yml`;
-        fs.writeFileSync(tmpFile, composeContent);
-
+        console.log('   📝 Writing docker-compose.staging.yml to remote server');
+        
         await MacMiniPlugin.sshExec(
           envConfig,
           `cat > ${repoDir}/docker-compose.staging.yml << 'EOF'\n${composeContent}\nEOF`
         );
-        
-        // Build and deploy on remote server
+
+        // ============================================================
+        // CRITICAL: Build BEFORE Deploy
+        // ============================================================
+        // Why: docker compose up --build doesn't reliably build images
+        // that don't exist yet. It tries to start the container first,
+        // fails with "unable to get image", then tries to build.
+        //
+        // What breaks: Deployment fails with Docker daemon errors.
+        //
+        // Solution: Always build explicitly first, then deploy.
+        // ============================================================
+
+        // Step 1: Build the image
+        console.log('   🔨 Building container image on remote server...');
         await MacMiniPlugin.sshExec(
           envConfig,
-          `
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-          cd ${repoDir} && \
-          docker compose -f docker-compose.staging.yml up -d --build
-        `
+          `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
+           cd ${repoDir} && \
+           docker compose -f docker-compose.staging.yml build`
+        );
+
+        // Step 2: Deploy the built image
+        console.log('   🚀 Starting containers on remote server...');
+        await MacMiniPlugin.sshExec(
+          envConfig,
+          `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
+           cd ${repoDir} && \
+           docker compose -f docker-compose.staging.yml up -d`
         );
       }
 
       return { success: true, message: 'Staging deployment complete' };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`   ❌ Deployment failed: ${errorMessage}`);
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       };
     }
   }
