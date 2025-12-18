@@ -129,7 +129,7 @@ jobs:
              cd \"\$INFRA_DIR\" && \
              if [ ! -d \"node_modules\" ]; then npm install; fi && \
              cd \"\$REPO_DIR\" && \
-             COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+             GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
              node \"\$INFRA_DIR/bin/factiii\" deploy --prod --commit $COMMIT_HASH --branch $BRANCH"
           
           rm -f ~/.ssh/deploy_key
