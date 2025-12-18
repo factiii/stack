@@ -597,34 +597,94 @@ class MacMiniPlugin {
   /**
    * Deploy to staging server
    */
+  /**
+   * Generate docker-compose.staging.yml for staging deployment
+   */
+  generateStagingCompose(config) {
+    const repoName = config.name || 'app';
+    const domain = config.environments?.staging?.domain || 'staging.localhost';
+    
+    return `services:
+  postgres:
+    image: postgres:latest
+    container_name: ${repoName}-postgres-staging
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${repoName}-staging
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-staging:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    container_name: ${repoName}-server-staging
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:\${POSTGRES_PASSWORD:-password}@postgres:5432/${repoName}-staging
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-staging:
+`;
+  }
+
   async deployStaging(config) {
     const envConfig = config.environments?.staging;
     if (!envConfig?.host) {
       return { success: false, error: 'Staging host not configured' };
     }
-    
+
     console.log(`   🔨 Building and deploying on staging (${envConfig.host})...`);
-    
+
     try {
       const repoName = config.name || 'app';
       const repoDir = `~/.factiii/${repoName}`;
-      
+      const composeContent = this.generateStagingCompose(config);
+
       // Check if running ON the server (from workflow)
       if (process.env.GITHUB_ACTIONS) {
         // We're on the server - run commands directly
         const { execSync } = require('child_process');
-        execSync(`cd ${repoDir} && docker compose up -d --build`, { 
+        const expandedRepoDir = repoDir.replace('~', process.env.HOME);
+        
+        // Write docker-compose.staging.yml
+        fs.writeFileSync(
+          path.join(expandedRepoDir, 'docker-compose.staging.yml'),
+          composeContent
+        );
+        
+        execSync(`cd ${repoDir} && docker compose -f docker-compose.staging.yml up -d --build`, { 
           stdio: 'inherit',
           shell: '/bin/bash'
         });
       } else {
         // We're remote - SSH to the server
+        // First write the compose file
+        const tmpFile = `/tmp/docker-compose.staging.yml`;
+        fs.writeFileSync(tmpFile, composeContent);
+        
+        await MacMiniPlugin.sshExec(envConfig, `cat > ${repoDir}/docker-compose.staging.yml`, composeContent);
         await MacMiniPlugin.sshExec(envConfig, `
           cd ~/.factiii/${repoName} && \
-          docker compose up -d --build
+          docker compose -f docker-compose.staging.yml up -d --build
         `);
       }
-      
+
       return { success: true, message: 'Staging deployment complete' };
     } catch (error) {
       return { success: false, error: error.message };
