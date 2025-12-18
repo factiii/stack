@@ -401,6 +401,115 @@ class MacMiniPlugin {
         'Add Docker to Login Items: System Settings → General → Login Items → Add Docker',
     },
     {
+      id: 'staging-old-containers',
+      stage: 'staging',
+      severity: 'warning',
+      description: 'Old Docker containers not managed by current factiii configs',
+      scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false;
+
+        try {
+          // 1. Generate configs first to know what SHOULD be running
+          const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+          const infraDir = path.join(factiiiDir, 'infrastructure');
+          const generateScript = path.join(infraDir, 'dist', 'scripts', 'generate-all.js');
+
+          if (fs.existsSync(generateScript)) {
+            execSync(`node "${generateScript}"`, { stdio: 'pipe', cwd: factiiiDir });
+          }
+
+          // 2. Get list of managed containers from generated docker-compose.yml
+          const composeFile = path.join(factiiiDir, 'docker-compose.yml');
+          if (!fs.existsSync(composeFile)) {
+            return false; // No compose file, nothing to check
+          }
+
+          const composeContent = fs.readFileSync(composeFile, 'utf8');
+          const compose = yaml.load(composeContent) as { services?: Record<string, unknown> };
+          const managedContainers = Object.keys(compose.services ?? {});
+
+          // 3. Get running containers
+          const running = execSync('docker ps --format "{{.Names}}"', { encoding: 'utf8' })
+            .split('\n')
+            .filter(Boolean);
+
+          // 4. Find unmanaged containers (exclude postgres, nginx, infrastructure, supabase)
+          const unmanaged = running.filter(
+            (name) =>
+              !managedContainers.includes(name) &&
+              !name.toLowerCase().includes('db') &&
+              !name.toLowerCase().includes('postgres') &&
+              !name.toLowerCase().includes('nginx') &&
+              !name.toLowerCase().includes('supabase') &&
+              !name.includes('infrastructure') &&
+              !name.match(/^(Dev|Test|dev|test)$/) // Exact match for common DB container names
+          );
+
+          return unmanaged.length > 0;
+        } catch {
+          return false; // If we can't check, assume no problem
+        }
+      },
+      fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+        try {
+          // Same logic as scan to find unmanaged containers
+          const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+          const infraDir = path.join(factiiiDir, 'infrastructure');
+          const generateScript = path.join(infraDir, 'dist', 'scripts', 'generate-all.js');
+
+          if (fs.existsSync(generateScript)) {
+            console.log('   🔨 Generating configs to determine managed containers...');
+            execSync(`node "${generateScript}"`, { stdio: 'inherit', cwd: factiiiDir });
+          }
+
+          const composeFile = path.join(factiiiDir, 'docker-compose.yml');
+          if (!fs.existsSync(composeFile)) {
+            console.log('   ⚠️  No docker-compose.yml found, skipping cleanup');
+            return false;
+          }
+
+          const composeContent = fs.readFileSync(composeFile, 'utf8');
+          const compose = yaml.load(composeContent) as { services?: Record<string, unknown> };
+          const managedContainers = Object.keys(compose.services ?? {});
+
+          const running = execSync('docker ps --format "{{.Names}}"', { encoding: 'utf8' })
+            .split('\n')
+            .filter(Boolean);
+
+          const unmanaged = running.filter(
+            (name) =>
+              !managedContainers.includes(name) &&
+              !name.toLowerCase().includes('db') &&
+              !name.toLowerCase().includes('postgres') &&
+              !name.toLowerCase().includes('nginx') &&
+              !name.toLowerCase().includes('supabase') &&
+              !name.includes('infrastructure') &&
+              !name.match(/^(Dev|Test|dev|test)$/) // Exact match for common DB container names
+          );
+
+          if (unmanaged.length === 0) {
+            console.log('   ✅ No unmanaged containers found');
+            return true;
+          }
+
+          console.log(`   🧹 Stopping ${unmanaged.length} unmanaged container(s):`);
+          for (const container of unmanaged) {
+            console.log(`      - ${container}`);
+            execSync(`docker stop "${container}"`, { stdio: 'inherit' });
+          }
+
+          console.log('   ✅ Cleanup complete');
+          return true;
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          console.log(`   Failed to clean up containers: ${errorMessage}`);
+          return false;
+        }
+      },
+      manualFix: 'Run: npx factiii fix --staging (will stop unmanaged containers)',
+    },
+    {
       id: 'staging-node-missing',
       stage: 'staging',
       severity: 'critical',
@@ -1031,19 +1140,38 @@ volumes:
           }
         );
 
-        // Step 2: Deploy the built image
-        console.log('   🚀 Starting containers...');
-        execSync(
-          `cd ${expandedRepoDir} && docker compose -f docker-compose.staging.yml up -d`,
-          {
-            stdio: 'inherit',
-            shell: '/bin/bash',
-            env: {
-              ...process.env,
-              PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-            },
-          }
-        );
+        // Step 2: Deploy using unified compose (if available)
+        const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+        const unifiedCompose = path.join(factiiiDir, 'docker-compose.yml');
+        
+        if (fs.existsSync(unifiedCompose)) {
+          console.log('   🚀 Starting containers with unified docker-compose.yml...');
+          execSync(
+            `cd ${factiiiDir} && docker compose up -d`,
+            {
+              stdio: 'inherit',
+              shell: '/bin/bash',
+              env: {
+                ...process.env,
+                PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+              },
+            }
+          );
+        } else {
+          // Fallback to single-repo compose
+          console.log('   🚀 Starting containers with single-repo docker-compose.staging.yml...');
+          execSync(
+            `cd ${expandedRepoDir} && docker compose -f docker-compose.staging.yml up -d`,
+            {
+              stdio: 'inherit',
+              shell: '/bin/bash',
+              env: {
+                ...process.env,
+                PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+              },
+            }
+          );
+        }
       } else {
         // We're remote - SSH to the server
         console.log('   📝 Writing docker-compose.staging.yml to remote server');
@@ -1074,13 +1202,20 @@ volumes:
            docker compose -f docker-compose.staging.yml build`
         );
 
-        // Step 2: Deploy the built image
+        // Step 2: Deploy using unified compose (if available)
         console.log('   🚀 Starting containers on remote server...');
         await MacMiniPlugin.sshExec(
           envConfig,
           `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-           cd ${repoDir} && \
-           docker compose -f docker-compose.staging.yml up -d`
+           if [ -f ~/.factiii/docker-compose.yml ]; then \
+             echo "Using unified docker-compose.yml" && \
+             cd ~/.factiii && \
+             docker compose up -d; \
+           else \
+             echo "Using single-repo docker-compose.staging.yml" && \
+             cd ${repoDir} && \
+             docker compose -f docker-compose.staging.yml up -d; \
+           fi`
         );
       }
 
