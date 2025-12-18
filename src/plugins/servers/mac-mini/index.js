@@ -607,12 +607,24 @@ class MacMiniPlugin {
     
     try {
       const repoName = config.name || 'app';
+      const repoDir = `~/.factiii/${repoName}`;
       
-      await MacMiniPlugin.sshExec(envConfig, `
-        cd ~/.factiii/${repoName} && \
-        docker compose build ${repoName}-staging && \
-        docker compose up -d ${repoName}-staging
-      `);
+      // Check if running ON the server (from workflow)
+      if (process.env.GITHUB_ACTIONS) {
+        // We're on the server - run commands directly
+        const { execSync } = require('child_process');
+        execSync(`cd ${repoDir} && docker compose build ${repoName}-staging && docker compose up -d ${repoName}-staging`, { 
+          stdio: 'inherit',
+          shell: '/bin/bash'
+        });
+      } else {
+        // We're remote - SSH to the server
+        await MacMiniPlugin.sshExec(envConfig, `
+          cd ~/.factiii/${repoName} && \
+          docker compose build ${repoName}-staging && \
+          docker compose up -d ${repoName}-staging
+        `);
+      }
       
       return { success: true, message: 'Staging deployment complete' };
     } catch (error) {
