@@ -13,6 +13,7 @@ const { secrets } = require('../dist/cli/secrets');
 const { upgrade } = require('../dist/cli/upgrade');
 const { validate } = require('../dist/cli/validate');
 const { checkConfig } = require('../dist/cli/check-config');
+const { devSync } = require('../dist/cli/dev-sync');
 
 // Read version from package.json
 const packageJson = require('../package.json');
@@ -146,6 +147,17 @@ program
   .option('--check', 'Only check for updates, do not upgrade')
   .action(async (options) => {
     await upgrade(options);
+  });
+
+// Dev sync command
+program
+  .command('dev-sync')
+  .description('[DEV ONLY] Sync locally built infrastructure to remote servers for testing @factiii/stack beta features')
+  .option('--staging', 'Sync to staging environment only')
+  .option('--prod', 'Sync to production environment only')
+  .option('--deploy', 'Deploy after syncing')
+  .action(async (options) => {
+    await devSync(options);
   });
 
 // Legacy commands (for backwards compatibility)

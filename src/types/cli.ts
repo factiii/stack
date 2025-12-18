@@ -124,6 +124,15 @@ export interface GenerateWorkflowsOptions {
 }
 
 /**
+ * Options for the dev-sync command
+ */
+export interface DevSyncOptions extends BaseOptions {
+  staging?: boolean;
+  prod?: boolean;
+  deploy?: boolean;
+}
+
+/**
  * Reachability info for display
  */
 export interface ReachabilityInfo {

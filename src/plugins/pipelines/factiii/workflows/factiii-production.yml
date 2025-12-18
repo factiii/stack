@@ -137,17 +137,11 @@ jobs:
                fi; \
              fi && \
              INFRA_DIR=\"\$HOME/.factiii/infrastructure\" && \
-             if [ ! -d \"\$INFRA_DIR\" ]; then \
-               echo \"📦 Cloning infrastructure repo...\" && \
-               GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git clone git@github.com:jsnyder10/infrastructure.git \"\$INFRA_DIR\"; \
-             else \
-               echo \"📦 Updating infrastructure repo...\" && \
-               cd \"\$INFRA_DIR\" && \
-               INFRA_BRANCH=\$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo \"main\") && \
-               echo \"   Using infrastructure branch: \$INFRA_BRANCH\" && \
-               GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git fetch origin && \
-               GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git pull origin \"\$INFRA_BRANCH\"; \
-             fi && \
+             echo \"📦 Removing old infrastructure repo...\" && \
+             rm -rf \"\$INFRA_DIR\" && \
+             echo \"📦 Cloning infrastructure repo (branch: $BRANCH)...\" && \
+             (GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git clone -b $BRANCH git@github.com:jsnyder10/infrastructure.git \"\$INFRA_DIR\" 2>/dev/null || \
+              GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git clone git@github.com:jsnyder10/infrastructure.git \"\$INFRA_DIR\") && \
              cd \"\$INFRA_DIR\" && \
              echo \"📦 Installing infrastructure dependencies...\" && \
              npm install && \

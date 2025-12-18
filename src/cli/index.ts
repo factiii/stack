@@ -13,5 +13,6 @@ export { secrets } from './secrets.js';
 export { upgrade } from './upgrade.js';
 export { validate } from './validate.js';
 export { checkConfig } from './check-config.js';
+export { devSync } from './dev-sync.js';
 export { Deployer } from './deployer.js';
 
