@@ -43,6 +43,17 @@ class FactiiiPipeline {
     return true; // Always load - this is the default pipeline
   }
   
+  /**
+   * Whether this environment requires the full repo cloned on the server
+   * @param {string} environment - 'dev' | 'staging' | 'prod'
+   * @returns {boolean} true if full repo needed, false if config-only
+   */
+  static requiresFullRepo(environment) {
+    // Staging: needs full repo for local building from source
+    // Prod: pulls pre-built images from ECR, only needs factiii.yml + env file
+    return environment === 'staging';
+  }
+  
   // ============================================================
   // FIXES - All issues this plugin can detect and resolve
   // ============================================================

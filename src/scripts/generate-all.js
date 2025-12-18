@@ -14,15 +14,26 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
-const factiiiDir = path.join(process.env.HOME || '/home/ubuntu', '.factiii');
+/**
+ * Get the factiii directory path
+ * Uses FACTIII_DIR env var if set, otherwise ~/.factiii
+ */
+function getFactiiiDir() {
+  return process.env.FACTIII_DIR || path.join(process.env.HOME || '/home/ubuntu', '.factiii');
+}
 
 /**
  * Scan ~/.factiii for repo directories
  */
 function scanRepos() {
+  const factiiiDir = getFactiiiDir();
+  
   if (!fs.existsSync(factiiiDir)) {
-    console.error('❌ ~/.factiii directory not found');
-    process.exit(1);
+    if (require.main === module) {
+      console.error('❌ ~/.factiii directory not found');
+      process.exit(1);
+    }
+    return [];
   }
   
   const entries = fs.readdirSync(factiiiDir);
@@ -72,6 +83,7 @@ function loadConfigs(repos) {
  * Generate docker-compose.yml from all repos' configs
  */
 function generateDockerCompose(allConfigs) {
+  const factiiiDir = getFactiiiDir();
   const compose = {
     version: '3.8',
     services: {},
@@ -144,7 +156,7 @@ function generateDockerCompose(allConfigs) {
   }
   
   // Write docker-compose.yml
-  const outputPath = path.join(factiiiDir, 'docker-compose.yml');
+  const outputPath = path.join(getFactiiiDir(), 'docker-compose.yml');
   fs.writeFileSync(outputPath, yaml.dump(compose, { lineWidth: -1 }));
   
   return Object.keys(compose.services).length - 1; // Exclude nginx from count
@@ -229,7 +241,7 @@ http {
   nginxConf += `}\n`;
   
   // Write nginx.conf
-  const outputPath = path.join(factiiiDir, 'nginx.conf');
+  const outputPath = path.join(getFactiiiDir(), 'nginx.conf');
   fs.writeFileSync(outputPath, nginxConf);
   
   return routes.length;

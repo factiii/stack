@@ -6,10 +6,8 @@
 // Plugin system
 const plugins = require('./plugins');
 
-// Generators
-const mergeConfigs = require('./generators/merge-configs');
-const generateCompose = require('./generators/generate-compose');
-const generateNginx = require('./generators/generate-nginx');
+// Server-side generators
+const { scanRepos, loadConfigs, generateDockerCompose, generateNginx } = require('./scripts/generate-all');
 
 module.exports = {
   // Plugin system exports
@@ -25,8 +23,9 @@ module.exports = {
   createServerProvider: plugins.createServerProvider,
   createSecretStore: plugins.createSecretStore,
   
-  // Generators
-  mergeConfigs,
-  generateCompose,
+  // Server-side generators (used on deployment servers)
+  scanRepos,
+  loadConfigs,
+  generateDockerCompose,
   generateNginx
 };

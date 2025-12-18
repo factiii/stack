@@ -3,13 +3,17 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
+/**
+ * Check and regenerate configurations on remote servers
+ * Uses generate-all.js to scan ~/.factiii/*/factiii.yml and regenerate merged configs
+ */
 function checkConfig(options = {}) {
   const environments = options.environment === 'all' 
     ? ['staging', 'prod'] 
     : [options.environment];
 
   console.log('🔍 Checking configurations on servers...\n');
-  console.log('=' .repeat(60));
+  console.log('='.repeat(60));
 
   const reports = {};
 
@@ -19,13 +23,11 @@ function checkConfig(options = {}) {
     const sshKeyVar = env === 'staging' ? 'STAGING_SSH' : env === 'prod' ? 'PROD_SSH' : `SSH_${envUpper}`;
     const hostVar = `${envUpper}_HOST`;
     const userVar = `${envUpper}_USER`;
-    const envsVar = `${envUpper}_ENVS`;
 
     // Get SSH credentials from environment or options
     const sshKey = options[`ssh${env.charAt(0).toUpperCase() + env.slice(1)}`] || process.env[sshKeyVar];
     const host = options[`${env}Host`] || process.env[hostVar];
     const user = options[`${env}User`] || process.env[userVar] || 'ubuntu';
-    const envVars = process.env[envsVar];
 
     if (!sshKey || !host) {
       console.log(`\n⚠️  Skipping ${env}: Missing SSH credentials`);
@@ -42,7 +44,7 @@ function checkConfig(options = {}) {
       environment: env,
       host,
       user,
-      configs: [],
+      repos: [],
       issues: [],
       warnings: [],
       fixes: [],
@@ -55,107 +57,90 @@ function checkConfig(options = {}) {
       fs.writeFileSync(sshKeyPath, sshKey);
       fs.chmodSync(sshKeyPath, 0o600);
 
-      const generatorsDir = path.join(__dirname, '../generators');
-      const scriptPath = path.join(__dirname, '../scripts/check-config.sh');
-      const remoteScriptPath = '~/.factiii/scripts/check-config.sh';
-      const configsDir = '~/.factiii/configs';
+      const generateAllScript = path.join(__dirname, '../scripts/generate-all.js');
+      const remoteScriptPath = '~/.factiii/scripts/generate-all.js';
       const infraDir = '~/.factiii';
 
       // Ensure infrastructure directory exists
       console.log('   📁 Ensuring infrastructure directory exists...');
       execSync(
         `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"mkdir -p ${configsDir} ~/.factiii/scripts/generators ~/.factiii/nginx"`,
+        `"mkdir -p ~/.factiii/scripts"`,
         { stdio: 'pipe' }
       );
 
-      // List config files
-      console.log('   📋 Checking config files...');
-      const configFilesOutput = execSync(
+      // List repo directories with factiii.yml
+      console.log('   📋 Scanning for repos...');
+      const repoListOutput = execSync(
         `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"ls -1 ${configsDir}/*.yml ${configsDir}/*.yaml 2>/dev/null || echo ''"`,
+        `"for dir in ~/.factiii/*/; do [ -f \\"\\\$dir/factiii.yml\\" ] && basename \\"\\\$dir\\"; done 2>/dev/null || echo ''"`,
         { encoding: 'utf8', stdio: 'pipe' }
       ).trim();
 
-      const configFiles = configFilesOutput ? configFilesOutput.split('\n').filter(f => f.trim()) : [];
+      const repos = repoListOutput ? repoListOutput.split('\n').filter(r => r.trim()) : [];
       
-      if (configFiles.length === 0) {
-        report.warnings.push('No config files found on server');
-        console.log('   ⚠️  No config files found');
+      if (repos.length === 0) {
+        report.warnings.push('No repos found in ~/.factiii/');
+        console.log('   ⚠️  No repos found');
       } else {
-        console.log(`   ✅ Found ${configFiles.length} config file(s)`);
+        console.log(`   ✅ Found ${repos.length} repo(s): ${repos.join(', ')}`);
         
-        // Validate each config
-        for (const configFile of configFiles) {
-          const repoName = path.basename(configFile, path.extname(configFile));
-          const serviceKey = `${repoName}-${env}`;
-          const envFile = `${infraDir}/${serviceKey}.env`;
+        // Check each repo
+        for (const repoName of repos) {
+          const repoPath = `${infraDir}/${repoName}`;
+          const envFile = `${repoPath}/.env.${env}`;
 
           try {
+            // Check if factiii.yml is valid
             const configContent = execSync(
               `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-              `"cat ${configFile}"`,
+              `"cat ${repoPath}/factiii.yml"`,
               { encoding: 'utf8', stdio: 'pipe' }
             );
 
             const config = yaml.load(configContent);
-            const configInfo = {
-              repo: repoName,
-              file: configFile,
+            const repoInfo = {
+              name: repoName,
               valid: true,
-              hasEnvFile: false,
-              envFileExists: false
+              hasEnvFile: false
             };
 
-            // Check if env file is needed and exists
-            if (config.environments && config.environments[env] && config.environments[env].env_file) {
-              configInfo.hasEnvFile = true;
-              const envFileExists = execSync(
-                `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-                `"test -f ${envFile} && echo 'yes' || echo 'no'"`,
-                { encoding: 'utf8', stdio: 'pipe' }
-              ).trim() === 'yes';
-              configInfo.envFileExists = envFileExists;
+            // Check if env file exists in repo folder
+            const envFileExists = execSync(
+              `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
+              `"test -f ${envFile} && echo 'yes' || echo 'no'"`,
+              { encoding: 'utf8', stdio: 'pipe' }
+            ).trim() === 'yes';
+            
+            repoInfo.hasEnvFile = envFileExists;
 
-              if (!envFileExists) {
-                const envVarName = `${repoName.toUpperCase().replace(/-/g, '_')}_${envUpper}_ENVS`;
-                report.issues.push(`Missing env file for ${repoName}: ${envFile} (check GitHub secret: ${envVarName})`);
-              }
+            if (!envFileExists) {
+              report.warnings.push(`Missing env file: ${envFile}`);
             }
 
-            // Check GitHub secrets availability (local check)
-            const expectedSecretName = `${repoName.toUpperCase().replace(/-/g, '_')}_${envUpper}_ENVS`;
-            if (configInfo.hasEnvFile && !process.env[expectedSecretName] && !envVars) {
-              report.warnings.push(`GitHub secret ${expectedSecretName} not found in local environment (may be set in GitHub Actions)`);
-            }
-
-            report.configs.push(configInfo);
-            console.log(`      ✅ ${repoName}: Valid`);
+            report.repos.push(repoInfo);
+            console.log(`      ✅ ${repoName}: Valid${envFileExists ? '' : ' (no env file)'}`);
 
           } catch (error) {
-            report.issues.push(`Invalid config: ${configFile} - ${error.message}`);
+            report.issues.push(`Invalid config for ${repoName}: ${error.message}`);
             console.log(`      ❌ ${repoName}: Invalid - ${error.message}`);
           }
         }
       }
 
-      // Copy generators and script
-      console.log('   📦 Copying generators and scripts...');
+      // Copy generate-all.js script to server
+      console.log('   📦 Copying generate-all.js...');
       execSync(
-        `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no -r ${generatorsDir}/* ${user}@${host}:~/.factiii/scripts/generators/ 2>/dev/null || true`,
-        { stdio: 'pipe' }
-      );
-      execSync(
-        `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no ${scriptPath} ${user}@${host}:${remoteScriptPath} 2>/dev/null || true`,
+        `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no ${generateAllScript} ${user}@${host}:${remoteScriptPath}`,
         { stdio: 'pipe' }
       );
 
-      // Run check-config script to regenerate configs
+      // Run generate-all.js to regenerate docker-compose.yml and nginx.conf
       console.log('   🔄 Regenerating docker-compose.yml and nginx.conf...');
       try {
-        const checkOutput = execSync(
+        const generateOutput = execSync(
           `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-          `"chmod +x ${remoteScriptPath} && cd ${infraDir} && INFRA_DIR=${infraDir} ${remoteScriptPath}"`,
+          `"cd ${infraDir} && node ${remoteScriptPath}"`,
           { encoding: 'utf8', stdio: 'pipe' }
         );
         report.fixes.push('Regenerated docker-compose.yml and nginx.conf');
@@ -168,7 +153,7 @@ function checkConfig(options = {}) {
       // Check service status
       console.log('   🐳 Checking service status...');
       try {
-        const servicesOutput = execSync(
+        execSync(
           `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
           `"cd ${infraDir} && docker compose ps --format json 2>/dev/null || docker compose ps"`,
           { encoding: 'utf8', stdio: 'pipe' }
@@ -209,12 +194,9 @@ function checkConfig(options = {}) {
     console.log(`\n📋 ${env.toUpperCase()} (${report.host})`);
     console.log('-'.repeat(60));
     
-    console.log(`   Configs found: ${report.configs.length}`);
-    report.configs.forEach(c => {
-      console.log(`      - ${c.repo}: ${c.valid ? '✅ Valid' : '❌ Invalid'}`);
-      if (c.hasEnvFile) {
-        console.log(`        Env file: ${c.envFileExists ? '✅ Exists' : '❌ Missing'}`);
-      }
+    console.log(`   Repos found: ${report.repos.length}`);
+    report.repos.forEach(r => {
+      console.log(`      - ${r.name}: ${r.valid ? '✅ Valid' : '❌ Invalid'}${r.hasEnvFile ? '' : ' (no env file)'}`);
     });
 
     if (report.fixes.length > 0) {

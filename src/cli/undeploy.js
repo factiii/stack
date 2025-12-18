@@ -5,6 +5,7 @@ const yaml = require('js-yaml');
 
 /**
  * Completely remove repo from staging and prod servers (undeploy)
+ * Uses generate-all.js to regenerate configs after removal
  */
 function undeploy(options = {}) {
   const rootDir = process.cwd();
@@ -57,9 +58,10 @@ function undeploy(options = {}) {
       fs.writeFileSync(sshKeyPath, sshKey);
       fs.chmodSync(sshKeyPath, 0o600);
 
-      const remoteConfigPath = `~/.factiii/configs/${repoName}.yml`;
+      const repoPath = `~/.factiii/${repoName}`;
       const serviceKey = `${repoName}-${env}`;
-      const remoteEnvPath = `~/.factiii/${serviceKey}.env`;
+      const generateAllScript = path.join(__dirname, '../scripts/generate-all.js');
+      const remoteScriptPath = '~/.factiii/scripts/generate-all.js';
 
       // Stop and remove service
       console.log(`   🛑 Stopping service...`);
@@ -69,30 +71,23 @@ function undeploy(options = {}) {
         { stdio: 'inherit' }
       );
 
-      // Remove config file
-      console.log(`   📝 Removing config file...`);
+      // Remove entire repo folder
+      console.log(`   📁 Removing repo folder...`);
       execSync(
         `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"rm -f ${remoteConfigPath}"`,
+        `"rm -rf ${repoPath}"`,
         { stdio: 'inherit' }
       );
 
-      // Remove env file
-      console.log(`   🔐 Removing environment file...`);
-      execSync(
-        `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"rm -f ${remoteEnvPath}"`,
-        { stdio: 'inherit' }
-      );
-
-      // Run check-config to regenerate docker-compose and nginx without this repo
+      // Copy and run generate-all.js to regenerate configs without this repo
       console.log(`   🔄 Regenerating configurations (without ${repoName})...`);
-      const scriptPath = path.join(__dirname, '../scripts/check-config.sh');
-      const remoteScriptPath = '~/.factiii/scripts/check-config.sh';
-
+      execSync(
+        `scp -i ${sshKeyPath} -o StrictHostKeyChecking=no ${generateAllScript} ${user}@${host}:${remoteScriptPath}`,
+        { stdio: 'pipe' }
+      );
       execSync(
         `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no ${user}@${host} ` +
-        `"chmod +x ${remoteScriptPath} && cd ~/.factiii && INFRA_DIR=~/.factiii ${remoteScriptPath}"`,
+        `"cd ~/.factiii && node ${remoteScriptPath}"`,
         { stdio: 'inherit' }
       );
 

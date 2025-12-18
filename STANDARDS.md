@@ -539,6 +539,79 @@ To get your plugin approved and listed in `approved.json`:
 
 Approved plugins load without warnings. Unapproved plugins show a warning but still work.
 
+## Server-Side Architecture
+
+### Multi-Repo Deployment
+
+Factiii Stack supports deploying multiple repos to the same server. Each server runs a single nginx reverse proxy that routes to all deployed apps.
+
+### Server Directory Structure
+
+```
+~/.factiii/                          # Root infrastructure directory
+├── repo-name/                       # Each deployed repo
+│   ├── factiii.yml                  # Repo config (scanned by generate-all.js)
+│   ├── factiiiAuto.yml              # Auto-detected config
+│   ├── .env.staging                 # Secrets (staging server only)
+│   ├── .env.prod                    # Secrets (prod server only)
+│   └── ... (source code if requiresFullRepo=true)
+├── repo-name-2/                     # Another deployed repo
+│   ├── factiii.yml
+│   └── ...
+├── scripts/
+│   └── generate-all.js              # Regenerates merged configs
+├── docker-compose.yml               # MERGED from all repos (generated)
+└── nginx.conf                       # MERGED from all repos (generated)
+```
+
+**Key principle**: Staging and prod are **independent servers**. Each server only has its own environment's secrets.
+
+### Pipeline Plugin: requiresFullRepo()
+
+Pipeline plugins can declare whether they need the full repo cloned on the server:
+
+```javascript
+static requiresFullRepo(environment) {
+  // Return true if full repo needed (for building from source)
+  // Return false if only factiii.yml + env file needed (pulls pre-built images)
+  return environment === 'staging';
+}
+```
+
+**Factiii Pipeline defaults:**
+- `staging` -> `true` (needs full repo to build locally)
+- `prod` -> `false` (pulls pre-built images from ECR)
+
+### The generate-all.js Script
+
+This is the core server-side script that:
+
+1. Scans `~/.factiii/*/factiii.yml` for all deployed repos
+2. Generates a unified `docker-compose.yml` with all services
+3. Generates a unified `nginx.conf` routing to all domains
+
+Run it after any deployment to update configs:
+
+```bash
+node ~/.factiii/scripts/generate-all.js
+```
+
+### Deployment Flows
+
+**Staging (requiresFullRepo = true):**
+1. Workflow SSHs to staging server
+2. Clone/pull full repo to `~/.factiii/{repo}/`
+3. Write secrets to `~/.factiii/{repo}/.env.staging`
+4. Run `generate-all.js` to regenerate merged configs
+5. Build and start: `docker compose up -d {repo}-staging`
+
+**Production (requiresFullRepo = false):**
+1. Workflow SSHs to production server
+2. Create `~/.factiii/{repo}/` with just `factiii.yml`
+3. Write secrets to `~/.factiii/{repo}/.env.prod`
+4. Run `generate-all.js` to regenerate merged configs
+5. Pull image from ECR and start: `docker compose up -d {repo}-prod`
+
 ## Architecture Diagrams
 
 ### Plugin Lifecycle
