@@ -119,7 +119,16 @@ class MacMiniPlugin {
       },
       fix: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
         try {
-          console.log('Starting Docker Desktop...');
+          // Double-check Docker isn't already running
+          try {
+            execSync('docker info', { stdio: 'pipe' });
+            console.log('✅ Docker is already running');
+            return true; // Already running, nothing to fix
+          } catch {
+            // Docker not running, proceed to start it
+          }
+          
+          console.log('🐳 Starting Docker Desktop...');
           execSync('open -a Docker', { stdio: 'inherit' });
           
           // Wait for Docker to start (up to 30 seconds)
@@ -134,10 +143,11 @@ class MacMiniPlugin {
             }
           }
           
-          console.log('⏳ Docker is starting (may take a minute)...');
-          return true; // Consider it fixed, even if still starting
+          console.log('❌ Docker failed to start within 30 seconds');
+          console.log('💡 Try starting Docker Desktop manually');
+          return false; // Failed to start
         } catch (error) {
-          console.error('Failed to start Docker:', error);
+          console.error('❌ Failed to start Docker:', error);
           return false;
         }
       },
@@ -294,10 +304,35 @@ class MacMiniPlugin {
         }
       },
       fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        console.log('   Starting Docker Desktop on staging server...');
         try {
           // Check if we're running ON the server (in GitHub Actions workflow)
           const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+          
+          // Double-check Docker isn't already running
+          if (isOnServer) {
+            try {
+              execSync('docker info', { stdio: 'pipe' });
+              console.log('   ✅ Docker is already running');
+              return true;
+            } catch {
+              // Docker not running, proceed to start it
+            }
+          } else {
+            try {
+              const result = await MacMiniPlugin.sshExec(
+                config.environments!.staging!,
+                'docker info > /dev/null 2>&1 && echo "running" || echo "stopped"'
+              );
+              if (result.includes('running')) {
+                console.log('   ✅ Docker is already running');
+                return true;
+              }
+            } catch {
+              // Docker not running, proceed to start it
+            }
+          }
+          
+          console.log('   🐳 Starting Docker Desktop on staging server...');
           
           if (isOnServer) {
             // We're on the server - start Docker locally
@@ -315,7 +350,7 @@ class MacMiniPlugin {
           }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          console.log(`   Failed to start Docker: ${errorMessage}`);
+          console.log(`   ❌ Failed to start Docker: ${errorMessage}`);
           return false;
         }
       },
