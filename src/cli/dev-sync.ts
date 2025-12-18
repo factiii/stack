@@ -239,6 +239,18 @@ async function getRepoInfo(rootDir: string): Promise<{ owner: string; repo: stri
 }
 
 /**
+ * Get current git branch
+ */
+async function getCurrentBranch(rootDir: string): Promise<string> {
+  try {
+    const { stdout } = await exec('git rev-parse --abbrev-ref HEAD', { cwd: rootDir });
+    return stdout.trim();
+  } catch (error) {
+    return 'main'; // fallback
+  }
+}
+
+/**
  * Trigger workflow via GitHub API
  */
 async function triggerWorkflow(
@@ -246,7 +258,8 @@ async function triggerWorkflow(
   repoName: string,
   environment: string,
   artifactId: string,
-  deploy: boolean
+  deploy: boolean,
+  branch: string
 ): Promise<void> {
   const token = process.env.GITHUB_TOKEN;
   if (!token) {
@@ -261,7 +274,7 @@ async function triggerWorkflow(
       owner: repoOwner,
       repo: repoName,
       workflow_id: 'factiii-dev-sync.yml',
-      ref: 'main', // or get current branch
+      ref: branch,
       inputs: {
         environment,
         artifact_id: artifactId,
@@ -303,13 +316,15 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
   // 3. Create tarball
   const tarPath = await createTarball(infraPath);
   
-  // 4. Get repo info
+  // 4. Get repo info and current branch
   const { owner, repo } = await getRepoInfo(rootDir);
+  const branch = await getCurrentBranch(rootDir);
   
   // 5. Upload artifact (simplified - just use timestamp as ID)
   const artifactId = `${Date.now()}`;
   console.log('📤 Preparing to sync infrastructure...');
-  console.log(`   Artifact ID: ${artifactId}\n`);
+  console.log(`   Artifact ID: ${artifactId}`);
+  console.log(`   Branch: ${branch}\n`);
   
   // Clean up tarball
   try {
@@ -329,7 +344,7 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
     console.log(`   → ${env}: ${host}`);
     
     try {
-      await triggerWorkflow(owner, repo, env, artifactId, options.deploy || false);
+      await triggerWorkflow(owner, repo, env, artifactId, options.deploy || false, branch);
       console.log(`      ✅ Workflow triggered`);
     } catch (error) {
       console.log(`      ❌ Failed to trigger workflow`);
