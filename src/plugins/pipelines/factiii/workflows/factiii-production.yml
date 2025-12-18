@@ -142,7 +142,8 @@ jobs:
                GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git pull origin main; \
              fi && \
              cd \"\$INFRA_DIR\" && \
-             if [ ! -d \"node_modules\" ]; then npm install; fi && \
+             echo \"📦 Installing infrastructure dependencies...\" && \
+             npm install && \
              echo \"📦 Building infrastructure...\" && \
              npm run build && \
              cd \"\$REPO_DIR\" && \
