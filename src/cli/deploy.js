@@ -295,16 +295,13 @@ async function deployRemoteStagesOnServer(remoteStages, rootDir, config, options
     
     try {
       // 1. Ensure server is ready (Node.js, git, repo, dependencies)
-      // Skip if running from workflow (workflow already handled setup)
-      if (!process.env.GITHUB_ACTIONS) {
-        console.log(`📦 Preparing ${stage} server...\n`);
-        await serverPlugin.ensureServerReady(config, stage, {
-          commitHash: options.commit || process.env.COMMIT_HASH,
-          branch: options.branch || process.env.BRANCH || 'main',
-          repoUrl: process.env.GITHUB_REPO
-        });
-        console.log('');
-      }
+      console.log(`📦 Preparing ${stage} server...\n`);
+      await serverPlugin.ensureServerReady(config, stage, {
+        commitHash: options.commit || process.env.COMMIT_HASH,
+        branch: options.branch || process.env.BRANCH || 'main',
+        repoUrl: process.env.GITHUB_REPO
+      });
+      console.log('');
       
       // 2. Load environment file
       const envFile = stage === 'staging' ? '.env.staging' : '.env.prod';

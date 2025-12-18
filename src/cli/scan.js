@@ -125,7 +125,8 @@ function generateEnvVarFixes(plugin, rootDir, config) {
 function displayProblems(problems, reachability, options = {}) {
   if (options.silent) return;
   
-  const stages = ['dev', 'secrets', 'staging', 'prod'];
+  // Only display stages that were checked (have reachability info)
+  const stages = Object.keys(reachability);
   let totalProblems = 0;
   
   console.log('\n' + '═'.repeat(60));
