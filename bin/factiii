@@ -3,23 +3,16 @@
 const { program } = require('commander');
 const path = require('path');
 
-// Import CLI commands
-const init = require('../src/cli/init');
-const scan = require('../src/cli/scan');
-const fix = require('../src/cli/fix');
-const deploy = require('../src/cli/deploy');
-const undeploy = require('../src/cli/undeploy');
-const secrets = require('../src/cli/secrets');
-const upgrade = require('../src/cli/upgrade');
-
-// Legacy commands (will be removed)
-let validate, checkConfig;
-try {
-  validate = require('../src/cli/validate');
-  checkConfig = require('../src/cli/check-config');
-} catch (e) {
-  // Legacy commands may not exist
-}
+// Import CLI commands from compiled TypeScript
+const { init } = require('../dist/cli/init');
+const { scan } = require('../dist/cli/scan');
+const { fix } = require('../dist/cli/fix');
+const { deploy } = require('../dist/cli/deploy');
+const { undeploy } = require('../dist/cli/undeploy');
+const { secrets } = require('../dist/cli/secrets');
+const { upgrade } = require('../dist/cli/upgrade');
+const { validate } = require('../dist/cli/validate');
+const { checkConfig } = require('../dist/cli/check-config');
 
 program
   .name('factiii')
@@ -83,7 +76,18 @@ program
   .option('--commit <hash>', 'Commit hash to deploy (passed by workflow)')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .action(async (options) => {
-    await deploy(options);
+    // Determine which environment to deploy
+    let environment = options.environment;
+    if (options.dev) environment = 'dev';
+    if (options.staging) environment = 'staging';
+    if (options.prod) environment = 'prod';
+    
+    if (!environment) {
+      console.log('❌ Please specify an environment: --dev, --staging, or --prod');
+      process.exit(1);
+    }
+    
+    await deploy(environment, options);
   });
 
 // Undeploy command
@@ -95,7 +99,13 @@ program
   .option('--prod', 'Undeploy production environment only')
   .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
   .action(async (options) => {
-    await undeploy(options);
+    // Determine which environment to undeploy
+    let environment = options.environment;
+    if (options.dev) environment = 'dev';
+    if (options.staging) environment = 'staging';
+    if (options.prod) environment = 'prod';
+    
+    await undeploy(environment, options);
   });
 
 // Generate workflows command
@@ -104,19 +114,23 @@ program
   .description('Generate GitHub workflow files')
   .option('-o, --output <dir>', 'Output directory', '.github/workflows')
   .action(async (options) => {
-    const FactiiiPipeline = require('../src/plugins/pipelines/factiii');
+    const FactiiiPipeline = require('../dist/plugins/pipelines/factiii').default;
     await FactiiiPipeline.generateWorkflows(process.cwd());
   });
 
 // Secrets command
 program
-  .command('secrets [names...]')
+  .command('secrets [action] [name]')
   .description('Manage GitHub secrets (SSH keys, AWS credentials, env vars)')
   .option('--value <value>', 'Secret value (for scripting, use with single secret name)')
-  .option('--no-deploy', 'Skip deployment prompt after uploading')
+  .option('--deploy', 'Deploy after uploading secrets')
   .option('--token <token>', 'GitHub token (or use GITHUB_TOKEN env var)')
-  .action(async (names, options) => {
-    await secrets(names, options);
+  .action(async (action, name, options) => {
+    const validActions = ['list', 'set', 'check'];
+    if (!action || !validActions.includes(action)) {
+      action = 'list';
+    }
+    await secrets(action, name, options);
   });
 
 // Upgrade command
@@ -129,24 +143,20 @@ program
   });
 
 // Legacy commands (for backwards compatibility)
-if (validate) {
-  program
-    .command('validate')
-    .description('[Legacy] Validate factiii.yml config file')
-    .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
-    .action((options) => {
-      validate(options);
-    });
-}
+program
+  .command('validate')
+  .description('[Legacy] Validate factiii.yml config file')
+  .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
+  .action(async (options) => {
+    await validate(options);
+  });
 
-if (checkConfig) {
-  program
-    .command('check-config')
-    .description('[Legacy] Check and regenerate configs on servers')
-    .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
-    .action((options) => {
-      checkConfig(options);
-    });
-}
+program
+  .command('check-config')
+  .description('[Legacy] Check and regenerate configs on servers')
+  .option('-e, --environment <env>', 'Environment (staging|prod|all)', 'all')
+  .action(async (options) => {
+    await checkConfig(options);
+  });
 
 program.parse();
