@@ -613,7 +613,7 @@ class MacMiniPlugin {
       if (process.env.GITHUB_ACTIONS) {
         // We're on the server - run commands directly
         const { execSync } = require('child_process');
-        execSync(`cd ${repoDir} && docker compose build ${repoName}-staging && docker compose up -d ${repoName}-staging`, { 
+        execSync(`cd ${repoDir} && docker compose up -d --build`, { 
           stdio: 'inherit',
           shell: '/bin/bash'
         });
@@ -621,8 +621,7 @@ class MacMiniPlugin {
         // We're remote - SSH to the server
         await MacMiniPlugin.sshExec(envConfig, `
           cd ~/.factiii/${repoName} && \
-          docker compose build ${repoName}-staging && \
-          docker compose up -d ${repoName}-staging
+          docker compose up -d --build
         `);
       }
       
