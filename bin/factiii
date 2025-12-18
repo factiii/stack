@@ -14,10 +14,13 @@ const { upgrade } = require('../dist/cli/upgrade');
 const { validate } = require('../dist/cli/validate');
 const { checkConfig } = require('../dist/cli/check-config');
 
+// Read version from package.json
+const packageJson = require('../package.json');
+
 program
   .name('factiii')
   .description('Factiii Stack - Infrastructure management CLI')
-  .version('1.0.0');
+  .version(packageJson.version);
 
 // Init command (primary setup command)
 program

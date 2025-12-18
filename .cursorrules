@@ -311,3 +311,29 @@ Plugins will be extracted from the base package one by one:
 
 Remember: This is the TOOL, not an app that uses the tool.
 Test all commands in separate application repositories!
+
+## Code Protection Comments
+
+**When implementing new features or critical logic, ALWAYS add protection comments:**
+
+**Format:**
+```
+// ============================================================
+// CRITICAL: [Brief description of what this does]
+// ============================================================
+// Why this exists: [1-2 sentences explaining the purpose]
+// What breaks if changed: [What will fail]
+// Dependencies: [What depends on this]
+// ============================================================
+```
+
+**Examples of critical code that needs protection:**
+- Filters that prevent operations (like workflow filter in scan.ts)
+- Dependency checks (like GITHUB_TOKEN check in pipeline)
+- Security-related logic
+- Architecture decisions that aren't obvious
+
+**Keep comments concise but informative:**
+- Explain WHY, not just WHAT
+- Mention what breaks if changed
+- Note any non-obvious dependencies

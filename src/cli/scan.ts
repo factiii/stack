@@ -17,6 +17,7 @@ import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
 import { loadRelevantPlugins } from '../plugins/index.js';
+import GitHubWorkflowMonitor from '../utils/github-workflow-monitor.js';
 import type { FactiiiConfig, Stage, Fix, Reachability, ScanOptions, ScanProblems } from '../types/index.js';
 
 interface PluginClass {
@@ -352,7 +353,16 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
     if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
       reachability[stage] = pipelinePlugin.canReach(stage, config);
 
-      // Only scan stages that are reachable directly (not via workflow)
+      // ============================================================
+      // CRITICAL: DO NOT REMOVE THIS WORKFLOW FILTER
+      // ============================================================
+      // Why this exists: Prevents scanning staging/prod from dev machine
+      // which would fail because SSH keys are only in GitHub Secrets.
+      // What breaks if changed: Scan tries to SSH without keys, fails with
+      // "No SSH key found" errors for all staging/prod checks.
+      // Dependencies: Staging/prod scans must run via GitHub Actions workflows
+      // that have access to STAGING_SSH and PROD_SSH secrets.
+      // ============================================================
       if (
         reachability[stage]?.reachable &&
         'via' in reachability[stage]! &&
@@ -409,6 +419,44 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
         const errorMessage = e instanceof Error ? e.message : String(e);
         console.log(`   ⚠️  Error scanning ${fix.id}: ${errorMessage}`);
       }
+    }
+  }
+
+  // Trigger workflows for stages reachable via workflow
+  const workflowStages: Stage[] = [];
+  for (const stage of stages) {
+    const reach = reachability[stage];
+    if (reach?.reachable && reach.via === 'workflow') {
+      workflowStages.push(stage);
+    }
+  }
+
+  if (workflowStages.length > 0 && !options.silent) {
+    console.log('\n🔄 Triggering remote scans via GitHub Actions...\n');
+    
+    try {
+      const monitor = new GitHubWorkflowMonitor();
+      
+      for (const stage of workflowStages) {
+        const workflowFile = `factiii-scan-${stage}.yml`;
+        console.log(`   Triggering ${stage} scan...`);
+        
+        try {
+          const runId = await monitor.triggerWorkflow(workflowFile, stage);
+          const url = `https://github.com/${config.name}/actions/runs/${runId}`;
+          console.log(`   ✅ ${stage} scan triggered: ${url}`);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.log(`   ⚠️  Failed to trigger ${stage} scan: ${errorMessage}`);
+        }
+      }
+      
+      console.log('\n💡 View scan results in GitHub Actions');
+    } catch (error) {
+      // GitHub CLI not available - show helpful message
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.log(`\n⚠️  ${errorMessage}`);
+      console.log('   Remote scans will run automatically on next deployment');
     }
   }
 

@@ -117,7 +117,30 @@ class MacMiniPlugin {
           return true; // Problem exists
         }
       },
-      fix: null,
+      fix: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        try {
+          console.log('Starting Docker Desktop...');
+          execSync('open -a Docker', { stdio: 'inherit' });
+          
+          // Wait for Docker to start (up to 30 seconds)
+          for (let i = 0; i < 30; i++) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            try {
+              execSync('docker info', { stdio: 'pipe' });
+              console.log('✅ Docker started successfully');
+              return true;
+            } catch {
+              // Still starting...
+            }
+          }
+          
+          console.log('⏳ Docker is starting (may take a minute)...');
+          return true; // Consider it fixed, even if still starting
+        } catch (error) {
+          console.error('Failed to start Docker:', error);
+          return false;
+        }
+      },
       manualFix: 'Start Docker Desktop or run: open -a Docker',
     },
     {
@@ -232,6 +255,91 @@ class MacMiniPlugin {
         }
       },
       manualFix: 'SSH to server and install Docker: brew install --cask docker',
+    },
+    {
+      id: 'staging-docker-not-running',
+      stage: 'staging',
+      severity: 'critical',
+      description: 'Docker is not running on staging server',
+      scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        // Only check if staging environment is defined in config
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false; // Skip check if staging not configured
+
+        const host = config?.environments?.staging?.host;
+        if (!host) return false;
+
+        try {
+          // Check if Docker daemon is running (not just installed)
+          const result = await MacMiniPlugin.sshExec(
+            config.environments!.staging!,
+            'docker info > /dev/null 2>&1 && echo "running" || echo "stopped"'
+          );
+          return result.includes('stopped');
+        } catch {
+          return true;
+        }
+      },
+      fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        console.log('   Starting Docker Desktop on staging server...');
+        try {
+          await MacMiniPlugin.sshExec(
+            config.environments!.staging!,
+            'open -a Docker && sleep 15 && docker info'
+          );
+          console.log('   ✅ Docker Desktop started successfully');
+          return true;
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          console.log(`   Failed to start Docker: ${errorMessage}`);
+          return false;
+        }
+      },
+      manualFix: 'SSH to server and run: open -a Docker',
+    },
+    {
+      id: 'staging-docker-autostart',
+      stage: 'staging',
+      severity: 'warning',
+      description: 'Docker not configured to start on login',
+      scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        // Only check if staging environment is defined in config
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false; // Skip check if staging not configured
+
+        const host = config?.environments?.staging?.host;
+        if (!host) return false;
+
+        try {
+          // Check if Docker is in Login Items using osascript
+          const result = await MacMiniPlugin.sshExec(
+            config.environments!.staging!,
+            'osascript -e \'tell application "System Events" to get the name of every login item\' 2>/dev/null || echo ""'
+          );
+          // Check if Docker is in the list of login items
+          return !result.toLowerCase().includes('docker');
+        } catch {
+          // If we can't check, assume it's not configured
+          return true;
+        }
+      },
+      fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        console.log('   Configuring Docker to start on login...');
+        try {
+          await MacMiniPlugin.sshExec(
+            config.environments!.staging!,
+            'osascript -e \'tell application "System Events" to make login item at end with properties {path:"/Applications/Docker.app", hidden:false}\''
+          );
+          console.log('   ✅ Docker added to Login Items');
+          return true;
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          console.log(`   Failed to add Docker to Login Items: ${errorMessage}`);
+          return false;
+        }
+      },
+      manualFix:
+        'Add Docker to Login Items: System Settings → General → Login Items → Add Docker',
     },
     {
       id: 'staging-node-missing',
@@ -583,6 +691,102 @@ class MacMiniPlugin {
   }
 
   /**
+   * Ensure Docker is running before deployment
+   * Starts Docker Desktop if not running and waits for it to be ready
+   */
+  private async ensureDockerRunning(
+    envConfig: EnvironmentConfig,
+    isOnServer: boolean
+  ): Promise<void> {
+    const checkCmd = 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && docker info > /dev/null 2>&1 && echo "running" || echo "stopped"';
+    
+    // Start Docker and wait up to 60 seconds for it to be ready
+    const startCmd = `
+      export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
+      if ! docker info > /dev/null 2>&1; then
+        echo "Starting Docker Desktop..." && \
+        open -a Docker && \
+        for i in {1..60}; do
+          sleep 1
+          if docker info > /dev/null 2>&1; then
+            echo "Docker is ready"
+            exit 0
+          fi
+        done
+        echo "Docker failed to start within 60 seconds"
+        exit 1
+      else
+        echo "Docker is already running"
+      fi
+    `;
+
+    if (isOnServer) {
+      // We're on the server - run commands directly
+      try {
+        const result = execSync(checkCmd, { 
+          encoding: 'utf8', 
+          shell: '/bin/bash',
+          env: {
+            ...process.env,
+            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+          },
+        });
+        
+        if (result.includes('stopped')) {
+          console.log('   🐳 Starting Docker Desktop...');
+          execSync(startCmd, { 
+            stdio: 'inherit', 
+            shell: '/bin/bash',
+            env: {
+              ...process.env,
+              PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+            },
+          });
+          console.log('   ✅ Docker Desktop started');
+        } else {
+          console.log('   ✅ Docker is already running');
+        }
+      } catch (error) {
+        // Docker not running, try to start it
+        console.log('   🐳 Starting Docker Desktop...');
+        try {
+          execSync(startCmd, { 
+            stdio: 'inherit', 
+            shell: '/bin/bash',
+            env: {
+              ...process.env,
+              PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+            },
+          });
+          console.log('   ✅ Docker Desktop started');
+        } catch (startError) {
+          throw new Error('Failed to start Docker Desktop. Please start it manually.');
+        }
+      }
+    } else {
+      // We're remote - run via SSH
+      try {
+        const result = await MacMiniPlugin.sshExec(envConfig, checkCmd);
+        if (result.includes('stopped')) {
+          console.log('   🐳 Starting Docker Desktop on staging server...');
+          await MacMiniPlugin.sshExec(envConfig, startCmd);
+          console.log('   ✅ Docker Desktop started');
+        } else {
+          console.log('   ✅ Docker is already running');
+        }
+      } catch {
+        console.log('   🐳 Starting Docker Desktop on staging server...');
+        try {
+          await MacMiniPlugin.sshExec(envConfig, startCmd);
+          console.log('   ✅ Docker Desktop started');
+        } catch (startError) {
+          throw new Error('Failed to start Docker Desktop on staging server. Please start it manually.');
+        }
+      }
+    }
+  }
+
+  /**
    * Deploy to an environment
    */
   async deploy(config: FactiiiConfig, environment: string): Promise<DeployResult> {
@@ -686,6 +890,18 @@ volumes:
       // When GITHUB_ACTIONS=true, we're executing on the server itself
       const isOnServer = process.env.GITHUB_ACTIONS === 'true';
 
+      // ============================================================
+      // CRITICAL: Ensure Docker is running BEFORE building
+      // ============================================================
+      // Why this exists: Staging builds containers locally from source.
+      // Unlike production (which pulls pre-built images from ECR),
+      // staging needs Docker daemon running to build the images.
+      // What breaks if changed: docker compose build fails with
+      // "Cannot connect to the Docker daemon" error.
+      // Dependencies: Docker Desktop must be installed and startable.
+      // ============================================================
+      await this.ensureDockerRunning(envConfig, isOnServer);
+
       if (isOnServer) {
         // We're on the server - run commands directly
         const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
@@ -696,11 +912,16 @@ volumes:
           composeContent
         );
 
+        // Build and deploy with proper shell and PATH
         execSync(
-          `cd ${repoDir} && docker compose -f docker-compose.staging.yml up -d --build`,
+          `cd ${expandedRepoDir} && docker compose -f docker-compose.staging.yml up -d --build`,
           {
             stdio: 'inherit',
             shell: '/bin/bash',
+            env: {
+              ...process.env,
+              PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+            },
           }
         );
       } else {
@@ -713,10 +934,13 @@ volumes:
           envConfig,
           `cat > ${repoDir}/docker-compose.staging.yml << 'EOF'\n${composeContent}\nEOF`
         );
+        
+        // Build and deploy on remote server
         await MacMiniPlugin.sshExec(
           envConfig,
           `
-          cd ~/.factiii/${repoName} && \
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
+          cd ${repoDir} && \
           docker compose -f docker-compose.staging.yml up -d --build
         `
         );

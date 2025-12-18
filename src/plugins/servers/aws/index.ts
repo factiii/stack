@@ -106,7 +106,7 @@ class AWSPlugin {
   static readonly fixes: Fix[] = [
     // DEV STAGE FIXES (same as Mac Mini for local dev)
     {
-      id: 'docker-not-installed-dev',
+      id: 'aws-docker-not-installed-dev',
       stage: 'dev',
       severity: 'critical',
       description: 'Docker is not installed locally',
@@ -122,7 +122,7 @@ class AWSPlugin {
       manualFix: 'Install Docker Desktop: https://www.docker.com/products/docker-desktop/',
     },
     {
-      id: 'docker-not-running-dev',
+      id: 'aws-docker-not-running-dev',
       stage: 'dev',
       severity: 'critical',
       description: 'Docker is not running locally',
@@ -134,7 +134,30 @@ class AWSPlugin {
           return true;
         }
       },
-      fix: null,
+      fix: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+        try {
+          console.log('Starting Docker Desktop...');
+          execSync('open -a Docker', { stdio: 'inherit' });
+          
+          // Wait for Docker to start (up to 30 seconds)
+          for (let i = 0; i < 30; i++) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            try {
+              execSync('docker info', { stdio: 'pipe' });
+              console.log('✅ Docker started successfully');
+              return true;
+            } catch {
+              // Still starting...
+            }
+          }
+          
+          console.log('⏳ Docker is starting (may take a minute)...');
+          return true; // Consider it fixed, even if still starting
+        } catch (error) {
+          console.error('Failed to start Docker:', error);
+          return false;
+        }
+      },
       manualFix: 'Start Docker Desktop',
     },
     {

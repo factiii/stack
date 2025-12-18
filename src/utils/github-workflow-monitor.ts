@@ -146,23 +146,23 @@ class GitHubWorkflowMonitor {
       // Trigger the workflow
       const runId = await this.triggerWorkflow(workflowFile, environment);
 
-      // Stream logs
-      const result = await this.streamLogs(runId);
+      // Stream logs (just for display - gh run watch exits 0 regardless of workflow result)
+      await this.streamLogs(runId);
 
-      // Get final status
+      // Get final status - THIS determines actual success based on workflow conclusion
       const status = await this.getRunStatus(runId);
+      const isSuccess = status.conclusion === 'success';
 
       console.log('');
-      if (result.success) {
+      if (isSuccess) {
         console.log(`✅ Deployment successful!`);
-        console.log(`   View full logs: ${status.url}`);
       } else {
-        console.log(`❌ Deployment failed!`);
-        console.log(`   View full logs: ${status.url}`);
+        console.log(`❌ Deployment failed! (${status.conclusion})`);
       }
+      console.log(`   View full logs: ${status.url}`);
 
       return {
-        success: result.success,
+        success: isSuccess,
         url: status.url,
         runId,
       };
