@@ -48,7 +48,24 @@ jobs:
           echo "host=$HOST" >> $GITHUB_OUTPUT
           echo "ssh_user=$SSH_USER" >> $GITHUB_OUTPUT
 
+      - name: Check if environment configured
+        id: check_env
+        run: |
+          if [ "${{ inputs.environment }}" == "staging" ]; then
+            HAS_ENV=$(yq eval '.environments.staging != null' factiii.yml)
+          else
+            HAS_ENV=$(yq eval '.environments.prod != null or .environments.production != null' factiii.yml)
+          fi
+          
+          echo "has_env=$HAS_ENV" >> $GITHUB_OUTPUT
+          
+          if [ "$HAS_ENV" != "true" ]; then
+            echo "⏭️  ${{ inputs.environment }} environment not configured in factiii.yml"
+            exit 1
+          fi
+
       - name: Setup SSH
+        if: steps.check_env.outputs.has_env == 'true'
         env:
           SSH_KEY: ${{ inputs.environment == 'staging' && secrets.STAGING_SSH || secrets.PROD_SSH }}
         run: |
@@ -62,6 +79,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
 
       - name: Bootstrap Node.js (one-time)
+        if: steps.check_env.outputs.has_env == 'true'
         env:
           HOST: ${{ steps.config.outputs.host }}
           USER: ${{ steps.config.outputs.ssh_user }}
@@ -71,7 +89,8 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
             'if ! command -v node &> /dev/null; then
                echo "📦 Installing Node.js...";
-               if command -v brew &> /dev/null; then
+               if [ -f /opt/homebrew/bin/brew ] || [ -f /usr/local/bin/brew ]; then
+                 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH";
                  brew install node;
                else
                  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs;
@@ -81,6 +100,7 @@ jobs:
              fi'
 
       - name: Deploy via CLI
+        if: steps.check_env.outputs.has_env == 'true'
         env:
           HOST: ${{ steps.config.outputs.host }}
           USER: ${{ steps.config.outputs.ssh_user }}
@@ -88,6 +108,7 @@ jobs:
           COMMIT_HASH: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
           GITHUB_REPO: ${{ github.repository }}
+          REPO_NAME: ${{ steps.config.outputs.repo_name }}
         run: |
           if [ -z "$HOST" ]; then
             echo "❌ Missing host in factiii.yml: environments.$ENVIRONMENT.host"
@@ -97,8 +118,42 @@ jobs:
           echo "🚀 Deploying to $ENVIRONMENT ($HOST)..."
           
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
-            "COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-             npx factiii deploy --$ENVIRONMENT --commit=$COMMIT_HASH --branch=$BRANCH"
+            "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
+             REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
+             if [ ! -d \"\$REPO_DIR\" ]; then \
+               echo \"📦 Cloning repository...\" && \
+               mkdir -p \"\$HOME/.factiii\" && \
+               git clone \"https://github.com/$GITHUB_REPO.git\" \"\$REPO_DIR\"; \
+             else \
+               echo \"📦 Updating repository...\" && \
+               cd \"\$REPO_DIR\" && \
+               git fetch origin; \
+             fi && \
+             cd \"\$REPO_DIR\" && \
+             git checkout \"$COMMIT_HASH\" && \
+             if [ ! -d \"node_modules\" ]; then \
+               echo \"📦 Installing dependencies...\" && \
+               if [ -f \"pnpm-lock.yaml\" ]; then \
+                 command -v pnpm >/dev/null 2>&1 || npm install -g pnpm && \
+                 pnpm install; \
+               else \
+                 npm install; \
+               fi; \
+             fi && \
+             INFRA_DIR=\"\$HOME/.factiii/infrastructure\" && \
+             if [ ! -d \"\$INFRA_DIR\" ]; then \
+               echo \"📦 Cloning infrastructure repo...\" && \
+               GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git clone git@github.com:jsnyder10/infrastructure.git \"\$INFRA_DIR\"; \
+             else \
+               echo \"📦 Updating infrastructure repo...\" && \
+               cd \"\$INFRA_DIR\" && \
+               GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git pull origin main; \
+             fi && \
+             cd \"\$INFRA_DIR\" && \
+             if [ ! -d \"node_modules\" ]; then npm install; fi && \
+             cd \"\$REPO_DIR\" && \
+             COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+             node \"\$INFRA_DIR/bin/factiii\" deploy --$ENVIRONMENT --commit $COMMIT_HASH --branch $BRANCH"
           
           rm -f ~/.ssh/deploy_key
           echo "✅ Deployment complete!"

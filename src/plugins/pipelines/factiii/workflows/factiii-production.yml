@@ -37,7 +37,19 @@ jobs:
           echo "host=$HOST" >> $GITHUB_OUTPUT
           echo "ssh_user=$SSH_USER" >> $GITHUB_OUTPUT
 
+      - name: Check if production configured
+        id: check_prod
+        run: |
+          HAS_PROD=$(yq eval '.environments.prod != null or .environments.production != null' factiii.yml)
+          echo "has_prod=$HAS_PROD" >> $GITHUB_OUTPUT
+          
+          if [ "$HAS_PROD" != "true" ]; then
+            echo "⏭️  Production environment not configured in factiii.yml - skipping deployment"
+            exit 0
+          fi
+
       - name: Setup SSH
+        if: steps.check_prod.outputs.has_prod == 'true'
         env:
           SSH_KEY: ${{ secrets.PROD_SSH }}
         run: |
@@ -51,6 +63,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
 
       - name: Bootstrap Node.js (one-time)
+        if: steps.check_prod.outputs.has_prod == 'true'
         env:
           HOST: ${{ steps.config.outputs.host }}
           USER: ${{ steps.config.outputs.ssh_user }}
@@ -65,12 +78,14 @@ jobs:
              fi'
 
       - name: Deploy via CLI
+        if: steps.check_prod.outputs.has_prod == 'true'
         env:
           HOST: ${{ steps.config.outputs.host }}
           USER: ${{ steps.config.outputs.ssh_user }}
           COMMIT_HASH: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
           GITHUB_REPO: ${{ github.repository }}
+          REPO_NAME: ${{ steps.config.outputs.repo_name }}
         run: |
           if [ -z "$HOST" ]; then
             echo "❌ Missing host in factiii.yml: environments.prod.host"
@@ -80,8 +95,42 @@ jobs:
           echo "🚀 Deploying to production ($HOST)..."
           
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
-            "COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-             npx factiii deploy --prod --commit=$COMMIT_HASH --branch=$BRANCH"
+            "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
+             REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
+             if [ ! -d \"\$REPO_DIR\" ]; then \
+               echo \"📦 Cloning repository...\" && \
+               mkdir -p \"\$HOME/.factiii\" && \
+               git clone \"https://github.com/$GITHUB_REPO.git\" \"\$REPO_DIR\"; \
+             else \
+               echo \"📦 Updating repository...\" && \
+               cd \"\$REPO_DIR\" && \
+               git fetch origin; \
+             fi && \
+             cd \"\$REPO_DIR\" && \
+             git checkout \"$COMMIT_HASH\" && \
+             if [ ! -d \"node_modules\" ]; then \
+               echo \"📦 Installing dependencies...\" && \
+               if [ -f \"pnpm-lock.yaml\" ]; then \
+                 command -v pnpm >/dev/null 2>&1 || npm install -g pnpm && \
+                 pnpm install; \
+               else \
+                 npm install; \
+               fi; \
+             fi && \
+             INFRA_DIR=\"\$HOME/.factiii/infrastructure\" && \
+             if [ ! -d \"\$INFRA_DIR\" ]; then \
+               echo \"📦 Cloning infrastructure repo...\" && \
+               GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git clone git@github.com:jsnyder10/infrastructure.git \"\$INFRA_DIR\"; \
+             else \
+               echo \"📦 Updating infrastructure repo...\" && \
+               cd \"\$INFRA_DIR\" && \
+               GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git pull origin main; \
+             fi && \
+             cd \"\$INFRA_DIR\" && \
+             if [ ! -d \"node_modules\" ]; then npm install; fi && \
+             cd \"\$REPO_DIR\" && \
+             COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+             node \"\$INFRA_DIR/bin/factiii\" deploy --prod --commit $COMMIT_HASH --branch $BRANCH"
           
           rm -f ~/.ssh/deploy_key
           echo "✅ Production deployment complete!"
