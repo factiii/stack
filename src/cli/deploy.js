@@ -2,7 +2,8 @@
  * Deploy Command
  * 
  * Runs scan, aborts if problems found, then deploys.
- * Calls each plugin's deploy() method for the requested environment.
+ * For staging/prod: triggers GitHub Actions workflow and streams logs.
+ * For dev: calls plugin deploy methods directly.
  * 
  * Usage:
  *   npx factiii deploy           # Deploy all (runs on server)
@@ -13,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const { execSync } = require('child_process');
 const scan = require('./scan');
 
 /**
@@ -86,13 +88,13 @@ async function deploy(options = {}) {
   else if (options.staging) stages = ['staging'];
   else if (options.prod) stages = ['prod'];
   else if (options.environment) stages = [options.environment];
-  else stages = ['dev', 'secrets', 'staging', 'prod'];
+  else stages = ['dev', 'staging', 'prod']; // Secrets don't deploy
   
   console.log('═'.repeat(60));
   console.log('🚀 FACTIII DEPLOY');
   console.log('═'.repeat(60) + '\n');
   
-  // 1. Run scan - ABORT if any problems found
+  // 1. Run scan - ABORT if any critical/warning problems found (ignore info)
   console.log('📋 Stage 1: Running pre-deploy checks...\n');
   const problems = await scan({ 
     rootDir, 
@@ -100,13 +102,19 @@ async function deploy(options = {}) {
     silent: true 
   });
   
-  const totalProblems = Object.values(problems).flat().length;
+  // Filter out info-level issues (they don't block deployment)
+  const blockingProblems = {};
+  for (const [stage, stageProblems] of Object.entries(problems)) {
+    blockingProblems[stage] = stageProblems.filter(p => p.severity !== 'info');
+  }
   
-  if (totalProblems > 0) {
+  const totalBlockingProblems = Object.values(blockingProblems).flat().length;
+  
+  if (totalBlockingProblems > 0) {
     console.log('❌ Pre-deploy checks failed!\n');
     
-    // Display problems
-    for (const [stage, stageProblems] of Object.entries(problems)) {
+    // Display blocking problems
+    for (const [stage, stageProblems] of Object.entries(blockingProblems)) {
       if (stageProblems.length > 0) {
         console.log(`   ${stage.toUpperCase()}:`);
         for (const problem of stageProblems) {
@@ -121,54 +129,91 @@ async function deploy(options = {}) {
   
   console.log('✅ All pre-deploy checks passed!\n');
   
-  // 2. Load plugins
-  const plugins = await loadPlugins(rootDir, config);
+  // 2. Check if we should use GitHub Actions workflow monitoring
+  const remoteStages = stages.filter(s => s === 'staging' || s === 'prod');
+  const localStages = stages.filter(s => s === 'dev');
   
-  // 3. Deploy each environment requested
-  console.log('═'.repeat(60));
-  console.log('📋 Stage 2: Deploying...');
-  console.log('═'.repeat(60) + '\n');
-  
-  for (const stage of stages) {
-    if (stage === 'secrets') continue; // Secrets don't deploy
-    
-    console.log(`🚀 Deploying ${stage}...\n`);
-    
-    // Load env file for this environment
-    if (stage === 'staging') {
-      loadEnvFile(path.join(rootDir, '.env.staging'));
-    } else if (stage === 'prod') {
-      loadEnvFile(path.join(rootDir, '.env.prod'));
-    } else if (stage === 'dev') {
-      loadEnvFile(path.join(rootDir, '.env'));
+  // Deploy remote stages via GitHub Actions
+  if (remoteStages.length > 0 && localStages.length === 0) {
+    // Check if GitHub CLI is available
+    let hasGhCli = false;
+    try {
+      execSync('which gh', { stdio: 'pipe' });
+      execSync('gh auth status', { stdio: 'pipe' });
+      hasGhCli = true;
+    } catch {
+      hasGhCli = false;
     }
     
-    // Call each plugin's deploy method
-    for (const plugin of plugins) {
-      if (plugin.deploy) {
+    if (hasGhCli) {
+      // Use workflow monitoring for remote deployments
+      const GitHubWorkflowMonitor = require('../utils/github-workflow-monitor');
+      
+      for (const stage of remoteStages) {
+        console.log('═'.repeat(60));
+        console.log(`🚀 DEPLOYING ${stage.toUpperCase()}`);
+        console.log('═'.repeat(60) + '\n');
+        
         try {
-          const result = await plugin.deploy(config, stage);
-          if (result.message) {
-            console.log(`   ✅ ${plugin.constructor.name}: ${result.message}`);
+          const monitor = new GitHubWorkflowMonitor();
+          const result = await monitor.triggerAndWatch('factiii-deploy.yml', stage);
+          
+          if (!result.success) {
+            console.error(`\n❌ ${stage} deployment failed!`);
+            process.exit(1);
           }
-        } catch (e) {
-          console.log(`   ⚠️  ${plugin.constructor.name}: ${e.message}`);
+        } catch (error) {
+          console.error(`\n❌ Error deploying ${stage}: ${error.message}`);
+          process.exit(1);
+        }
+        
+        console.log('');
+      }
+    } else {
+      console.log('⚠️  GitHub CLI not found - cannot monitor remote deployments');
+      console.log('   Install with: brew install gh');
+      console.log('   Then run: gh auth login\n');
+      console.log('💡 Remote deployments must be triggered manually via GitHub Actions UI\n');
+      process.exit(1);
+    }
+  }
+  
+  // Deploy local stages directly
+  if (localStages.length > 0) {
+    // Load plugins
+    const plugins = await loadPlugins(rootDir, config);
+    
+    console.log('═'.repeat(60));
+    console.log('📋 LOCAL DEPLOYMENT');
+    console.log('═'.repeat(60) + '\n');
+    
+    for (const stage of localStages) {
+      console.log(`🚀 Deploying ${stage}...\n`);
+      
+      // Load env file for this environment
+      loadEnvFile(path.join(rootDir, '.env'));
+      
+      // Call each plugin's deploy method
+      for (const plugin of plugins) {
+        if (plugin.deploy) {
+          try {
+            const result = await plugin.deploy(config, stage);
+            if (result.message) {
+              console.log(`   ✅ ${plugin.constructor.name}: ${result.message}`);
+            }
+          } catch (e) {
+            console.log(`   ⚠️  ${plugin.constructor.name}: ${e.message}`);
+          }
         }
       }
+      
+      console.log('');
     }
     
-    console.log('');
+    console.log('═'.repeat(60));
+    console.log('✅ LOCAL DEPLOYMENT COMPLETE');
+    console.log('═'.repeat(60) + '\n');
   }
-  
-  // 4. Summary
-  console.log('═'.repeat(60));
-  console.log('✅ DEPLOY COMPLETE');
-  console.log('═'.repeat(60) + '\n');
-  
-  for (const stage of stages.filter(s => s !== 'secrets')) {
-    console.log(`   ✅ ${stage}: Deployed`);
-  }
-  console.log('');
 }
 
 module.exports = deploy;

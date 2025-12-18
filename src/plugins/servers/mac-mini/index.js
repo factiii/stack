@@ -207,6 +207,56 @@ class MacMiniPlugin {
         }
       },
       manualFix: 'SSH to server and install Docker: brew install --cask docker'
+    },
+    {
+      id: 'staging-pnpm-missing',
+      stage: 'staging',
+      severity: 'warning',
+      description: 'pnpm not installed on staging server',
+      scan: async (config, rootDir) => {
+        // Only check if staging environment is defined in config
+        const hasStagingEnv = config?.environments?.staging;
+        if (!hasStagingEnv) return false;
+        
+        // Only check if project uses pnpm
+        const autoConfigPath = path.join(rootDir, 'factiiiAuto.yml');
+        if (!fs.existsSync(autoConfigPath)) return false;
+        
+        try {
+          const yaml = require('js-yaml');
+          const autoConfig = yaml.load(fs.readFileSync(autoConfigPath, 'utf8'));
+          if (autoConfig?.package_manager !== 'pnpm') return false;
+        } catch {
+          return false;
+        }
+        
+        const host = config?.environments?.staging?.host;
+        if (!host) return false;
+        
+        try {
+          const result = await MacMiniPlugin.sshExec(
+            config.environments.staging, 
+            'which pnpm'
+          );
+          return !result;
+        } catch {
+          return true;
+        }
+      },
+      fix: async (config, rootDir) => {
+        console.log('   Installing pnpm on staging server...');
+        try {
+          await MacMiniPlugin.sshExec(
+            config.environments.staging,
+            'npm install -g pnpm@9'
+          );
+          return true;
+        } catch (e) {
+          console.log(`   Failed: ${e.message}`);
+          return false;
+        }
+      },
+      manualFix: 'SSH to server and run: npm install -g pnpm@9'
     }
   ];
   

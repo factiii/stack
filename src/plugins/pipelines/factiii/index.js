@@ -76,6 +76,38 @@ class FactiiiPipeline {
       manualFix: 'Run: npx factiii fix (will create factiii.yml from plugin schemas)'
     },
     {
+      id: 'gh-cli-not-installed',
+      stage: 'dev',
+      severity: 'info',
+      description: 'GitHub CLI not installed (recommended for deployment monitoring)',
+      scan: async (config, rootDir) => {
+        try {
+          execSync('which gh', { stdio: 'pipe' });
+          return false;
+        } catch {
+          return true;
+        }
+      },
+      fix: async (config, rootDir) => {
+        console.log('   Installing GitHub CLI via Homebrew...');
+        try {
+          // Check if brew is available
+          execSync('which brew', { stdio: 'pipe' });
+          
+          // Install gh CLI
+          execSync('brew install gh', { stdio: 'inherit' });
+          
+          console.log('   ✅ GitHub CLI installed successfully!');
+          console.log('   💡 Run: gh auth login');
+          return true;
+        } catch (e) {
+          console.log('   ⚠️  Homebrew not found or installation failed');
+          return false;
+        }
+      },
+      manualFix: 'Install GitHub CLI: brew install gh (or visit https://cli.github.com/)'
+    },
+    {
       id: 'missing-workflows',
       stage: 'dev',
       severity: 'warning',

@@ -95,9 +95,15 @@ jobs:
             git checkout $GITHUB_BRANCH
             git pull origin $GITHUB_BRANCH
             
-            echo "📦 Installing dependencies..."
-            npm install -g pnpm@9 2>/dev/null || true
-            pnpm install
+            # Only install dependencies for staging (prod pulls pre-built images)
+            if [ "$ENVIRONMENT" == "staging" ]; then
+              echo "📦 Installing dependencies..."
+              if ! command -v pnpm &> /dev/null; then
+                echo "   Installing pnpm..."
+                npm install -g pnpm@9
+              fi
+              pnpm install
+            fi
             
             echo "🚀 Running deploy..."
             npx factiii deploy --$ENVIRONMENT

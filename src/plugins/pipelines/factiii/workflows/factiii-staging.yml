@@ -81,7 +81,10 @@ jobs:
             git pull origin main
             
             echo "📦 Installing dependencies..."
-            npm install -g pnpm@9 2>/dev/null || true
+            if ! command -v pnpm &> /dev/null; then
+              echo "   Installing pnpm..."
+              npm install -g pnpm@9
+            fi
             pnpm install
             
             echo "🚀 Running deploy..."

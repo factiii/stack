@@ -82,10 +82,6 @@ jobs:
             git checkout $GITHUB_BRANCH
             git pull origin $GITHUB_BRANCH
             
-            echo "📦 Installing dependencies..."
-            npm install -g pnpm@9 2>/dev/null || true
-            pnpm install
-            
             echo "🚀 Running deploy..."
             npx factiii deploy --prod
           EOF
