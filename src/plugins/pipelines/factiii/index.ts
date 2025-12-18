@@ -494,6 +494,7 @@ class FactiiiPipeline {
       'factiii-undeploy.yml',
       'factiii-scan-staging.yml',
       'factiii-scan-prod.yml',
+      'factiii-dev-sync.yml',
     ];
 
     for (const workflow of workflows) {
