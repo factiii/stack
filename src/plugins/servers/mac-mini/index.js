@@ -139,12 +139,17 @@ class MacMiniPlugin {
     },
     
     // STAGING STAGE FIXES
+    // Note: These checks are skipped when running from workflow (GITHUB_ACTIONS=true)
+    // because the workflow handles server setup
     {
       id: 'staging-host-missing',
       stage: 'staging',
       severity: 'critical',
       description: 'Staging host not configured in factiii.yml',
       scan: async (config, rootDir) => {
+        // Skip if running from workflow (setup already done)
+        if (process.env.GITHUB_ACTIONS) return false;
+        
         // Only check if staging environment is defined in config
         const hasStagingEnv = config?.environments?.staging;
         if (!hasStagingEnv) return false; // Skip check if staging not configured
@@ -160,6 +165,9 @@ class MacMiniPlugin {
       severity: 'critical',
       description: 'Cannot reach staging server',
       scan: async (config, rootDir) => {
+        // Skip if running from workflow (setup already done)
+        if (process.env.GITHUB_ACTIONS) return false;
+
         // Only check if staging environment is defined in config
         const hasStagingEnv = config?.environments?.staging;
         if (!hasStagingEnv) return false; // Skip check if staging not configured
@@ -184,6 +192,9 @@ class MacMiniPlugin {
       severity: 'critical',
       description: 'Docker not installed on staging server',
       scan: async (config, rootDir) => {
+        // Skip if running from workflow (setup already done)
+        if (process.env.GITHUB_ACTIONS) return false;
+
         // Only check if staging environment is defined in config
         const hasStagingEnv = config?.environments?.staging;
         if (!hasStagingEnv) return false; // Skip check if staging not configured
@@ -219,6 +230,9 @@ class MacMiniPlugin {
       severity: 'critical',
       description: 'Node.js not installed on staging server',
       scan: async (config, rootDir) => {
+        // Skip if running from workflow (setup already done)
+        if (process.env.GITHUB_ACTIONS) return false;
+
         const hasStagingEnv = config?.environments?.staging;
         if (!hasStagingEnv) return false;
         
@@ -254,6 +268,9 @@ class MacMiniPlugin {
       severity: 'critical',
       description: 'Git not installed on staging server',
       scan: async (config, rootDir) => {
+        // Skip if running from workflow (setup already done)
+        if (process.env.GITHUB_ACTIONS) return false;
+
         const hasStagingEnv = config?.environments?.staging;
         if (!hasStagingEnv) return false;
         
@@ -288,6 +305,9 @@ class MacMiniPlugin {
       severity: 'warning',
       description: 'pnpm not installed on staging server',
       scan: async (config, rootDir) => {
+        // Skip if running from workflow (setup already done)
+        if (process.env.GITHUB_ACTIONS) return false;
+
         // Only check if staging environment is defined in config
         const hasStagingEnv = config?.environments?.staging;
         if (!hasStagingEnv) return false;
@@ -338,6 +358,9 @@ class MacMiniPlugin {
       severity: 'warning',
       description: 'Repository not cloned on staging server',
       scan: async (config, rootDir) => {
+        // Skip if running from workflow (setup already done)
+        if (process.env.GITHUB_ACTIONS) return false;
+
         const hasStagingEnv = config?.environments?.staging;
         if (!hasStagingEnv) return false;
         
