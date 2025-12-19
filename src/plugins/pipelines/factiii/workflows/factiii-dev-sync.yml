@@ -18,8 +18,12 @@ on:
         options:
           - staging
           - prod
-      artifact_id:
-        description: 'Artifact identifier (timestamp)'
+      release_id:
+        description: 'GitHub Release ID containing artifact'
+        required: true
+        type: string
+      asset_id:
+        description: 'Release Asset ID for infrastructure tarball'
         required: true
         type: string
       deploy:
@@ -92,35 +96,36 @@ jobs:
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Get infrastructure from local (via rsync simulation)
+      - name: Download infrastructure artifact from release
         if: steps.check_env.outputs.has_env == 'true'
         env:
-          SSH_KEY: ${{ inputs.environment == 'staging' && secrets.STAGING_SSH || secrets.PROD_SSH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          ASSET_ID: ${{ inputs.asset_id }}
         run: |
-          echo "⚠️  DEV SYNC MODE - Using infrastructure from workflow trigger"
-          echo "   This syncs the infrastructure package for testing beta features"
-          echo "   Artifact ID: ${{ inputs.artifact_id }}"
+          echo "⚠️  DEV SYNC MODE - Using infrastructure from local build"
+          echo "   This syncs uncommitted infrastructure changes for testing"
+          echo "   Release ID: $RELEASE_ID"
+          echo "   Asset ID: $ASSET_ID"
           
-          # For now, we'll clone the infrastructure repo
-          # In a full implementation, this would download the actual artifact
-          # But GitHub's artifact API requires the artifact to be uploaded first
-          # which is complex from a local CLI
+          echo "📦 Downloading infrastructure artifact..."
           
-          echo "📦 Cloning infrastructure repo for dev sync..."
-          # Use SSH to clone private repo
-          GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
-            git clone git@github.com:${{ github.repository_owner }}/infrastructure.git infrastructure-sync
+          # Download release asset using GitHub API
+          curl -L \
+            -H "Accept: application/octet-stream" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/assets/$ASSET_ID" \
+            -o infrastructure.tar.gz
           
-          cd infrastructure-sync
-          echo "📦 Installing dependencies..."
-          npm install
+          # Verify download
+          if [ ! -f infrastructure.tar.gz ]; then
+            echo "❌ Failed to download artifact"
+            exit 1
+          fi
           
-          echo "📦 Building infrastructure..."
-          npm run build
-          
-          echo "📦 Creating deployment package..."
-          cd ..
-          tar -czf infrastructure.tar.gz -C infrastructure-sync .
+          SIZE=$(du -h infrastructure.tar.gz | cut -f1)
+          echo "✅ Downloaded artifact ($SIZE)"
 
       - name: Deploy infrastructure to server
         if: steps.check_env.outputs.has_env == 'true'
@@ -151,6 +156,11 @@ jobs:
              cd ~/.factiii/infrastructure && \
              tar -xzf /tmp/infrastructure.tar.gz && \
              rm /tmp/infrastructure.tar.gz && \
+             echo \"\" && \
+             echo \"📋 Verifying version...\" && \
+             VERSION=\$(cat package.json | grep '\"version\"' | head -1 | sed 's/.*: \"\(.*\)\".*/\1/') && \
+             echo \"   Version: \$VERSION\" && \
+             echo \"\" && \
              echo \"✅ Infrastructure synced successfully\""
           
           # Optionally deploy

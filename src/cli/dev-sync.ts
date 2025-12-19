@@ -199,9 +199,9 @@ async function createTarball(infraPath: string): Promise<string> {
 }
 
 /**
- * Upload artifact to GitHub
+ * Upload artifact to GitHub as a draft release
  */
-async function uploadArtifact(tarPath: string, repoOwner: string, repoName: string): Promise<string> {
+async function uploadArtifact(tarPath: string, repoOwner: string, repoName: string): Promise<{ releaseId: number; assetId: number; tag: string }> {
   console.log('📤 Uploading infrastructure artifact to GitHub...');
   
   const token = process.env.GITHUB_TOKEN;
@@ -215,27 +215,52 @@ async function uploadArtifact(tarPath: string, repoOwner: string, repoName: stri
   const octokit = new Octokit({ auth: token });
   
   try {
-    // Generate unique artifact name with timestamp
+    // Generate unique tag with timestamp
     const timestamp = Date.now();
-    const artifactName = `infrastructure-${timestamp}`;
+    const tag = `dev-sync-${timestamp}`;
     
-    // Read file
+    console.log(`   Creating draft release: ${tag}`);
+    
+    // Create draft release
+    const release = await octokit.repos.createRelease({
+      owner: repoOwner,
+      repo: repoName,
+      tag_name: tag,
+      name: `Dev Sync ${new Date().toISOString()}`,
+      body: '⚠️ Temporary dev-sync artifact - will be deleted after sync',
+      draft: true,
+      prerelease: true
+    });
+    
+    console.log(`   Uploading artifact (${(fs.statSync(tarPath).size / 1024 / 1024).toFixed(2)} MB)...`);
+    
+    // Read file and upload as release asset
     const fileContent = fs.readFileSync(tarPath);
-    const base64Content = fileContent.toString('base64');
     
-    // Upload as a release asset (simpler than artifacts API)
-    // We'll use a temporary file in the repo instead
-    console.log(`   Artifact ID: ${artifactName}`);
-    console.log('✅ Artifact ready\n');
+    const asset = await octokit.repos.uploadReleaseAsset({
+      owner: repoOwner,
+      repo: repoName,
+      release_id: release.data.id,
+      name: 'infrastructure.tar.gz',
+      data: fileContent as any,
+    });
     
-    // Clean up temp file
+    console.log('✅ Artifact uploaded successfully\n');
+    
+    // Clean up local temp file
     fs.unlinkSync(tarPath);
     fs.rmdirSync(path.dirname(tarPath));
     
-    return artifactName;
+    return {
+      releaseId: release.data.id,
+      assetId: asset.data.id,
+      tag
+    };
   } catch (error) {
     console.error('❌ Failed to upload artifact:');
-    console.error(error);
+    if (error instanceof Error) {
+      console.error(`   ${error.message}`);
+    }
     process.exit(1);
   }
 }
@@ -284,7 +309,8 @@ async function triggerWorkflow(
   repoOwner: string,
   repoName: string,
   environment: string,
-  artifactId: string,
+  releaseId: number,
+  assetId: number,
   deploy: boolean,
   branch: string
 ): Promise<void> {
@@ -304,7 +330,8 @@ async function triggerWorkflow(
       ref: branch,
       inputs: {
         environment,
-        artifact_id: artifactId,
+        release_id: releaseId.toString(),
+        asset_id: assetId.toString(),
         deploy: deploy.toString()
       }
     });
@@ -314,6 +341,27 @@ async function triggerWorkflow(
       console.error(`   ${error.message}`);
     }
     throw error;
+  }
+}
+
+/**
+ * Clean up draft release after successful sync
+ */
+async function cleanupRelease(repoOwner: string, repoName: string, releaseId: number): Promise<void> {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) return;
+  
+  const octokit = new Octokit({ auth: token });
+  
+  try {
+    await octokit.repos.deleteRelease({
+      owner: repoOwner,
+      repo: repoName,
+      release_id: releaseId
+    });
+  } catch (error) {
+    // Ignore cleanup errors - not critical
+    console.warn('   ⚠️  Failed to cleanup draft release (non-critical)');
   }
 }
 
@@ -344,29 +392,24 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
   // 3. Build infrastructure locally
   await buildInfrastructure(infraPath);
   
-  // 3. Create tarball
+  // 4. Create tarball
   const tarPath = await createTarball(infraPath);
   
-  // 4. Get repo info and current branch
+  // 5. Get repo info and current branch
   const { owner, repo } = await getRepoInfo(rootDir);
   const branch = await getCurrentBranch(rootDir);
   
-  // 5. Upload artifact (simplified - just use timestamp as ID)
-  const artifactId = `${Date.now()}`;
+  // 6. Upload artifact to GitHub as draft release
+  const { releaseId, assetId, tag } = await uploadArtifact(tarPath, owner, repo);
+  
   console.log('📤 Preparing to sync infrastructure...');
-  console.log(`   Artifact ID: ${artifactId}`);
+  console.log(`   Release: ${tag}`);
   console.log(`   Branch: ${branch}\n`);
   
-  // Clean up tarball
-  try {
-    fs.unlinkSync(tarPath);
-    fs.rmdirSync(path.dirname(tarPath));
-  } catch (e) {
-    // Ignore cleanup errors
-  }
-  
-  // 6. Trigger workflows
+  // 7. Trigger workflows
   console.log('🚀 Triggering dev-sync workflows...\n');
+  
+  const successfulEnvs: string[] = [];
   
   for (const env of environments) {
     const envConfig = env === 'staging' ? config.environments?.staging : (config.environments?.prod || config.environments?.production);
@@ -375,8 +418,9 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
     console.log(`   → ${env}: ${host}`);
     
     try {
-      await triggerWorkflow(owner, repo, env, artifactId, options.deploy || false, branch);
+      await triggerWorkflow(owner, repo, env, releaseId, assetId, options.deploy || false, branch);
       console.log(`      ✅ Workflow triggered`);
+      successfulEnvs.push(env);
     } catch (error) {
       console.log(`      ❌ Failed to trigger workflow`);
     }
@@ -387,5 +431,14 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
   console.log('   gh run watch');
   console.log('\n💡 Or view in GitHub Actions:');
   console.log(`   https://github.com/${owner}/${repo}/actions`);
+  
+  // 8. Wait a bit for workflows to start, then cleanup release
+  if (successfulEnvs.length > 0) {
+    console.log('\n🧹 Cleaning up draft release after workflows start...');
+    // Give workflows 5 seconds to download the artifact
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    await cleanupRelease(owner, repo, releaseId);
+    console.log('   ✅ Draft release cleaned up');
+  }
 }
 
