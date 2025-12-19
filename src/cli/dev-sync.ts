@@ -117,6 +117,33 @@ function getTargetEnvironments(config: FactiiiConfig, options: DevSyncOptions): 
 }
 
 /**
+ * Auto-increment dev version in package.json
+ * Converts 2.0.1 -> 2.0.1-d1, or 2.0.1-d1 -> 2.0.1-d2
+ */
+function incrementDevVersion(infraPath: string): string {
+  const packageJsonPath = path.join(infraPath, 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  let version = pkg.version;
+
+  // If has -d suffix, increment; otherwise add -d1
+  if (version.includes('-d')) {
+    const match = version.match(/-d(\d+)$/);
+    if (match) {
+      const num = parseInt(match[1], 10) + 1;
+      version = version.replace(/-d\d+$/, `-d${num}`);
+    }
+  } else {
+    version = `${version}-d1`;
+  }
+
+  // Update package.json
+  pkg.version = version;
+  fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2) + '\n');
+
+  return version;
+}
+
+/**
  * Build infrastructure locally
  */
 async function buildInfrastructure(infraPath: string): Promise<void> {
@@ -310,7 +337,11 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
   console.log(`📍 Infrastructure path: ${infraPath}`);
   console.log(`🎯 Target environments: ${environments.join(', ')}\n`);
   
-  // 2. Build infrastructure locally
+  // 2. Increment dev version
+  const devVersion = incrementDevVersion(infraPath);
+  console.log(`📦 Dev version: ${devVersion}\n`);
+  
+  // 3. Build infrastructure locally
   await buildInfrastructure(infraPath);
   
   // 3. Create tarball
@@ -357,3 +388,4 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
   console.log('\n💡 Or view in GitHub Actions:');
   console.log(`   https://github.com/${owner}/${repo}/actions`);
 }
+

@@ -506,8 +506,12 @@ class FactiiiPipeline {
       'factiii-scan-prod.yml',
       'factiii-fix-staging.yml',
       'factiii-fix-prod.yml',
-      'factiii-dev-sync.yml',
     ];
+
+    // Only add dev-sync workflow in dev mode
+    if (process.env.DEV_MODE === 'true') {
+      workflows.push('factiii-dev-sync.yml');
+    }
 
     for (const workflow of workflows) {
       const sourcePath = path.join(sourceDir, workflow);

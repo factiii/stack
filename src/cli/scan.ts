@@ -431,9 +431,16 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
     // Skip if stage not in reachable stages
     if (!reachableStages.includes(fix.stage)) continue;
 
+    const startTime = performance.now();
     try {
       // Run the scan function
       const hasProblem = await fix.scan(config, rootDir);
+      const duration = performance.now() - startTime;
+
+      // Log timing for slow checks (> 500ms)
+      if (duration > 500 && !options.silent) {
+        console.log(`   [${duration.toFixed(0)}ms] ${fix.id}`);
+      }
 
       if (hasProblem) {
         problems[fix.stage].push(fix);

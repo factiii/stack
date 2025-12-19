@@ -149,16 +149,18 @@ program
     await upgrade(options);
   });
 
-// Dev sync command
-program
-  .command('dev-sync')
-  .description('[DEV ONLY] Sync locally built infrastructure to remote servers for testing @factiii/stack beta features')
-  .option('--staging', 'Sync to staging environment only')
-  .option('--prod', 'Sync to production environment only')
-  .option('--deploy', 'Deploy after syncing')
-  .action(async (options) => {
-    await devSync(options);
-  });
+// Dev sync command - only available in dev mode
+if (process.env.DEV_MODE === 'true') {
+  program
+    .command('dev-sync')
+    .description('Sync locally built infrastructure to servers')
+    .option('--staging', 'Sync to staging environment only')
+    .option('--prod', 'Sync to production environment only')
+    .option('--deploy', 'Deploy after syncing')
+    .action(async (options) => {
+      await devSync(options);
+    });
+}
 
 // Legacy commands (for backwards compatibility)
 program

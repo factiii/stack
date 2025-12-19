@@ -221,3 +221,4 @@ Each plugin category handles specific checks:
 - **Secrets:** GitHub Secrets, AWS credentials
 
 All checks merge together in the scan phase.
+

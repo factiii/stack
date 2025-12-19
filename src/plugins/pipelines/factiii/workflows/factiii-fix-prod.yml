@@ -101,7 +101,7 @@ jobs:
           
           echo "🔧 Fixing production ($HOST)..."
           
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=60 -o ServerAliveCountMax=5 "$USER@$HOST" \
             "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
              REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
              if [ -d \"\$REPO_DIR\" ]; then \
@@ -111,7 +111,7 @@ jobs:
                  cd \"\$INFRA_DIR\" && \
                  if [ ! -d \"node_modules\" ]; then npm install; fi && \
                  cd \"\$REPO_DIR\" && \
-                 GITHUB_ACTIONS=true node \"\$INFRA_DIR/bin/factiii\" fix --on-server --prod; \
+                 timeout 600 env GITHUB_ACTIONS=true node \"\$INFRA_DIR/bin/factiii\" fix --on-server --prod; \
                else \
                  echo \"❌ Infrastructure repo not found at \$INFRA_DIR\"; \
                  exit 1; \
@@ -124,3 +124,4 @@ jobs:
           
           rm -f ~/.ssh/deploy_key
           echo "✅ Production fix complete!"
+

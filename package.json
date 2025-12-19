@@ -1,6 +1,6 @@
 {
   "name": "@factiii/stack",
-  "version": "2.0.1",
+  "version": "2.0.1-d2",
   "description": "Infrastructure management package for deploying services to servers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,8 @@
     "clean": "rm -rf dist",
     "copy-assets": "cp src/plugins/approved.json dist/plugins/ && mkdir -p dist/plugins/pipelines/factiii/workflows && cp src/plugins/pipelines/factiii/workflows/*.yml dist/plugins/pipelines/factiii/workflows/",
     "prebuild": "npm run clean",
-    "prepublishOnly": "npm run build",
+    "prepublish-check": "node -e \"const v=require('./package.json').version; if(v.includes('-d')){console.error('❌ Cannot publish dev version:',v); process.exit(1)}\"",
+    "prepublishOnly": "npm run prepublish-check && npm run build",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

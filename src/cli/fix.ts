@@ -78,8 +78,16 @@ async function runLocalFixes(
 
     for (const problem of stageProblems) {
       if (problem.fix) {
+        const startTime = performance.now();
         try {
           const success = await problem.fix(config, rootDir);
+          const duration = performance.now() - startTime;
+
+          // Log timing for slow fixes (> 500ms)
+          if (duration > 500) {
+            console.log(`   [${duration.toFixed(0)}ms] ${problem.id}`);
+          }
+
           if (success) {
             console.log(`   ✅ Fixed: ${problem.description}`);
             result.fixed++;

@@ -330,28 +330,26 @@ class MacMiniPlugin {
         const host = config?.environments?.staging?.host;
         if (!host) return false;
 
-        // Executed locally - SSH handled by CLI wrapper
+        // If Docker is running, don't worry about autostart config
         try {
-          const result = execSync('osascript -e \'tell application "System Events" to get the name of every login item\' 2>/dev/null || echo ""', { encoding: 'utf8' });
-          return !result.toLowerCase().includes('docker');
+          execSync('docker info', { stdio: 'pipe', timeout: 5000 });
+          return false; // Docker is running, no need to check autostart
         } catch {
-          // If we can't check, assume it's not configured
-          return true;
+          // Docker not running, check if it's configured to autostart
         }
-      },
-      fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        // Executed locally - SSH handled by CLI wrapper
-        console.log('   Configuring Docker to start on login...');
+
+        // Check LaunchAgents plist file instead of using AppleScript
+        // AppleScript doesn't work reliably over SSH (no GUI access)
         try {
-          execSync('osascript -e \'tell application "System Events" to make login item at end with properties {path:"/Applications/Docker.app", hidden:false}\'', { stdio: 'inherit' });
-          console.log('   ✅ Docker added to Login Items');
-          return true;
-        } catch (e) {
-          const errorMessage = e instanceof Error ? e.message : String(e);
-          console.log(`   Failed to add Docker to Login Items: ${errorMessage}`);
+          const homeDir = process.env.HOME ?? '/Users/jon';
+          const plistPath = `${homeDir}/Library/LaunchAgents/com.docker.helper.plist`;
+          return !fs.existsSync(plistPath);
+        } catch {
+          // If we can't check, assume it's not a problem
           return false;
         }
       },
+      fix: null, // Cannot reliably fix via SSH - requires GUI access
       manualFix:
         'Add Docker to Login Items: System Settings → General → Login Items → Add Docker',
     },
