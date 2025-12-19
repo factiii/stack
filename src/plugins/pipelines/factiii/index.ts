@@ -339,8 +339,7 @@ class FactiiiPipeline {
       description: 'PROD_SSH secret not found in GitHub',
       scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
         // Only check if prod environment is defined in config
-        const hasProdEnv =
-          config?.environments?.prod || config?.environments?.production;
+        const hasProdEnv = config?.environments?.prod;
         if (!hasProdEnv) return false; // Skip check if prod not configured
 
         const store = new GitHubSecretsStore({});
@@ -497,15 +496,21 @@ class FactiiiPipeline {
     }
 
     // Copy workflow files and inject version
+    // Infrastructure management (manual dispatch):
+    //   - factiii-deploy.yml: Manual deploy with --staging or --prod
+    //   - factiii-fix.yml: Manual fix with matrix for all configured envs
+    //   - factiii-scan.yml: Manual scan with matrix for all configured envs
+    //   - factiii-undeploy.yml: Manual cleanup
+    // CI/CD (auto on push):
+    //   - factiii-cicd-staging.yml: Auto-deploy on push to main
+    //   - factiii-cicd-prod.yml: Auto-deploy on push to prod
     const workflows = [
       'factiii-deploy.yml',
-      'factiii-staging.yml',
-      'factiii-production.yml',
+      'factiii-fix.yml',
+      'factiii-scan.yml',
       'factiii-undeploy.yml',
-      'factiii-scan-staging.yml',
-      'factiii-scan-prod.yml',
-      'factiii-fix-staging.yml',
-      'factiii-fix-prod.yml',
+      'factiii-cicd-staging.yml',
+      'factiii-cicd-prod.yml',
     ];
 
     // Only add dev-sync workflow in dev mode

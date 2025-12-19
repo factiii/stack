@@ -41,8 +41,8 @@ jobs:
             HOST=$(yq eval '.environments.staging.host // ""' factiii.yml)
             SSH_USER=$(yq eval '.environments.staging.ssh_user // "ubuntu"' factiii.yml)
           else
-            HOST=$(yq eval '.environments.prod.host // .environments.production.host // ""' factiii.yml)
-            SSH_USER=$(yq eval '.environments.prod.ssh_user // .environments.production.ssh_user // "ubuntu"' factiii.yml)
+            HOST=$(yq eval '.environments.prod.host // ""' factiii.yml)
+            SSH_USER=$(yq eval '.environments.prod.ssh_user // "ubuntu"' factiii.yml)
           fi
           
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
