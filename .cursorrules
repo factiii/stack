@@ -13,6 +13,15 @@ This package is tested in application repositories (like `/Users/jon/factiii/`),
 - Only edit files within `/Users/jon/infrastructure/` (the Factiii Stack package itself)
 - Use read-only tools (Read, Grep, Shell with read-only commands) to inspect application repos
 
+## ⚠️ CRITICAL: DO NOT COMMIT CODE WITHOUT EXPLICIT PERMISSION
+**NEVER use git commit or git push commands unless the user explicitly asks you to commit/push.**
+
+- You may make file edits, run builds, and run tests
+- You may use `git status`, `git diff`, `git log` and other read-only git commands
+- You MUST NOT run `git add`, `git commit`, `git push`, or any other git commands that modify the repository
+- When changes are complete, tell the user what was changed and ask if they want you to commit
+- Only commit/push after the user explicitly approves
+
 Commands like `npx factiii`, `npx factiii deploy`, etc. should ONLY be run in APPLICATION repositories that consume this package, not here.
 
 ## Architecture Overview
