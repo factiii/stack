@@ -432,11 +432,12 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
   console.log('\n💡 Or view in GitHub Actions:');
   console.log(`   https://github.com/${owner}/${repo}/actions`);
   
-  // 8. Wait a bit for workflows to start, then cleanup release
+  // 8. Wait for workflows to download artifact, then cleanup release
   if (successfulEnvs.length > 0) {
-    console.log('\n🧹 Cleaning up draft release after workflows start...');
-    // Give workflows 5 seconds to download the artifact
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    console.log('\n🧹 Cleaning up draft release after workflows download...');
+    // Give workflows 60 seconds to download the artifact
+    // This is plenty of time since workflows start quickly
+    await new Promise(resolve => setTimeout(resolve, 60000));
     await cleanupRelease(owner, repo, releaseId);
     console.log('   ✅ Draft release cleaned up');
   }
