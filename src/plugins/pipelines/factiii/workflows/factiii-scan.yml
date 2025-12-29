@@ -164,7 +164,6 @@ jobs:
              REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
              if [ -d \"\$REPO_DIR\" ]; then \
                cd \"\$REPO_DIR\" && \
-               cd \"\$REPO_DIR\" && \
                GITHUB_ACTIONS=true npx factiii scan --$ENVIRONMENT; \
              else \
                echo \"❌ Repo directory not found at \$REPO_DIR\"; \

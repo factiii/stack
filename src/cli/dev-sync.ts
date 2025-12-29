@@ -7,7 +7,7 @@
  * SETUP:
  * In repositories you are testing with, add this to package.json:
  *   "devDependencies": {
- *     "@factiii/stack": "link:/Users/jon/infrastructure"
+ *     "@factiii/stack": "link:../infrastructure"
  *   }
  *
  * Then use dev-sync to SSH and copy/paste the current infrastructure folder
