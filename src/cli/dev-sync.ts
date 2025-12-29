@@ -407,6 +407,14 @@ async function syncToServer(
          cd ~/.factiii/infrastructure && \
          tar -xzf /tmp/infrastructure.tar.gz && \
          rm /tmp/infrastructure.tar.gz && \
+         echo '📦 Installing infrastructure dependencies...' && \
+         export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
+         if [ -f 'pnpm-lock.yaml' ]; then \
+           command -v pnpm >/dev/null 2>&1 || npm install -g pnpm && \
+           pnpm install; \
+         else \
+           npm install; \
+         fi && \
          echo '✅ Infrastructure synced successfully'"`
     );
     
