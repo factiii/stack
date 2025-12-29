@@ -170,7 +170,7 @@ jobs:
             ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
               "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
                cd ~/.factiii/$REPO_NAME && \
-               node ~/.factiii/infrastructure/bin/factiii deploy --$ENVIRONMENT --on-server"
+               GITHUB_ACTIONS=true node ~/.factiii/infrastructure/bin/factiii deploy --$ENVIRONMENT"
           fi
           
           rm -f ~/.ssh/deploy_key

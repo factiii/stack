@@ -3,6 +3,17 @@
  *
  * Deploys to specified environment by delegating to the pipeline plugin.
  * The pipeline plugin decides how to reach the stage (local vs workflow trigger).
+ *
+ * ============================================================
+ * STAGE EXECUTION PATTERN
+ * ============================================================
+ * See scan.ts for full documentation of how stages work.
+ *
+ * Key points:
+ * - This file asks pipeline plugin canReach(stage) for each stage
+ * - Pipeline decides if stage runs locally or via workflow
+ * - When running on server, pipeline workflow specifies --staging/--prod
+ * ============================================================
  */
 
 import * as fs from 'fs';
@@ -56,9 +67,6 @@ function loadConfig(rootDir: string): FactiiiConfig {
  * - 'local': Execute deployment directly
  * - 'workflow': Trigger a workflow (e.g., GitHub Actions)
  * - Not reachable: Return error with reason
- *
- * When --on-server flag is set, canReach checks are bypassed and deployment
- * executes directly on the current server.
  */
 export async function deploy(environment: string, options: DeployOptions = {}): Promise<DeployResult> {
   const rootDir = options.rootDir ?? process.cwd();
@@ -71,53 +79,10 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   console.log('📋 Stage 1: Running pre-deploy checks...\n');
 
   // First run scan to check for blocking issues
-  // Pass onServer flag to skip canReach checks if we're already on the target server
-  const problems = await scan({ ...options, silent: true, onServer: options.onServer });
-
-  // Check for critical issues in the target environment
-  const envProblems = problems[environment as keyof typeof problems] ?? [];
-  const criticalIssues = envProblems.filter((p) => p.severity === 'critical');
-
-  if (criticalIssues.length > 0) {
-    console.log(`⚠️  Found ${criticalIssues.length} critical issue(s):`);
-    for (const issue of criticalIssues) {
-      console.log(`   • ${issue.description}`);
-    }
-    
-    // Try to auto-fix critical issues
-    console.log('\n🔧 Attempting to auto-fix issues...\n');
-    
-    let fixedCount = 0;
-    for (const issue of criticalIssues) {
-      if (issue.fix) {
-        try {
-          console.log(`   Fixing: ${issue.description}`);
-          const fixed = await issue.fix(config, rootDir);
-          if (fixed) {
-            fixedCount++;
-            console.log(`   ✅ Fixed: ${issue.description}`);
-          } else {
-            console.log(`   ❌ Could not fix: ${issue.description}`);
-          }
-        } catch (e) {
-          const errorMessage = e instanceof Error ? e.message : String(e);
-          console.log(`   ❌ Error fixing ${issue.description}: ${errorMessage}`);
-        }
-      }
-    }
-    
-    if (fixedCount < criticalIssues.length) {
-      console.log(`\n❌ Could not fix all critical issues (${fixedCount}/${criticalIssues.length} fixed)`);
-      console.log('\n   Manual fixes required:');
-      for (const issue of criticalIssues) {
-        if (!issue.fix) {
-          console.log(`   • ${issue.description}: ${issue.manualFix}`);
-        }
-      }
-      return { success: false, error: 'Critical issues remain' };
-    }
-    
-    console.log(`\n✅ All critical issues fixed (${fixedCount}/${criticalIssues.length})\n`);
+  const problems = await scan({ ...options, silent: true });
+  if (Object.values(problems).flat().filter(Boolean).length > 0) {
+    console.log('❌ Pre-deploy checks failed. Please fix the issues and try again.');
+    return { success: false, error: 'Pre-deploy checks failed' };
   } else {
     console.log('✅ All pre-deploy checks passed!\n');
   }

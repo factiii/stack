@@ -9,6 +9,53 @@
  *   npx factiii scan --dev     # Scan dev only
  *   npx factiii scan --staging # Scan staging only
  *   npx factiii scan --prod    # Scan prod only
+ *
+ * ============================================================
+ * STAGE EXECUTION PATTERN - DO NOT MODIFY WITHOUT READING
+ * ============================================================
+ *
+ * How this works:
+ *
+ * 1. User specifies stage: --dev, --secrets, --staging, --prod
+ *    Or no flag = all stages in order
+ *
+ * 2. This file groups all plugin fixes by their stage property
+ *
+ * 3. For each requested stage, asks PIPELINE PLUGIN: canReach(stage)?
+ *    - { reachable: true, via: 'local' } → run fixes locally
+ *    - { reachable: true, via: 'workflow' } → pipeline triggers workflow
+ *    - { reachable: false, reason: '...' } → show error, stop
+ *
+ * CRITICAL: This file does NOT know about:
+ *   - GITHUB_TOKEN (that's pipeline plugin's concern)
+ *   - SSH keys (that's pipeline plugin's concern)
+ *   - How to trigger workflows (that's pipeline plugin's concern)
+ *
+ * This file ONLY:
+ *   - Collects fixes from all plugins
+ *   - Groups them by stage
+ *   - Asks pipeline if each stage is reachable
+ *   - Runs fixes for reachable stages
+ *
+ * This keeps scan.ts compatible with ANY pipeline plugin.
+ *
+ * ============================================================
+ * FOR PIPELINE PLUGIN AUTHORS:
+ * ============================================================
+ *
+ * When your workflow/CI SSHs to a server, you MUST call the
+ * command with the specific stage flag:
+ *
+ *   npx factiii fix --staging    # NOT just "npx factiii fix"
+ *   npx factiii scan --prod      # NOT just "npx factiii scan"
+ *
+ * Without the stage flag, the command will try to run ALL stages
+ * and may try to trigger workflows for stages it can't reach.
+ *
+ * Your canReach() should return 'local' when running on the
+ * target server (e.g., check GITHUB_ACTIONS or CI env vars).
+ *
+ * ============================================================
  */
 
 import * as fs from 'fs';
@@ -346,59 +393,27 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   const pipelinePlugin = getPipelinePlugin(plugins);
 
   // Check reachability for each stage
+  // Pipeline plugin decides how each stage is reached (local, workflow, or not reachable)
   const reachability: Record<string, Reachability> = {};
   const reachableStages: Stage[] = [];
 
-  // ============================================================
-  // CRITICAL: --on-server flag bypasses canReach checks
-  // ============================================================
-  // SSH keys for staging/prod are ONLY in GitHub Secrets, NOT on dev machines.
-  // Dev machine CANNOT SSH to staging/prod directly.
-  // 
-  // Why this exists: When workflows SSH to staging/prod and run commands,
-  // we're already on the target server. canReach() would try to SSH again
-  // causing connection loops and failures.
-  // 
-  // What breaks if changed: Scan from staging/prod server tries to SSH
-  // back to itself, causing "Connection refused" or infinite loops.
-  // 
-  // Dependencies: Workflows MUST use --on-server flag when running commands
-  // on staging/prod servers.
-  // ============================================================
-  if (options.onServer) {
-    // Skip canReach checks - we're already on the target server
-    for (const stage of stages) {
-      reachability[stage] = { reachable: true, via: 'local' };
-      reachableStages.push(stage);
-    }
-  } else {
-    // Normal canReach checks for dev environment
-    for (const stage of stages) {
-      if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
-        reachability[stage] = pipelinePlugin.canReach(stage, config);
+  for (const stage of stages) {
+    if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
+      reachability[stage] = pipelinePlugin.canReach(stage, config);
 
-        // ============================================================
-        // CRITICAL: DO NOT REMOVE THIS WORKFLOW FILTER
-        // ============================================================
-        // Why this exists: Prevents scanning staging/prod from dev machine
-        // which would fail because SSH keys are only in GitHub Secrets.
-        // What breaks if changed: Scan tries to SSH without keys, fails with
-        // "No SSH key found" errors for all staging/prod checks.
-        // Dependencies: Staging/prod scans must run via GitHub Actions workflows
-        // that have access to STAGING_SSH and PROD_SSH secrets.
-        // ============================================================
-        if (
-          reachability[stage]?.reachable &&
-          'via' in reachability[stage]! &&
-          reachability[stage]!.via !== 'workflow'
-        ) {
-          reachableStages.push(stage);
-        }
-      } else {
-        // No pipeline plugin or no canReach method - assume all reachable
-        reachability[stage] = { reachable: true, via: 'local' };
+      // Only run stages that are reachable locally (not via workflow)
+      // Stages reachable via 'workflow' will be triggered later
+      if (
+        reachability[stage]?.reachable &&
+        'via' in reachability[stage]! &&
+        reachability[stage]!.via !== 'workflow'
+      ) {
         reachableStages.push(stage);
       }
+    } else {
+      // No pipeline plugin or no canReach method - assume all reachable locally
+      reachability[stage] = { reachable: true, via: 'local' };
+      reachableStages.push(stage);
     }
   }
 
@@ -470,7 +485,7 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
       const monitor = new GitHubWorkflowMonitor();
       
       for (const stage of workflowStages) {
-        const workflowFile = `factiii-scan-${stage}.yml`;
+        const workflowFile = 'factiii-scan.yml';
         console.log(`   Triggering ${stage} scan...`);
         
         try {

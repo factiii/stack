@@ -61,13 +61,11 @@ class GitHubWorkflowMonitor {
     try {
       console.log(`🚀 Triggering GitHub Actions workflow...`);
 
-      // Build command - only add environment input if provided and workflow expects it
-      // Scan/fix workflows don't need inputs (they're stage-specific by filename)
-      // Deploy workflow needs environment input
+      // Build command - add environment input for workflows that accept it
       let command = `gh workflow run "${workflowFile}"`;
       
-      // Only add environment input for deploy workflow
-      if (environment && workflowFile.includes('deploy')) {
+      // Add environment input for workflows that accept it (deploy, fix, scan)
+      if (environment && (workflowFile.includes('deploy') || workflowFile.includes('fix') || workflowFile.includes('scan'))) {
         command += ` -f environment="${environment}"`;
       }
 

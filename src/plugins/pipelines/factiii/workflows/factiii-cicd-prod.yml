@@ -137,7 +137,7 @@ jobs:
              npm run build && \
              cd \"\$REPO_DIR\" && \
              GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-             node \"\$INFRA_DIR/bin/factiii\" deploy --prod --on-server --commit $COMMIT_HASH --branch $BRANCH"
+             node \"\$INFRA_DIR/bin/factiii\" deploy --prod --commit $COMMIT_HASH --branch $BRANCH"
           
           rm -f ~/.ssh/deploy_key
           echo "✅ Prod deployment complete!"

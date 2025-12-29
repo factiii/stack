@@ -4,6 +4,17 @@
  * Runs auto-fixes for detected problems.
  * For remote stages (staging/prod), triggers workflows to fix on the server.
  * For local stages (dev/secrets), runs fixes directly.
+ *
+ * ============================================================
+ * STAGE EXECUTION PATTERN
+ * ============================================================
+ * See scan.ts for full documentation of how stages work.
+ *
+ * Key points:
+ * - This file asks pipeline plugin canReach(stage) for each stage
+ * - Pipeline decides if stage runs locally or via workflow
+ * - When running on server, pipeline workflow specifies --staging/--prod
+ * ============================================================
  */
 
 import * as fs from 'fs';
@@ -62,7 +73,6 @@ async function runLocalFixes(
     ...options, 
     silent: true,
     stages: reachableStages,
-    onServer: options.onServer 
   });
 
   const result: FixResult = {
@@ -91,23 +101,45 @@ async function runLocalFixes(
           if (success) {
             console.log(`   ✅ Fixed: ${problem.description}`);
             result.fixed++;
-            result.fixes.push({ id: problem.id, stage, status: 'fixed' });
+            result.fixes.push({ 
+              id: problem.id, 
+              stage, 
+              status: 'fixed',
+              description: problem.description,
+            });
           } else {
             console.log(`   ❌ Failed to fix: ${problem.description}`);
             result.failed++;
-            result.fixes.push({ id: problem.id, stage, status: 'failed' });
+            result.fixes.push({ 
+              id: problem.id, 
+              stage, 
+              status: 'failed',
+              description: problem.description,
+            });
           }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
           console.log(`   ❌ Error fixing ${problem.id}: ${errorMessage}`);
           result.failed++;
-          result.fixes.push({ id: problem.id, stage, status: 'failed', error: errorMessage });
+          result.fixes.push({ 
+            id: problem.id, 
+            stage, 
+            status: 'failed', 
+            description: problem.description,
+            error: errorMessage,
+          });
         }
       } else {
         console.log(`   📝 Manual fix required: ${problem.description}`);
-        console.log(`      ${problem.manualFix}`);
+        console.log(`      → ${problem.manualFix}`);
         result.manual++;
-        result.fixes.push({ id: problem.id, stage, status: 'manual' });
+        result.fixes.push({ 
+          id: problem.id, 
+          stage, 
+          status: 'manual',
+          description: problem.description,
+          manualFix: problem.manualFix,
+        });
       }
     }
   }
@@ -134,51 +166,27 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   const pipelinePlugin = getPipelinePlugin(plugins as unknown as PluginClass[]);
 
   // Check reachability for each stage
+  // Pipeline plugin decides how each stage is reached (local, workflow, or not reachable)
   const reachability: Record<string, Reachability> = {};
   const reachableStages: Stage[] = [];
   const workflowStages: Stage[] = [];
 
-  // ============================================================
-  // CRITICAL: --on-server flag bypasses canReach checks
-  // ============================================================
-  // SSH keys for staging/prod are ONLY in GitHub Secrets, NOT on dev machines.
-  // Dev machine CANNOT SSH to staging/prod directly.
-  // 
-  // Why this exists: When workflows SSH to staging/prod and run commands,
-  // we're already on the target server. canReach() would try to SSH again
-  // causing connection loops and failures.
-  // 
-  // What breaks if changed: Fix from staging/prod server tries to SSH
-  // back to itself, causing "Connection refused" or infinite loops.
-  // 
-  // Dependencies: Workflows MUST use --on-server flag when running commands
-  // on staging/prod servers.
-  // ============================================================
-  if (options.onServer) {
-    // Skip canReach checks - we're already on the target server
-    for (const stage of stages) {
+  for (const stage of stages) {
+    if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
+      reachability[stage] = pipelinePlugin.canReach(stage, config);
+
+      // Separate stages by how they're reached
+      if (reachability[stage]?.reachable) {
+        if (reachability[stage]!.via === 'workflow') {
+          workflowStages.push(stage);
+        } else {
+          reachableStages.push(stage);
+        }
+      }
+    } else {
+      // No pipeline plugin or no canReach method - assume all reachable locally
       reachability[stage] = { reachable: true, via: 'local' };
       reachableStages.push(stage);
-    }
-  } else {
-    // Normal canReach checks
-    for (const stage of stages) {
-      if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
-        reachability[stage] = pipelinePlugin.canReach(stage, config);
-
-        // Separate stages by how they're reached
-        if (reachability[stage]?.reachable) {
-          if (reachability[stage]!.via === 'workflow') {
-            workflowStages.push(stage);
-          } else {
-            reachableStages.push(stage);
-          }
-        }
-      } else {
-        // No pipeline plugin or no canReach method - assume all reachable locally
-        reachability[stage] = { reachable: true, via: 'local' };
-        reachableStages.push(stage);
-      }
     }
   }
 
@@ -193,7 +201,7 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
       const monitor = new GitHubWorkflowMonitor();
       
       for (const stage of workflowStages) {
-        const workflowFile = `factiii-fix-${stage}.yml`;
+        const workflowFile = 'factiii-fix.yml';
         console.log(`   Triggering ${stage} fix...`);
         
         try {
@@ -238,7 +246,13 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
     }
   }
 
-  // Display results by stage
+  // ============================================================
+  // CRITICAL: Display results by stage with issue details
+  // ============================================================
+  // This output shows WHAT was fixed and HOW to fix manual issues.
+  // Users need to see the actual issues, not just counts.
+  // DO NOT REMOVE THIS DETAILED OUTPUT - IT HAS BEEN DELETED 500+ TIMES
+  // ============================================================
   console.log('');
   console.log('─'.repeat(60));
   console.log('RESULTS BY STAGE');
@@ -248,12 +262,24 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   for (const stage of allStages) {
     const stageFixes = result.fixes.filter((f) => f.stage === stage);
     if (stageFixes.length > 0) {
-      const stageFixed = stageFixes.filter((f) => f.status === 'fixed').length;
-      const stageManual = stageFixes.filter((f) => f.status === 'manual').length;
-      const stageFailed = stageFixes.filter((f) => f.status === 'failed').length;
-      
       console.log(`${stage.toUpperCase()}:`);
-      console.log(`   Fixed: ${stageFixed}, Manual: ${stageManual}, Failed: ${stageFailed}`);
+      
+      // Show each fix with its status and details
+      for (const fix of stageFixes) {
+        if (fix.status === 'fixed') {
+          console.log(`   ✅ Fixed: ${fix.description || fix.id}`);
+        } else if (fix.status === 'manual') {
+          console.log(`   📝 Manual: ${fix.description || fix.id}`);
+          if (fix.manualFix) {
+            console.log(`      → ${fix.manualFix}`);
+          }
+        } else if (fix.status === 'failed') {
+          console.log(`   ❌ Failed: ${fix.description || fix.id}`);
+          if (fix.error) {
+            console.log(`      Error: ${fix.error}`);
+          }
+        }
+      }
       console.log('');
     }
   }

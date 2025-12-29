@@ -37,24 +37,38 @@ Factiii Stack scans application repositories to:
 
 **CRITICAL: Always follow [STANDARDS.md](STANDARDS.md) for all patterns, conventions, and architectural decisions.**
 
-## Stage Batching (CRITICAL)
+**CRITICAL: Always reference [README.md](README.md) for user-facing documentation and usage patterns.**
+
+## Stage Execution Pattern (CRITICAL - BROKEN 500+ TIMES)
+
+**How commands work:**
+1. User specifies stage: `--dev`, `--secrets`, `--staging`, `--prod`
+2. Command groups plugin fixes by stage
+3. For each stage, asks pipeline: `canReach(stage)?`
+   - `via: 'local'` → run locally
+   - `via: 'workflow'` → pipeline triggers workflow with `--staging` or `--prod`
+   - `reachable: false` → show error, stop
 
 **Individual fix scan/fix functions run LOCALLY only:**
-- NO isOnServer checks in fix functions
 - NO SSH calls in fix functions  
-- NO GITHUB_ACTIONS checks in fix functions
 - Assume running locally on target machine
 - Use execSync for local commands
 
-**CLI handles execution context:**
-- CLI checks --on-server ONCE per stage
-- CLI handles SSH batching (ONE call per stage)
-- Workflows SSH ONCE per stage, run with --on-server
+**CLI/Pipeline handles execution context:**
+- CLI asks pipeline `canReach()` for each stage
+- Pipeline decides local vs workflow
+- Workflows SSH ONCE, run with `GITHUB_ACTIONS=true npx factiii [cmd] --staging`
+
+**CRITICAL: Workflows MUST specify --staging or --prod:**
+```
+GITHUB_ACTIONS=true npx factiii fix --staging   # Correct
+npx factiii fix                                  # WRONG - tries all stages
+```
 
 **Result format:**
-- Clean per-stage breakdown
-- Manual instructions shown inline
-- Errors with enough detail to identify issue
+- Clean per-stage breakdown WITH issue details
+- Shows WHAT was fixed and HOW to fix manual issues
+- Never just counts - always show descriptions
 
 ## Plugin Architecture
 
@@ -212,7 +226,7 @@ dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
 **Correct workflow pattern:**
 ```yaml
 ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
-  "COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+  "GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
    npx factiii deploy --staging --commit=$COMMIT_HASH --branch=$BRANCH"
 ```
 
@@ -233,8 +247,10 @@ All checks merge together in the scan phase.
 
 **Factiii generates workflows for repos:**
 - `factiii-deploy.yml` - Manual deployment triggered by `npx factiii deploy`
-- `factiii-staging.yml` - Auto-deploy on PR/push to main
-- `factiii-production.yml` - Auto-deploy on merge to production
+- `factiii-fix.yml` - Fix triggered by `npx factiii fix`
+- `factiii-scan.yml` - Scan triggered by `npx factiii scan`
+- `factiii-cicd-staging.yml` - Auto-deploy on push to main
+- `factiii-cicd-prod.yml` - Auto-deploy on push to prod
 - `factiii-undeploy.yml` - Manual cleanup trigger
 
 
@@ -242,14 +258,23 @@ All checks merge together in the scan phase.
 1. Read configuration from factiii.yml
 2. Setup SSH keys from GitHub Secrets
 3. **Bootstrap Node.js (one-time prerequisite)** - Check if Node.js exists, install if missing
-4. SSH to server and execute \`npx factiii deploy --{env}\`
+4. SSH to server and execute `GITHUB_ACTIONS=true npx factiii deploy --staging`
 5. Pass environment variables: COMMIT_HASH, BRANCH, GITHUB_REPO
 
 **Why workflows bootstrap Node.js:**
-- Chicken-and-egg problem: \`npx factiii\` requires Node.js to run
+- Chicken-and-egg problem: `npx factiii` requires Node.js to run
 - Workflows handle this one-time prerequisite check
 - Plugins verify Node.js is present for ongoing operations
 - After bootstrap, all logic lives in plugins (not workflows)
+
+**CRITICAL: Workflows MUST use GITHUB_ACTIONS=true and --staging/--prod:**
+```bash
+# Correct:
+GITHUB_ACTIONS=true npx factiii fix --staging
+
+# WRONG - will try all stages and may trigger more workflows:
+npx factiii fix
+```
 
 **Workflow reads config from:**
 - `factiii.yml`: aws.access_key_id, aws.region, environments.{env}.host
@@ -269,7 +294,7 @@ All checks merge together in the scan phase.
 ### YAML Syntax in Workflows
 ❌ BAD (causes YAML errors):
 ```javascript
-console.log(\`Value: \${variable}\`)
+console.log(`Value: ${variable}`)
 ```
 
 ✅ GOOD:
@@ -339,6 +364,27 @@ Plugins will be extracted from the base package one by one:
 
 Remember: This is the TOOL, not an app that uses the tool.
 Test all commands in separate application repositories!
+
+## ⚠️ CRITICAL: Code Comments Must Be Preserved
+
+**NEVER delete or modify existing comments in code:**
+- All comments in the codebase serve a purpose (documentation, warnings, explanations)
+- Comments may contain critical architectural decisions or workarounds
+- Comments may explain why code exists in a specific form
+- When refactoring, preserve all comments and update them if the code changes
+- If you're unsure about a comment, ask the user before removing it
+
+**ALWAYS respect comments in code:**
+- Read and understand comments before making changes
+- Comments may indicate intentional design decisions that should not be changed
+- Comments may warn about breaking changes or dependencies
+- Comments may explain non-obvious behavior or edge cases
+- If a comment says "DO NOT CHANGE" or similar, respect it completely
+
+**When adding new code:**
+- Add comments to explain complex logic, non-obvious behavior, or architectural decisions
+- Follow the existing comment style in the file
+- Use protection comments (see below) for critical code sections
 
 ## Code Protection Comments
 

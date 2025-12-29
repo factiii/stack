@@ -232,10 +232,10 @@ class MacMiniPlugin {
     // ============================================================
     // SSH keys for staging/prod are ONLY in GitHub Secrets, NOT on dev machines.
     // Dev machine CANNOT SSH to staging/prod.
-    // Workflows SSH ONCE and run CLI with --on-server flag.
-    // When --on-server is set, fix functions run locally (we're already on the server).
-    // NEVER add isOnServer checks or SSH calls to individual fix functions.
-    // CLI handles execution context at the wrapper level.
+    // Workflows SSH ONCE and run CLI with --staging or --prod flag.
+    // When GITHUB_ACTIONS=true, pipeline returns 'local' for staging/prod.
+    // NEVER add SSH calls to individual fix functions.
+    // CLI handles execution context by asking pipeline canReach().
     // ============================================================
     {
       id: 'staging-docker-missing',
@@ -985,7 +985,7 @@ volumes:
     // ============================================================
     // STAGING (this method):
     //   - Workflow SSHes to staging server
-    //   - Runs: deploy --staging --on-server
+    //   - Runs: GITHUB_ACTIONS=true deploy --staging
     //   - Builds container locally from source
     //   - Deploys locally-built container (factiii-staging)
     //
@@ -999,15 +999,13 @@ volumes:
     // Why workflows SSH first: Allows using GitHub Secrets (SSH keys)
     // without storing them on servers. Workflow passes secrets via SSH.
     //
-    // Why --on-server flag exists: Tells CLI we're already on target
-    // server, so don't SSH again (would cause infinite loops).
+    // Why GITHUB_ACTIONS=true + --staging: GITHUB_ACTIONS tells pipeline
+    // we're on the server (canReach returns 'local'). --staging tells
+    // command to only run staging stage.
     //
     // Why both paths exist: Code checks GITHUB_ACTIONS env var:
-    //   - GITHUB_ACTIONS=true → on-server path (Factiii workflows)
+    //   - GITHUB_ACTIONS=true → local path (Factiii workflows)
     //   - GITHUB_ACTIONS not set → remote SSH path (other workflows)
-    //
-    // What breaks if changed: Removing --on-server causes SSH loops.
-    // Removing remote SSH path breaks non-Factiii workflow compatibility.
     // ============================================================
 
     const envConfig = config.environments?.staging;

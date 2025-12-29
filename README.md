@@ -126,19 +126,48 @@ npx factiii deploy --prod     # Deploy to production server
 
 **Note:** Requires `factiii.yml` to exist. Run `npx factiii init` first.
 
-## The Four Stages
+## Stage Execution
 
-Every plugin operates across four stages:
+Factiii commands work with four stages: `dev`, `secrets`, `staging`, `prod`.
 
-1. **dev** - Local development environment
-2. **secrets** - GitHub/pipeline secrets
-3. **staging** - Staging server
-4. **prod** - Production server
+### Running Commands
 
-Each stage has its own:
-- Configuration requirements
-- Validation rules
-- Deployment process
+```bash
+npx factiii scan              # Scan all reachable stages
+npx factiii scan --dev        # Scan only dev stage
+npx factiii scan --staging    # Scan only staging stage
+
+npx factiii fix               # Fix all reachable stages
+npx factiii fix --staging     # Fix only staging stage
+
+npx factiii deploy --staging  # Deploy to staging
+npx factiii deploy --prod     # Deploy to prod
+```
+
+### How Stages Are Reached
+
+The pipeline plugin decides how to reach each stage:
+
+| Stage | How it's reached |
+|-------|------------------|
+| dev | Always runs locally |
+| secrets | Runs locally (needs GITHUB_TOKEN) |
+| staging | Via workflow → SSH → runs with `--staging` |
+| prod | Via workflow → SSH → runs with `--prod` |
+
+### For Pipeline Plugin Authors
+
+When your CI/CD workflow SSHs to a server to run commands, you **MUST** specify the stage:
+
+```bash
+# In your workflow, after SSH to staging server:
+GITHUB_ACTIONS=true npx factiii fix --staging     # ✅ Correct
+npx factiii fix                                    # ❌ Wrong - will try to run all stages
+```
+
+This prevents the command from trying to reach stages it can't access from the server.
+
+See [STANDARDS.md](STANDARDS.md) for full documentation of the stage execution pattern.
 
 ## Plugin Architecture
 
@@ -221,9 +250,11 @@ GitHub Actions workflows are intentionally minimal - they just SSH into servers 
     ssh user@host << EOF
       cd ~/.factiii/my-app
       git pull
-      npx factiii deploy --staging
+      GITHUB_ACTIONS=true npx factiii deploy --staging
     EOF
 ```
+
+**CRITICAL: Workflows MUST specify the stage flag (`--staging` or `--prod`) when running commands on servers.**
 
 All deployment logic runs on the server in testable JavaScript, not in workflow bash scripts.
 

@@ -24,7 +24,6 @@ export interface ScanOptions extends BaseOptions {
   stages?: Stage[];
   commit?: string;
   silent?: boolean;
-  onServer?: boolean;
 }
 
 /**
@@ -65,6 +64,8 @@ export interface FixResult {
     id: string;
     stage: Stage;
     status: 'fixed' | 'manual' | 'failed';
+    description?: string;
+    manualFix?: string;
     error?: string;
   }[];
 }

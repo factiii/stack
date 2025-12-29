@@ -85,6 +85,73 @@ static canReach(stage: Stage, config: FactiiiConfig): Reachability {
 }
 ```
 
+## Stage Execution Pattern
+
+**CRITICAL: This pattern has been broken 500+ times. Read carefully.**
+
+### How Commands Work
+
+All commands (scan, fix, deploy) follow this pattern:
+
+1. User specifies stage: `--dev`, `--secrets`, `--staging`, `--prod` (or no flag = all stages)
+2. Command groups all plugin fixes by their `stage` property
+3. For each requested stage, asks **pipeline plugin**: `canReach(stage)?`
+   - `{ reachable: true, via: 'local' }` → run fixes locally
+   - `{ reachable: true, via: 'workflow' }` → pipeline triggers workflow with `--staging` or `--prod`
+   - `{ reachable: false, reason: '...' }` → show error, stop
+
+### Key Principle: Commands are DUMB
+
+- `scan.ts`, `fix.ts`, `deploy.ts` do NOT know about GITHUB_TOKEN, SSH, workflows
+- They ONLY ask the pipeline plugin: "can you reach this stage?"
+- The **pipeline plugin** decides what's needed (tokens, SSH keys, etc.)
+- This keeps commands compatible with ANY pipeline plugin
+
+### Pipeline Plugin Responsibilities
+
+The pipeline plugin implements `canReach()` which returns how to reach each stage:
+
+```typescript
+canReach(stage: Stage, config: FactiiiConfig): Reachability {
+  // For Factiii (GitHub Actions) pipeline:
+  //   - dev: always local
+  //   - secrets: needs GITHUB_TOKEN
+  //   - staging/prod: 
+  //       - If GITHUB_ACTIONS=true → local (we're on the server)
+  //       - Else → workflow (trigger GitHub Actions)
+}
+```
+
+### When Pipeline Triggers a Workflow
+
+When `canReach()` returns `via: 'workflow'`, the pipeline triggers a workflow that:
+1. SSHs to the target server
+2. Runs the command with the specific stage flag: `npx factiii fix --staging`
+
+**CRITICAL: Workflows MUST specify --staging or --prod**
+
+```bash
+# Correct - specifies which stage to run
+GITHUB_ACTIONS=true npx factiii fix --staging
+
+# WRONG - will try to run all stages, may trigger more workflows
+npx factiii fix
+```
+
+On the server, the command:
+- Doesn't know it's on a remote server
+- Just runs staging fixes locally
+- `canReach('staging')` returns 'local' because `GITHUB_ACTIONS=true`
+
+### Dependency Chain
+
+```
+dev      → Always reachable locally
+secrets  → Needs GITHUB_TOKEN (to access GitHub Secrets API)
+staging  → Needs workflow OR GITHUB_ACTIONS=true
+prod     → Needs workflow OR GITHUB_ACTIONS=true
+```
+
 ## Stage Batching Architecture
 
 **CRITICAL: Avoid multiple SSH connections per stage.**
@@ -95,9 +162,9 @@ All scan/fix operations must be batched by stage to minimize SSH overhead and ma
 
 1. **Collect** - Gather all fixes for requested stages from all plugins
 2. **Bundle** - Group fixes by stage (all dev, all staging, all prod)
-3. **Execute** - CLI checks `--on-server` ONCE per stage:
-   - If on server: run all scans locally in one pass
-   - If remote: trigger workflow (workflow SSHs once and runs with `--on-server`)
+3. **Execute** - CLI asks pipeline `canReach(stage)` for each stage:
+   - `via: 'local'` → run all scans locally in one pass
+   - `via: 'workflow'` → trigger workflow (workflow SSHs once and runs with `--staging` or `--prod`)
 4. **Return** - Results per stage: `{dev: Fix[], secrets: Fix[], staging: Fix[], prod: Fix[]}`
 
 ### Fix Batching Flow
@@ -117,7 +184,7 @@ All scan/fix operations must be batched by stage to minimize SSH overhead and ma
 ### Individual Fix Function Rules
 
 **NEVER in fix scan/fix functions:**
-- Check `isOnServer` or `GITHUB_ACTIONS`
+- Check `GITHUB_ACTIONS` or other env vars to determine context
 - Call SSH or remote execution
 - Assume execution context
 
@@ -127,28 +194,32 @@ All scan/fix operations must be batched by stage to minimize SSH overhead and ma
 - Return boolean (scan) or boolean (fix)
 
 **CLI/Workflow handles:**
-- `--on-server` check (ONCE per stage)
-- SSH execution (ONE call per stage)
+- Asking pipeline `canReach(stage)` to determine execution method
+- SSH execution (via workflow, ONE call per stage)
 - Workflow triggering for remote stages
 
 ### Result Format
 
-Clean, per-stage breakdown:
+Clean, per-stage breakdown showing **what was fixed and how to fix manual issues**:
+
 ```
 ────────────────────────────────────────────────────────────
 RESULTS BY STAGE
 ────────────────────────────────────────────────────────────
 
 DEV:
-   Fixed: 2, Manual: 0, Failed: 0
+   ✅ Fixed: GitHub workflows may be outdated
+   ✅ Fixed: Missing .env.example entries
 
 STAGING:
-   Fixed: 0, Manual: 1, Failed: 0
-   Manual: Repository will be cloned automatically on first deployment
+   📝 Manual: Commit workflows
+      → git add .github/workflows/ && git commit -m "Update workflows" && git push
 
 ────────────────────────────────────────────────────────────
 TOTAL: Fixed: 2, Manual: 1, Failed: 0
 ```
+
+**CRITICAL: Always show issue details, not just counts. Users need to know WHAT was fixed and HOW to fix manual issues.**
 
 **CRITICAL: Workflow Files Must Be Ultra-Thin**
 
