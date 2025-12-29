@@ -4,17 +4,8 @@
  * Simple EC2 instance deployment without additional AWS services.
  */
 
-import type { FactiiiConfig, Fix, DeployResult } from '../../../../types/index.js';
-
-interface AWSConfigDef {
-  name: string;
-  description: string;
-  services: string[];
-  defaults: Record<string, unknown>;
-  fixes: Fix[];
-  deploy: (config: FactiiiConfig, environment: string) => Promise<DeployResult>;
-  scan: (config: FactiiiConfig, environment: string) => Promise<Fix[]>;
-}
+import type { FactiiiConfig, DeployResult, Fix } from '../../../../types/index.js';
+import type { AWSConfigDef } from './types.js';
 
 const ec2Config: AWSConfigDef = {
   name: 'ec2',

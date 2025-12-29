@@ -400,6 +400,112 @@ class MyPlugin {
 }
 ```
 
+### Plugin File Organization Standard
+
+For plugins with substantial code (1000+ lines), organize files using this standard structure:
+
+```
+src/plugins/{category}/{plugin-name}/
+├── index.ts                    # Main plugin class, imports everything
+├── scanfix/                    # Scan/fix operations organized by concern
+│   ├── docker.ts              # Docker-related fixes
+│   ├── node.ts                # Node.js/pnpm fixes
+│   ├── git.ts                 # Git-related fixes
+│   ├── containers.ts          # Container management fixes
+│   └── config.ts              # Configuration checks
+├── staging.ts                 # Staging-specific operations (if applicable)
+├── dev.ts                     # Dev-specific operations (if applicable)
+├── prod.ts                    # Production-specific operations (if applicable)
+└── secrets.ts                 # Secrets-specific operations (if applicable)
+```
+
+**Structure Guidelines:**
+
+1. **scanfix/** folder - Scan/fix operations organized by concern
+   - Each file exports an array of `Fix[]` objects
+   - Files group related fixes together (e.g., all Docker fixes in `docker.ts`)
+   - Import and combine all arrays in `index.ts`: `static readonly fixes = [...dockerFixes, ...nodeFixes, ...]`
+
+2. **Environment-specific files** - Operations for each environment
+   - `dev.ts` - Dev environment operations (e.g., `deployDev`)
+   - `staging.ts` - Staging operations (e.g., `deployStaging`, `ensureServerReady`)
+   - `prod.ts` - Production operations (e.g., `buildProdImage`)
+   - `secrets.ts` - Secrets operations (if plugin handles secrets)
+   - **Only create files if they have content** (no blank files)
+
+3. **index.ts** - Main plugin class
+   - Static metadata (id, name, category, version)
+   - `shouldLoad()` - Determines if plugin should load
+   - Imports and combines all scanfix arrays into `static readonly fixes`
+   - Imports and uses environment-specific methods
+   - Maintains public API compatibility
+   - **Must include documentation at top** explaining the plugin structure standard
+
+**When each environment file is used:**
+- `dev.ts`: When deploying to local dev environment
+- `staging.ts`: When deploying to staging server or preparing staging server
+- `prod.ts`: When deploying to production or building production images
+- `secrets.ts`: When managing secrets for the plugin
+
+**How scanfix files are organized:**
+- Group fixes by the tool/technology they check (docker, node, git, containers, config)
+- Each file should have a clear, single responsibility
+- Use descriptive file names that indicate what types of fixes they contain
+
+**Example index.ts structure:**
+
+```typescript
+/**
+ * My Plugin
+ *
+ * ============================================================
+ * PLUGIN STRUCTURE STANDARD
+ * ============================================================
+ *
+ * This plugin follows a standardized structure for clarity and maintainability:
+ *
+ * **scanfix/** - Scan/fix operations organized by concern
+ *   - Each file exports an array of Fix[] objects
+ *   - Files group related fixes together
+ *   - All fixes are combined in the main plugin class
+ *
+ * **Environment-specific files** - Operations for each environment
+ *   - dev.ts - Dev environment operations
+ *   - staging.ts - Staging operations
+ *   - prod.ts - Production operations
+ *   - Only create files if they have content (no blank files)
+ *
+ * **index.ts** - Main plugin class
+ *   - Static metadata, shouldLoad(), imports everything
+ *   - Maintains public API compatibility
+ * ============================================================
+ */
+
+import { dockerFixes } from './scanfix/docker.js';
+import { nodeFixes } from './scanfix/node.js';
+import { deployDev } from './dev.js';
+import { deployStaging } from './staging.js';
+
+class MyPlugin {
+  static readonly id = 'my-plugin';
+  static readonly fixes = [...dockerFixes, ...nodeFixes];
+  
+  async deploy(config, environment) {
+    if (environment === 'dev') {
+      return deployDev();
+    } else if (environment === 'staging') {
+      return deployStaging(config);
+    }
+  }
+}
+```
+
+**Benefits of this structure:**
+- **Clarity**: Easy to find what runs in which environment
+- **Maintainability**: Related code is grouped together
+- **Scalability**: Easy to add new fixes or environment operations
+- **Consistency**: All plugins follow the same pattern
+
 ### Config Schemas
 
 #### configSchema - User-Editable Settings
