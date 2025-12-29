@@ -19,7 +19,6 @@
  * **Environment-specific files** - Operations for each environment
  *   - dev.ts - Dev environment operations (deployDev)
  *   - staging.ts - Staging operations (deployStaging, ensureServerReady)
- *   - prod.ts - Production operations (buildProdImage)
  *   - Only create files if they have content (no blank files)
  *
  * **index.ts** - Main plugin class
@@ -32,7 +31,6 @@
  * **When each environment file is used:**
  *   - dev.ts: When deploying to local dev environment
  *   - staging.ts: When deploying to staging server or preparing staging server
- *   - prod.ts: When building production images (runs on staging server)
  *
  * **How scanfix files are organized:**
  *   - docker.ts: Docker installation, running status, autostart (dev + staging)
@@ -61,7 +59,6 @@ import { configFixes } from './scanfix/config.js';
 // Import environment-specific operations
 import { deployDev } from './dev.js';
 import { deployStaging, ensureServerReady as stagingEnsureServerReady } from './staging.js';
-import { buildProdImage } from './prod.js';
 
 // Import SSH helper
 import { sshExec } from '../../../utils/ssh-helper.js';
@@ -192,14 +189,6 @@ class MacMiniPlugin {
     }
 
     return { success: false, error: `Unsupported environment: ${environment}` };
-  }
-
-  /**
-   * Build production Docker image on staging server and push to ECR
-   * This is called before production deployment
-   */
-  async buildProdImage(config: FactiiiConfig): Promise<DeployResult> {
-    return buildProdImage(config);
   }
 
   /**

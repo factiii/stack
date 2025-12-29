@@ -1,6 +1,8 @@
 /**
- * Production environment operations for Mac Mini plugin
- * Handles production image building on staging server
+ * Production Build Utilities
+ * 
+ * Functions for building Docker images for production environment:
+ * - Builds linux/amd64 images on staging server and pushes to ECR
  */
 
 import * as fs from 'fs';
@@ -8,12 +10,12 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
-import { sshExec } from '../../../utils/ssh-helper.js';
+import { sshExec } from '../../../../utils/ssh-helper.js';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
   DeployResult,
-} from '../../../types/index.js';
+} from '../../../../types/index.js';
 
 /**
  * Get dockerfile path from factiiiAuto.yml or use default
@@ -34,6 +36,31 @@ function getDockerfilePath(repoDir: string): string {
     }
   }
   return 'apps/server/Dockerfile';
+}
+
+/**
+ * Get ECR registry from config or AWS account ID
+ */
+export function getECRRegistry(config: FactiiiConfig): string {
+  const region = config.aws?.region ?? 'us-east-1';
+
+  // Use config value if provided
+  if (config.ecr_registry) {
+    return config.ecr_registry;
+  }
+
+  // Construct from AWS account ID
+  try {
+    const accountId = execSync(
+      `aws sts get-caller-identity --query Account --output text --region ${region}`,
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
+    ).trim();
+    return `${accountId}.dkr.ecr.${region}.amazonaws.com`;
+  } catch (error) {
+    throw new Error(
+      `Failed to get AWS account ID: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 /**
@@ -133,36 +160,25 @@ async function ensureDockerRunning(
 }
 
 /**
- * Build production Docker image on staging server and push to ECR
+ * Build production Docker image (linux/amd64) on staging server and push to ECR
  * This is called before production deployment
  */
-export async function buildProdImage(config: FactiiiConfig): Promise<DeployResult> {
-  const stagingConfig = config.environments?.staging;
-  if (!stagingConfig?.host) {
-    return { success: false, error: 'Staging host not configured (needed to build prod image)' };
-  }
-
+export async function buildProductionImage(
+  config: FactiiiConfig,
+  stagingConfig: EnvironmentConfig
+): Promise<DeployResult> {
   const repoName = config.name ?? 'app';
   const region = config.aws?.region ?? 'us-east-1';
 
   // Get ECR registry
   let ecrRegistry: string;
-  if (config.ecr_registry) {
-    ecrRegistry = config.ecr_registry;
-  } else {
-    // Construct from AWS account ID
-    try {
-      const accountId = execSync(
-        `aws sts get-caller-identity --query Account --output text --region ${region}`,
-        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
-      ).trim();
-      ecrRegistry = `${accountId}.dkr.ecr.${region}.amazonaws.com`;
-    } catch (error) {
-      return {
-        success: false,
-        error: `Failed to get AWS account ID: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
+  try {
+    ecrRegistry = getECRRegistry(config);
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 
   // Get ECR repository
@@ -182,8 +198,7 @@ export async function buildProdImage(config: FactiiiConfig): Promise<DeployResul
       const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
       dockerfile = getDockerfilePath(expandedRepoDir);
     } else {
-      // For remote, we need to read from the server
-      // We'll use a default and let the build command handle it
+      // For remote, we'll use a default and let the build command handle it
       dockerfile = 'apps/server/Dockerfile';
     }
 

@@ -6,7 +6,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
 import type {
@@ -16,26 +15,6 @@ import type {
   EnsureServerReadyOptions,
 } from '../../../types/index.js';
 
-/**
- * Get dockerfile path from factiiiAuto.yml or use default
- */
-function getDockerfilePath(repoDir: string): string {
-  const autoConfigPath = path.join(repoDir, 'factiiiAuto.yml');
-  if (fs.existsSync(autoConfigPath)) {
-    try {
-      const autoConfig = yaml.load(fs.readFileSync(autoConfigPath, 'utf8')) as {
-        dockerfile?: string;
-      } | null;
-      if (autoConfig?.dockerfile) {
-        // Remove OVERRIDE if present
-        return autoConfig.dockerfile.split(' ')[0] ?? 'apps/server/Dockerfile';
-      }
-    } catch {
-      // Ignore errors
-    }
-  }
-  return 'apps/server/Dockerfile';
-}
 
 /**
  * Execute a command on a remote server via SSH
@@ -152,101 +131,6 @@ async function installDependencies(
   await sshExecCommand(envConfig, `cd ${repoDir} && pnpm install`);
 }
 
-/**
- * Ensure Docker is running before deployment
- * Starts Docker Desktop if not running and waits for it to be ready
- */
-async function ensureDockerRunning(
-  envConfig: EnvironmentConfig,
-  isOnServer: boolean
-): Promise<void> {
-  const checkCmd = 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && docker info > /dev/null 2>&1 && echo "running" || echo "stopped"';
-  
-  // Start Docker and wait up to 60 seconds for it to be ready
-  const startCmd = `
-    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-    if ! docker info > /dev/null 2>&1; then
-      echo "Starting Docker Desktop..." && \
-      open -a Docker && \
-      for i in {1..60}; do
-        sleep 1
-        if docker info > /dev/null 2>&1; then
-          echo "Docker is ready"
-          exit 0
-        fi
-      done
-      echo "Docker failed to start within 60 seconds"
-      exit 1
-    else
-      echo "Docker is already running"
-    fi
-  `;
-
-  if (isOnServer) {
-    // We're on the server - run commands directly
-    try {
-      const result = execSync(checkCmd, { 
-        encoding: 'utf8', 
-        shell: '/bin/bash',
-        env: {
-          ...process.env,
-          PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-        },
-      });
-      
-      if (result.includes('stopped')) {
-        console.log('   🐳 Starting Docker Desktop...');
-        execSync(startCmd, { 
-          stdio: 'inherit', 
-          shell: '/bin/bash',
-          env: {
-            ...process.env,
-            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-          },
-        });
-        console.log('   ✅ Docker Desktop started');
-      } else {
-        console.log('   ✅ Docker is already running');
-      }
-    } catch (error) {
-      // Docker not running, try to start it
-      console.log('   🐳 Starting Docker Desktop...');
-      try {
-        execSync(startCmd, { 
-          stdio: 'inherit', 
-          shell: '/bin/bash',
-          env: {
-            ...process.env,
-            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-          },
-        });
-        console.log('   ✅ Docker Desktop started');
-      } catch (startError) {
-        throw new Error('Failed to start Docker Desktop. Please start it manually.');
-      }
-    }
-  } else {
-    // We're remote - run via SSH
-    try {
-      const result = await sshExecCommand(envConfig, checkCmd);
-      if (result.includes('stopped')) {
-        console.log('   🐳 Starting Docker Desktop on staging server...');
-        await sshExecCommand(envConfig, startCmd);
-        console.log('   ✅ Docker Desktop started');
-      } else {
-        console.log('   ✅ Docker is already running');
-      }
-    } catch {
-      console.log('   🐳 Starting Docker Desktop on staging server...');
-      try {
-        await sshExecCommand(envConfig, startCmd);
-        console.log('   ✅ Docker Desktop started');
-      } catch (startError) {
-        throw new Error('Failed to start Docker Desktop on staging server. Please start it manually.');
-      }
-    }
-  }
-}
 
 /**
  * Ensure server is ready for deployment
@@ -301,43 +185,18 @@ export async function ensureServerReady(
 
 /**
  * Deploy to staging environment
+ * 
+ * Note: Docker image building is handled by the pipeline plugin (utils/staging.ts)
+ * This method only handles deployment (regenerating docker-compose.yml and starting containers)
  */
 export async function deployStaging(config: FactiiiConfig): Promise<DeployResult> {
-  // ============================================================
-  // CRITICAL: Deployment Flow - Staging vs Production
-  // ============================================================
-  // STAGING (this method):
-  //   - Workflow SSHes to staging server
-  //   - Runs: GITHUB_ACTIONS=true deploy --staging
-  //   - Builds Docker image locally (arm64, no ECR push)
-  //   - Runs generate-all.js to regenerate unified docker-compose.yml
-  //   - Deploys using unified ~/.factiii/docker-compose.yml
-  //
-  // PRODUCTION (different flow):
-  //   - Workflow SSHes to STAGING server (not prod!)
-  //   - Builds production image on staging (amd64)
-  //   - Pushes to ECR
-  //   - Workflow SSHes to prod server
-  //   - Pulls from ECR and deploys using unified docker-compose.yml
-  //
-  // Why workflows SSH first: Allows using GitHub Secrets (SSH keys)
-  // without storing them on servers. Workflow passes secrets via SSH.
-  //
-  // Why GITHUB_ACTIONS=true + --staging: GITHUB_ACTIONS tells pipeline
-  // we're on the server (canReach returns 'local'). --staging tells
-  // command to only run staging stage.
-  //
-  // Why both paths exist: Code checks GITHUB_ACTIONS env var:
-  //   - GITHUB_ACTIONS=true → local path (Factiii workflows)
-  //   - GITHUB_ACTIONS not set → remote SSH path (other workflows)
-  // ============================================================
 
   const envConfig = config.environments?.staging;
   if (!envConfig?.host) {
     return { success: false, error: 'Staging host not configured' };
   }
 
-  console.log(`   🔨 Building and deploying on staging (${envConfig.host})...`);
+  console.log(`   🚀 Deploying on staging (${envConfig.host})...`);
 
   try {
     const repoName = config.name ?? 'app';
@@ -349,41 +208,11 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
 
     console.log(`   📍 Deployment mode: ${isOnServer ? 'on-server' : 'remote'}`);
 
-    // ============================================================
-    // CRITICAL: Ensure Docker is running BEFORE building
-    // ============================================================
-    // Why this exists: Staging builds containers locally from source.
-    // Unlike production (which pulls pre-built images from ECR),
-    // staging needs Docker daemon running to build the images.
-    // What breaks if changed: docker build fails with
-    // "Cannot connect to the Docker daemon" error.
-    // Dependencies: Docker Desktop must be installed and startable.
-    // ============================================================
-    console.log('   🐳 Checking Docker status...');
-    await ensureDockerRunning(envConfig, isOnServer);
-
     if (isOnServer) {
       // We're on the server - run commands directly
-      const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
       const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
-      const dockerfile = getDockerfilePath(expandedRepoDir);
-      const imageTag = `${repoName}:staging`;
 
-      // Step 1: Build Docker image explicitly with arm64 platform
-      console.log(`   🔨 Building Docker image (arm64): ${imageTag}...`);
-      execSync(
-        `cd ${expandedRepoDir} && docker build --platform linux/arm64 -t ${imageTag} -f ${dockerfile} .`,
-        {
-          stdio: 'inherit',
-          shell: '/bin/bash',
-          env: {
-            ...process.env,
-            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-          },
-        }
-      );
-
-      // Step 2: Regenerate unified docker-compose.yml
+      // Step 1: Regenerate unified docker-compose.yml
       console.log('   🔄 Regenerating unified docker-compose.yml...');
       const generateAllPath = path.join(factiiiDir, 'scripts', 'generate-all.js');
       if (fs.existsSync(generateAllPath)) {
@@ -399,7 +228,7 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
         console.log('   ⚠️  generate-all.js not found, skipping regeneration');
       }
 
-      // Step 3: Deploy using unified docker-compose.yml
+      // Step 2: Deploy using unified docker-compose.yml
       const unifiedCompose = path.join(factiiiDir, 'docker-compose.yml');
       if (!fs.existsSync(unifiedCompose)) {
         return {
@@ -422,21 +251,7 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
       );
     } else {
       // We're remote - SSH to the server
-      const dockerfile = getDockerfilePath(
-        path.join(process.env.HOME ?? '/Users/jon', '.factiii', repoName)
-      );
-      const imageTag = `${repoName}:staging`;
-
-      // Step 1: Build Docker image explicitly with arm64 platform
-      console.log(`   🔨 Building Docker image (arm64) on remote server: ${imageTag}...`);
-      await sshExecCommand(
-        envConfig,
-        `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-         cd ${repoDir} && \
-         docker build --platform linux/arm64 -t ${imageTag} -f ${dockerfile} .`
-      );
-
-      // Step 2: Regenerate unified docker-compose.yml
+      // Step 1: Regenerate unified docker-compose.yml
       console.log('   🔄 Regenerating unified docker-compose.yml on remote server...');
       await sshExecCommand(
         envConfig,
@@ -448,7 +263,7 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
          fi`
       );
 
-      // Step 3: Deploy using unified docker-compose.yml
+      // Step 2: Deploy using unified docker-compose.yml
       console.log('   🚀 Starting containers with unified docker-compose.yml on remote server...');
       await sshExecCommand(
         envConfig,

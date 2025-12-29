@@ -4,13 +4,48 @@
  * The default pipeline plugin for Factiii Stack.
  * Uses GitHub Actions for CI/CD with thin workflows that SSH to servers
  * and call the Factiii CLI to do the actual work.
+ *
+ * ============================================================
+ * PLUGIN STRUCTURE STANDARD
+ * ============================================================
+ *
+ * This plugin follows a standardized structure for clarity and maintainability:
+ *
+ * **scanfix/** - Scan/fix operations organized by concern
+ *   - Each file exports an array of Fix[] objects
+ *   - Files group related fixes together (config, github-cli, workflows, secrets)
+ *   - All fixes are combined in the main plugin class
+ *
+ * **utils/** - Utility methods
+ *   - detection.ts - Config detection methods (package manager, Node.js version, etc.)
+ *   - workflows.ts - Workflow generation and triggering
+ *
+ * **index.ts** - Main plugin class
+ *   - Static metadata (id, name, category, version)
+ *   - shouldLoad() - Determines if plugin should load
+ *   - canReach() - Determines how to reach each stage (critical routing method)
+ *   - Imports and combines all scanfix arrays
+ *   - Imports and uses utility methods
+ *   - Core pipeline logic: deployStage(), runLocalDeploy()
+ *   - Maintains public API compatibility
+ *
+ * **Key Differences from Server Plugins:**
+ *   - No environment-specific files (dev.ts, staging.ts, prod.ts) - pipelines orchestrate, not deploy directly
+ *   - Core routing logic stays in index.ts - canReach() and deployStage() are the main entry points
+ *   - Utils folder for static helpers - Detection and workflow generation are utilities, not core logic
+ *   - scanfix organized by concern, not environment - Fixes are grouped by what they check (config, workflows, secrets)
+ *
+ * **When each scanfix file is used:**
+ *   - config.ts: When checking/generating factiii.yml
+ *   - github-cli.ts: When checking GitHub CLI installation (dev)
+ *   - workflows.ts: When checking/generating GitHub workflows (dev)
+ *   - secrets.ts: When checking GitHub Secrets (secrets stage)
+ * ============================================================
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import { Octokit } from '@octokit/rest';
-
 import type {
   FactiiiConfig,
   Stage,
@@ -18,25 +53,23 @@ import type {
   Fix,
   DeployResult,
   DeployOptions,
+  EnvironmentConfig,
 } from '../../../types/index.js';
 import { loadRelevantPlugins } from '../../index.js';
 import GitHubWorkflowMonitor from '../../../utils/github-workflow-monitor.js';
 import { GitHubSecretsStore } from './github-secrets-store.js';
 
-interface DetectedConfig {
-  package_manager: string;
-  node_version: string | null;
-  pnpm_version: string | null;
-  dockerfile: string | null;
-}
+// Import scanfix arrays
+import { configFixes } from './scanfix/config.js';
+import { githubCliFixes } from './scanfix/github-cli.js';
+import { workflowFixes } from './scanfix/workflows.js';
+import { secretsFixes } from './scanfix/secrets.js';
 
-interface PackageJson {
-  engines?: {
-    node?: string;
-    pnpm?: string;
-  };
-  packageManager?: string;
-}
+// Import utility methods
+import * as detectionUtils from './utils/detection.js';
+import * as workflowUtils from './utils/workflows.js';
+import * as stagingUtils from './utils/staging.js';
+import * as prodUtils from './utils/prod.js';
 
 class FactiiiPipeline {
   // ============================================================
@@ -174,258 +207,14 @@ class FactiiiPipeline {
   // ============================================================
   // FIXES - All issues this plugin can detect and resolve
   // ============================================================
+  // Combined from scanfix/ folder files
+  // ============================================================
 
   static readonly fixes: Fix[] = [
-    // DEV STAGE FIXES
-    {
-      id: 'missing-factiii-yml',
-      stage: 'dev',
-      severity: 'critical',
-      description: 'factiii.yml configuration file not found',
-      scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-        return !fs.existsSync(path.join(rootDir, 'factiii.yml'));
-      },
-      fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-        // Generate from plugin schemas
-        const { generateFactiiiYml } = await import(
-          '../../../generators/generate-factiii-yml.js'
-        );
-        return generateFactiiiYml(rootDir, { force: false });
-      },
-      manualFix: 'Run: npx factiii fix (will create factiii.yml from plugin schemas)',
-    },
-    {
-      id: 'gh-cli-not-installed',
-      stage: 'dev',
-      severity: 'info',
-      description: 'GitHub CLI not installed (recommended for deployment monitoring)',
-      scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        try {
-          execSync('which gh', { stdio: 'pipe' });
-          return false;
-        } catch {
-          return true;
-        }
-      },
-      fix: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        console.log('   Installing GitHub CLI via Homebrew...');
-        try {
-          // Check if brew is available
-          execSync('which brew', { stdio: 'pipe' });
-
-          // Install gh CLI
-          execSync('brew install gh', { stdio: 'inherit' });
-
-          console.log('   ✅ GitHub CLI installed successfully!');
-          console.log('   💡 Run: gh auth login');
-          return true;
-        } catch {
-          console.log('   ⚠️  Homebrew not found or installation failed');
-          return false;
-        }
-      },
-      manualFix: 'Install GitHub CLI: brew install gh (or visit https://cli.github.com/)',
-    },
-    {
-      id: 'missing-workflows',
-      stage: 'dev',
-      severity: 'warning',
-      description: 'GitHub workflows not generated',
-      scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-        const workflowsDir = path.join(rootDir, '.github', 'workflows');
-        return !fs.existsSync(path.join(workflowsDir, 'factiii-deploy.yml'));
-      },
-      fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-        await FactiiiPipeline.generateWorkflows(rootDir);
-        return true;
-      },
-      manualFix: 'Run: npx factiii fix (will generate workflow files)',
-    },
-    {
-      id: 'outdated-workflows',
-      stage: 'dev',
-      severity: 'info',
-      description: 'GitHub workflows may be outdated',
-      scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-        const workflowPath = path.join(
-          rootDir,
-          '.github',
-          'workflows',
-          'factiii-deploy.yml'
-        );
-        if (!fs.existsSync(workflowPath)) return false;
-
-        const content = fs.readFileSync(workflowPath, 'utf8');
-
-        // Check if using old bloated workflow (has inline bash logic not from template)
-        if (content.includes('docker compose build')) return true;
-
-        // Check version comment
-        const packageJsonPath = path.join(__dirname, '../../../../package.json');
-        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-        const currentVersion = packageJson.version;
-
-        const versionMatch = content.match(/# Generated by @factiii\/stack v([\d.]+)/);
-        if (!versionMatch) return true; // No version comment = outdated
-
-        const workflowVersion = versionMatch[1];
-        return workflowVersion !== currentVersion;
-      },
-      fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-        await FactiiiPipeline.generateWorkflows(rootDir);
-        return true;
-      },
-      manualFix: 'Run: npx factiii fix (will regenerate thin workflows)',
-    },
-    {
-      id: 'orphaned-workflows',
-      stage: 'dev',
-      severity: 'warning',
-      description: 'Old workflow files found that are not generated by current version',
-      scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-        const workflowsDir = path.join(rootDir, '.github', 'workflows');
-        if (!fs.existsSync(workflowsDir)) return false;
-
-        // List of workflows we currently generate
-        const validWorkflows = [
-          'factiii-deploy.yml',
-          'factiii-fix.yml',
-          'factiii-scan.yml',
-          'factiii-undeploy.yml',
-          'factiii-cicd-staging.yml',
-          'factiii-cicd-prod.yml',
-          'factiii-dev-sync.yml', // Only in dev mode
-        ];
-
-        // Find all factiii-*.yml files
-        const files = fs.readdirSync(workflowsDir);
-        const factiiiFiles = files.filter((f) => f.startsWith('factiii-') && f.endsWith('.yml'));
-
-        // Check for orphaned files
-        const orphaned = factiiiFiles.filter((f) => !validWorkflows.includes(f));
-
-        return orphaned.length > 0;
-      },
-      fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-        const workflowsDir = path.join(rootDir, '.github', 'workflows');
-
-        const validWorkflows = [
-          'factiii-deploy.yml',
-          'factiii-fix.yml',
-          'factiii-scan.yml',
-          'factiii-undeploy.yml',
-          'factiii-cicd-staging.yml',
-          'factiii-cicd-prod.yml',
-          'factiii-dev-sync.yml',
-        ];
-
-        const files = fs.readdirSync(workflowsDir);
-        const factiiiFiles = files.filter((f) => f.startsWith('factiii-') && f.endsWith('.yml'));
-        const orphaned = factiiiFiles.filter((f) => !validWorkflows.includes(f));
-
-        for (const file of orphaned) {
-          const filePath = path.join(workflowsDir, file);
-          fs.unlinkSync(filePath);
-          console.log(`   🗑️  Deleted orphaned workflow: ${file}`);
-        }
-
-        return orphaned.length > 0;
-      },
-      manualFix: 'Run: npx factiii fix (will remove old workflow files)',
-    },
-    {
-      id: 'workflows-uncommitted',
-      stage: 'dev',
-      severity: 'critical',
-      description: 'GitHub workflows not committed to git',
-      scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-        const workflowsDir = path.join(rootDir, '.github', 'workflows');
-        if (!fs.existsSync(workflowsDir)) return false;
-
-        try {
-          // Check git status for workflow files
-          const status = execSync('git status --porcelain .github/workflows/', {
-            cwd: rootDir,
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'ignore'],
-          });
-
-          // If there's any output, workflows are uncommitted or untracked
-          return status.trim().length > 0;
-        } catch {
-          // Not a git repo or git not available
-          return false;
-        }
-      },
-      fix: null, // Cannot auto-commit
-      manualFix:
-        'Commit and push workflows: git add .github/workflows/ && git commit -m "Update workflows" && git push',
-    },
-
-    // SECRETS STAGE FIXES
-    {
-      id: 'missing-staging-ssh',
-      stage: 'secrets',
-      severity: 'critical',
-      description: 'STAGING_SSH secret not found in GitHub',
-      scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        // Only check if staging environment is defined in config
-        const hasStagingEnv = config?.environments?.staging;
-        if (!hasStagingEnv) return false; // Skip check if staging not configured
-
-        const store = new GitHubSecretsStore({});
-        const result = await store.checkSecrets(['STAGING_SSH']);
-        return result.missing?.includes('STAGING_SSH') ?? false;
-      },
-      fix: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        // This requires interactive prompting - handled by fix.js
-        console.log('   Please provide STAGING_SSH key when prompted');
-        return false; // Return false to indicate manual intervention needed
-      },
-      manualFix:
-        'Add STAGING_SSH secret at: https://github.com/{owner}/{repo}/settings/secrets/actions',
-    },
-    {
-      id: 'missing-prod-ssh',
-      stage: 'secrets',
-      severity: 'critical',
-      description: 'PROD_SSH secret not found in GitHub',
-      scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        // Only check if prod environment is defined in config
-        const hasProdEnv = config?.environments?.prod;
-        if (!hasProdEnv) return false; // Skip check if prod not configured
-
-        const store = new GitHubSecretsStore({});
-        const result = await store.checkSecrets(['PROD_SSH']);
-        return result.missing?.includes('PROD_SSH') ?? false;
-      },
-      fix: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        console.log('   Please provide PROD_SSH key when prompted');
-        return false;
-      },
-      manualFix:
-        'Add PROD_SSH secret at: https://github.com/{owner}/{repo}/settings/secrets/actions',
-    },
-    {
-      id: 'missing-aws-secret',
-      stage: 'secrets',
-      severity: 'warning',
-      description: 'AWS_SECRET_ACCESS_KEY not found in GitHub (needed for ECR)',
-      scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        // Only check if AWS is configured
-        if (!config?.aws?.access_key_id) return false;
-
-        const store = new GitHubSecretsStore({});
-        const result = await store.checkSecrets(['AWS_SECRET_ACCESS_KEY']);
-        return result.missing?.includes('AWS_SECRET_ACCESS_KEY') ?? false;
-      },
-      fix: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        console.log('   Please provide AWS_SECRET_ACCESS_KEY when prompted');
-        return false;
-      },
-      manualFix:
-        'Add AWS_SECRET_ACCESS_KEY secret at: https://github.com/{owner}/{repo}/settings/secrets/actions',
-    },
+    ...configFixes,
+    ...githubCliFixes,
+    ...workflowFixes,
+    ...secretsFixes,
   ];
 
   // ============================================================
@@ -435,156 +224,63 @@ class FactiiiPipeline {
   /**
    * Auto-detect pipeline configuration
    */
-  static async detectConfig(rootDir: string): Promise<DetectedConfig> {
-    return {
-      package_manager: this.detectPackageManager(rootDir),
-      node_version: this.detectNodeVersion(rootDir),
-      pnpm_version: this.detectPnpmVersion(rootDir),
-      dockerfile: this.findDockerfile(rootDir),
-    };
+  static async detectConfig(rootDir: string): Promise<detectionUtils.DetectedConfig> {
+    return detectionUtils.detectConfig(rootDir);
   }
 
   /**
    * Detect package manager
    */
   static detectPackageManager(rootDir: string): string {
-    if (fs.existsSync(path.join(rootDir, 'pnpm-lock.yaml'))) {
-      return 'pnpm';
-    }
-    if (fs.existsSync(path.join(rootDir, 'yarn.lock'))) {
-      return 'yarn';
-    }
-    if (fs.existsSync(path.join(rootDir, 'package-lock.json'))) {
-      return 'npm';
-    }
-    return 'npm';
+    return detectionUtils.detectPackageManager(rootDir);
   }
 
   /**
    * Detect Node.js version from package.json
    */
   static detectNodeVersion(rootDir: string): string | null {
-    const packageJsonPath = path.join(rootDir, 'package.json');
-    if (!fs.existsSync(packageJsonPath)) {
-      return null;
-    }
-
-    try {
-      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as PackageJson;
-      if (pkg?.engines?.node) {
-        const cleaned = pkg.engines.node.replace(/[^0-9.]/g, '');
-        return cleaned || null;
-      }
-    } catch {
-      // Ignore errors
-    }
-
-    return null;
+    return detectionUtils.detectNodeVersion(rootDir);
   }
 
   /**
    * Detect pnpm version from package.json
    */
   static detectPnpmVersion(rootDir: string): string | null {
-    const packageJsonPath = path.join(rootDir, 'package.json');
-    if (!fs.existsSync(packageJsonPath)) {
-      return null;
-    }
-
-    try {
-      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as PackageJson;
-
-      if (pkg?.packageManager?.startsWith('pnpm@')) {
-        const version = pkg.packageManager.split('@')[1];
-        return version?.split('.')[0] ?? null;
-      }
-
-      if (pkg?.engines?.pnpm) {
-        const cleaned = pkg.engines.pnpm.replace(/[^0-9.]/g, '');
-        return cleaned.split('.')[0] ?? null;
-      }
-    } catch {
-      // Ignore errors
-    }
-
-    return null;
+    return detectionUtils.detectPnpmVersion(rootDir);
   }
 
   /**
    * Find Dockerfile
    */
   static findDockerfile(rootDir: string): string | null {
-    const commonPaths = [
-      'Dockerfile',
-      'apps/server/Dockerfile',
-      'packages/server/Dockerfile',
-      'backend/Dockerfile',
-      'server/Dockerfile',
-    ];
-
-    for (const relativePath of commonPaths) {
-      if (fs.existsSync(path.join(rootDir, relativePath))) {
-        return relativePath;
-      }
-    }
-
-    return null;
+    return detectionUtils.findDockerfile(rootDir);
   }
 
   /**
    * Generate GitHub workflow files in the target repository
    */
   static async generateWorkflows(rootDir: string): Promise<void> {
-    const workflowsDir = path.join(rootDir, '.github', 'workflows');
-    const sourceDir = path.join(__dirname, 'workflows');
+    return workflowUtils.generateWorkflows(rootDir);
+  }
 
-    // Get package version
-    const packageJsonPath = path.join(__dirname, '../../../../package.json');
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    const version = packageJson.version;
+  /**
+   * Build staging Docker image (linux/arm64) on staging server
+   */
+  static async buildStagingImage(
+    config: FactiiiConfig,
+    envConfig: EnvironmentConfig
+  ): Promise<DeployResult> {
+    return stagingUtils.buildStagingImage(config, envConfig);
+  }
 
-    // Create .github/workflows if it doesn't exist
-    if (!fs.existsSync(workflowsDir)) {
-      fs.mkdirSync(workflowsDir, { recursive: true });
-    }
-
-    // Copy workflow files and inject version
-    // Infrastructure management (manual dispatch):
-    //   - factiii-deploy.yml: Manual deploy with --staging or --prod
-    //   - factiii-fix.yml: Manual fix with matrix for all configured envs
-    //   - factiii-scan.yml: Manual scan with matrix for all configured envs
-    //   - factiii-undeploy.yml: Manual cleanup
-    // CI/CD (auto on push):
-    //   - factiii-cicd-staging.yml: Auto-deploy on push to main
-    //   - factiii-cicd-prod.yml: Auto-deploy on push to prod
-    const workflows = [
-      'factiii-deploy.yml',
-      'factiii-fix.yml',
-      'factiii-scan.yml',
-      'factiii-undeploy.yml',
-      'factiii-cicd-staging.yml',
-      'factiii-cicd-prod.yml',
-    ];
-
-    // Only add dev-sync workflow in dev mode
-    if (process.env.DEV_MODE === 'true') {
-      workflows.push('factiii-dev-sync.yml');
-    }
-
-    for (const workflow of workflows) {
-      const sourcePath = path.join(sourceDir, workflow);
-      const destPath = path.join(workflowsDir, workflow);
-
-      if (fs.existsSync(sourcePath)) {
-        let content = fs.readFileSync(sourcePath, 'utf8');
-
-        // Replace version placeholder with actual version
-        content = content.replace(/v\{VERSION\}/g, `v${version}`);
-
-        fs.writeFileSync(destPath, content);
-        console.log(`   ✅ Generated ${workflow}`);
-      }
-    }
+  /**
+   * Build production Docker image (linux/amd64) on staging server and push to ECR
+   */
+  static async buildProductionImage(
+    config: FactiiiConfig,
+    stagingConfig: EnvironmentConfig
+  ): Promise<DeployResult> {
+    return prodUtils.buildProductionImage(config, stagingConfig);
   }
 
   /**
@@ -594,37 +290,7 @@ class FactiiiPipeline {
     workflowName: string,
     inputs: Record<string, string> = {}
   ): Promise<void> {
-    const repoInfo = GitHubSecretsStore.getRepoInfo();
-
-    if (!repoInfo) {
-      throw new Error('Could not determine GitHub repository');
-    }
-
-    const token = process.env.GITHUB_TOKEN;
-    if (!token) {
-      throw new Error('GITHUB_TOKEN required to trigger workflows');
-    }
-
-    // Get current branch
-    let ref = 'main';
-    try {
-      ref = execSync('git rev-parse --abbrev-ref HEAD', {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'ignore'],
-      }).trim();
-    } catch {
-      // Fall back to main if we can't detect the branch
-    }
-
-    const octokit = new Octokit({ auth: token });
-
-    await octokit.rest.actions.createWorkflowDispatch({
-      owner: repoInfo.owner,
-      repo: repoInfo.repo,
-      workflow_id: workflowName,
-      ref,
-      inputs,
-    });
+    return workflowUtils.triggerWorkflow(workflowName, inputs);
   }
 
   // ============================================================
@@ -707,7 +373,6 @@ class FactiiiPipeline {
           environment: string,
           options?: Record<string, string>
         ): Promise<DeployResult>;
-        buildProdImage?(config: FactiiiConfig): Promise<DeployResult>;
         deploy(config: FactiiiConfig, environment: string): Promise<DeployResult>;
       };
     } | undefined;
@@ -733,15 +398,32 @@ class FactiiiPipeline {
         });
       }
 
-      // For production: build image on staging server and push to ECR first
+      // Build Docker images before deployment
       // Skip if SKIP_BUILD is set (build was already done in workflow)
-      if (stage === 'prod' && serverInstance.buildProdImage && !process.env.SKIP_BUILD) {
-        console.log('   🔨 Building production image on staging server...');
-        const buildResult = await serverInstance.buildProdImage(this._config);
-        if (!buildResult.success) {
-          return buildResult;
+      if (!process.env.SKIP_BUILD) {
+        if (stage === 'staging') {
+          const envConfig = this._config.environments?.staging;
+          if (envConfig?.host) {
+            console.log('   🔨 Building staging image...');
+            const buildResult = await FactiiiPipeline.buildStagingImage(this._config, envConfig);
+            if (!buildResult.success) {
+              return buildResult;
+            }
+          }
+        } else if (stage === 'prod') {
+          const stagingConfig = this._config.environments?.staging;
+          if (stagingConfig?.host) {
+            console.log('   🔨 Building production image on staging server...');
+            const buildResult = await FactiiiPipeline.buildProductionImage(
+              this._config,
+              stagingConfig
+            );
+            if (!buildResult.success) {
+              return buildResult;
+            }
+          }
         }
-      } else if (stage === 'prod' && process.env.SKIP_BUILD) {
+      } else {
         console.log('   ⏭️  Skipping build step (already built in workflow)');
       }
 
@@ -772,4 +454,3 @@ class FactiiiPipeline {
 }
 
 export default FactiiiPipeline;
-
