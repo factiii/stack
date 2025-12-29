@@ -21,6 +21,20 @@ export async function sshExec(
   envConfig: EnvironmentConfig,
   command: string
 ): Promise<string> {
+  // ============================================================
+  // CRITICAL: Detect if we're already on the server
+  // ============================================================
+  // When GITHUB_ACTIONS=true, we're executing on the server itself
+  // (workflow SSHs to server and runs the command there)
+  // In this case, run commands locally instead of trying to SSH
+  // ============================================================
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    // We're already on the server - run command locally
+    const result = execSync(command, { encoding: 'utf8', stdio: 'pipe' });
+    return result.trim();
+  }
+
+  // Running from dev machine - SSH to server
   const host = envConfig.host;
   const user = envConfig.ssh_user ?? 'ubuntu';
 

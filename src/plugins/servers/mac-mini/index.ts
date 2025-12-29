@@ -40,6 +40,7 @@ class MacMiniPlugin {
   // Schema for factiii.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
     // No user config needed - uses environments.staging.host
+    container_exclusions: 'array of container names to exclude from cleanup',
   };
 
   // Schema for factiiiAuto.yml (auto-detected)
@@ -357,7 +358,7 @@ class MacMiniPlugin {
       id: 'staging-old-containers',
       stage: 'staging',
       severity: 'warning',
-      description: 'Old Docker containers not managed by current factiii configs',
+      description: 'Unmanaged Docker containers found (not in docker-compose.yml)',
       scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const hasStagingEnv = config?.environments?.staging;
         if (!hasStagingEnv) return false;
@@ -379,25 +380,49 @@ class MacMiniPlugin {
           }
 
           const composeContent = fs.readFileSync(composeFile, 'utf8');
-          const compose = yaml.load(composeContent) as { services?: Record<string, unknown> };
-          const managedContainers = Object.keys(compose.services ?? {});
+          const compose = yaml.load(composeContent) as {
+            services?: Record<string, { container_name?: string }>;
+          };
+          
+          // Extract managed container names: service names + container_name values
+          const managedContainers = new Set<string>();
+          if (compose.services) {
+            for (const [serviceName, service] of Object.entries(compose.services)) {
+              // Add service name (default container name if container_name not specified)
+              managedContainers.add(serviceName);
+              // Add explicit container_name if specified
+              if (service.container_name) {
+                managedContainers.add(service.container_name);
+              }
+            }
+          }
 
           // 3. Get running containers
           const running = execSync('docker ps --format "{{.Names}}"', { encoding: 'utf8' })
             .split('\n')
             .filter(Boolean);
 
-          // 4. Find unmanaged containers (exclude postgres, nginx, infrastructure, supabase)
+          // 4. Find unmanaged containers (only exclude those in docker-compose.yml or container_exclusions)
+          const exclusions = config.container_exclusions ?? [];
           const unmanaged = running.filter(
             (name) =>
-              !managedContainers.includes(name) &&
-              !name.toLowerCase().includes('db') &&
-              !name.toLowerCase().includes('postgres') &&
-              !name.toLowerCase().includes('nginx') &&
-              !name.toLowerCase().includes('supabase') &&
-              !name.includes('infrastructure') &&
-              !name.match(/^(Dev|Test|dev|test)$/) // Exact match for common DB container names
+              !managedContainers.has(name) &&
+              !exclusions.includes(name)
           );
+
+          if (unmanaged.length > 0) {
+            // Log detailed message with container names
+            console.log(`\n⚠️  Found ${unmanaged.length} unmanaged container${unmanaged.length > 1 ? 's' : ''}:`);
+            for (const container of unmanaged) {
+              console.log(`   - ${container}`);
+            }
+
+            // Generate YAML snippet
+            const yamlSnippet = `container_exclusions:\n  - ${unmanaged.join('\n  - ')}`;
+
+            console.log('\n💡 To keep these containers running, add to factiii.yml:\n');
+            console.log(yamlSnippet);
+          }
 
           return unmanaged.length > 0;
         } catch {
@@ -423,22 +448,33 @@ class MacMiniPlugin {
           }
 
           const composeContent = fs.readFileSync(composeFile, 'utf8');
-          const compose = yaml.load(composeContent) as { services?: Record<string, unknown> };
-          const managedContainers = Object.keys(compose.services ?? {});
+          const compose = yaml.load(composeContent) as {
+            services?: Record<string, { container_name?: string }>;
+          };
+          
+          // Extract managed container names: service names + container_name values
+          const managedContainers = new Set<string>();
+          if (compose.services) {
+            for (const [serviceName, service] of Object.entries(compose.services)) {
+              // Add service name (default container name if container_name not specified)
+              managedContainers.add(serviceName);
+              // Add explicit container_name if specified
+              if (service.container_name) {
+                managedContainers.add(service.container_name);
+              }
+            }
+          }
 
           const running = execSync('docker ps --format "{{.Names}}"', { encoding: 'utf8' })
             .split('\n')
             .filter(Boolean);
 
+          // Find unmanaged containers (only exclude those in docker-compose.yml or container_exclusions)
+          const exclusions = config.container_exclusions ?? [];
           const unmanaged = running.filter(
             (name) =>
-              !managedContainers.includes(name) &&
-              !name.toLowerCase().includes('db') &&
-              !name.toLowerCase().includes('postgres') &&
-              !name.toLowerCase().includes('nginx') &&
-              !name.toLowerCase().includes('supabase') &&
-              !name.includes('infrastructure') &&
-              !name.match(/^(Dev|Test|dev|test)$/) // Exact match for common DB container names
+              !managedContainers.has(name) &&
+              !exclusions.includes(name)
           );
 
           if (unmanaged.length === 0) {
@@ -460,7 +496,7 @@ class MacMiniPlugin {
           return false;
         }
       },
-      manualFix: 'Run: npx factiii fix --staging (will stop unmanaged containers)',
+      manualFix: 'Run: npx factiii fix --staging (will stop unmanaged containers). To keep specific containers running, add them to container_exclusions in factiii.yml',
     },
     {
       id: 'staging-node-missing',

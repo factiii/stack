@@ -41,6 +41,7 @@ export interface FactiiiConfig {
   prisma_schema?: string;
   prisma_version?: string;
   trusted_plugins?: string[];
+  container_exclusions?: string[];
 }
 
 /**
