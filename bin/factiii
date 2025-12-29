@@ -91,7 +91,10 @@ program
       process.exit(1);
     }
     
-    await deploy(environment, options);
+    const result = await deploy(environment, options);
+    if (!result.success) {
+      process.exit(1);
+    }
   });
 
 // Undeploy command

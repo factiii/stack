@@ -165,8 +165,13 @@ jobs:
              if [ -d \"\$REPO_DIR\" ]; then \
                cd \"\$REPO_DIR\" && \
                INFRA_DIR=\"\$HOME/.factiii/infrastructure\" && \
-               if [ ! -d \"\$INFRA_DIR\" ]; then \
+               if [ ! -d \"\$INFRA_DIR\" ] || [ ! -d \"\$INFRA_DIR/.git\" ]; then \
+                 if [ -d \"\$INFRA_DIR\" ]; then \
+                   echo \"⚠️  Infrastructure directory exists but .git is missing/broken. Removing and re-cloning...\" && \
+                   rm -rf \"\$INFRA_DIR\"; \
+                 fi && \
                  echo \"📦 Cloning infrastructure repo...\" && \
+                 mkdir -p \"\$HOME/.factiii\" && \
                  GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git clone git@github.com:jsnyder10/infrastructure.git \"\$INFRA_DIR\"; \
                fi && \
                cd \"\$INFRA_DIR\" && \
