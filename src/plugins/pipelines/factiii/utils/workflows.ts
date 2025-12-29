@@ -11,6 +11,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { Octokit } from '@octokit/rest';
 import { GitHubSecretsStore } from '../github-secrets-store.js';
+import { getFactiiiVersion } from '../../../../utils/version-check.js';
 
 /**
  * Generate GitHub workflow files in the target repository
@@ -20,9 +21,7 @@ export async function generateWorkflows(rootDir: string): Promise<void> {
   const sourceDir = path.join(__dirname, '../workflows');
 
   // Get package version
-  const packageJsonPath = path.join(__dirname, '../../../../package.json');
-  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-  const version = packageJson.version;
+  const version = getFactiiiVersion();
 
   // Create .github/workflows if it doesn't exist
   if (!fs.existsSync(workflowsDir)) {

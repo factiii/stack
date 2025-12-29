@@ -15,9 +15,19 @@ import type { FactiiiConfig, PluginCategory, PluginMetadata } from '../types/ind
 import * as fs from 'fs';
 import * as path from 'path';
 
-const APPROVED_PLUGINS = JSON.parse(
-  fs.readFileSync(path.join(__dirname, 'approved.json'), 'utf8')
-) as { approved: string[] };
+// Try to load approved.json, fall back to empty list if not found
+let APPROVED_PLUGINS: { approved: string[] } = { approved: [] };
+try {
+  const approvedPath = path.join(__dirname, 'approved.json');
+  if (fs.existsSync(approvedPath)) {
+    APPROVED_PLUGINS = JSON.parse(
+      fs.readFileSync(approvedPath, 'utf8')
+    ) as { approved: string[] };
+  }
+} catch {
+  // File not found or invalid - use empty list
+  APPROVED_PLUGINS = { approved: [] };
+}
 
 // ============================================================
 // TYPE DEFINITIONS
