@@ -10,12 +10,12 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
-import { sshExec } from '../../../../utils/ssh-helper.js';
+import { sshExec } from '../../../utils/ssh-helper.js';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
   DeployResult,
-} from '../../../../types/index.js';
+} from '../../../types/index.js';
 
 /**
  * Get dockerfile path from factiiiAuto.yml or use default

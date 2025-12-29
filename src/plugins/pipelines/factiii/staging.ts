@@ -10,12 +10,12 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
-import { sshExec } from '../../../../utils/ssh-helper.js';
+import { sshExec } from '../../../utils/ssh-helper.js';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
   DeployResult,
-} from '../../../../types/index.js';
+} from '../../../types/index.js';
 
 /**
  * Get dockerfile path from factiiiAuto.yml or use default
@@ -137,6 +137,9 @@ export async function ensureDockerRunning(
 /**
  * Build staging Docker image (linux/arm64) on staging server
  * No ECR push - builds locally and uses image tag
+ * 
+ * CRITICAL: This function MUST always build on the staging server, never locally.
+ * When running from a local machine, it SSHs to staging and builds there.
  */
 export async function buildStagingImage(
   config: FactiiiConfig,
@@ -171,20 +174,25 @@ export async function buildStagingImage(
         }
       );
     } else {
-      // We're remote - SSH to the server
+      // We're remote - SSH to the server and build there
+      // CRITICAL: Build must happen on staging server, never locally
       const dockerfile = getDockerfilePath(
         path.join(process.env.HOME ?? '/Users/jon', '.factiii', repoName)
       );
       const imageTag = `${repoName}:staging`;
 
-      // Build Docker image explicitly with arm64 platform
-      console.log(`   🔨 Building Docker image (arm64) on remote server: ${imageTag}...`);
+      // Build Docker image explicitly with arm64 platform on remote staging server
+      console.log(`   🔨 Building Docker image (arm64) on staging server: ${imageTag}...`);
+      console.log(`   📍 Building on: ${envConfig.host}`);
+      
       await sshExec(
         envConfig,
         `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
          cd ${repoDir} && \
          docker build --platform linux/arm64 -t ${imageTag} -f ${dockerfile} .`
       );
+      
+      console.log(`   ✅ Image built successfully on staging server: ${imageTag}`);
     }
 
     return { success: true, message: 'Staging image built successfully' };

@@ -30,7 +30,7 @@
  *   - Maintains public API compatibility
  *
  * **Key Differences from Server Plugins:**
- *   - No environment-specific files (dev.ts, staging.ts, prod.ts) - pipelines orchestrate, not deploy directly
+ *   - Environment-specific files (staging.ts, prod.ts) are in plugin root - standard pattern
  *   - Core routing logic stays in index.ts - canReach() and deployStage() are the main entry points
  *   - Utils folder for static helpers - Detection and workflow generation are utilities, not core logic
  *   - scanfix organized by concern, not environment - Fixes are grouped by what they check (config, workflows, secrets)
@@ -68,8 +68,8 @@ import { secretsFixes } from './scanfix/secrets.js';
 // Import utility methods
 import * as detectionUtils from './utils/detection.js';
 import * as workflowUtils from './utils/workflows.js';
-import * as stagingUtils from './utils/staging.js';
-import * as prodUtils from './utils/prod.js';
+import * as stagingUtils from './staging.js';
+import * as prodUtils from './prod.js';
 
 class FactiiiPipeline {
   // ============================================================
@@ -404,11 +404,16 @@ class FactiiiPipeline {
         if (stage === 'staging') {
           const envConfig = this._config.environments?.staging;
           if (envConfig?.host) {
-            console.log('   🔨 Building staging image...');
+            console.log('   🔨 Building staging image on staging server...');
+            console.log(`   📍 Target server: ${envConfig.host}`);
             const buildResult = await FactiiiPipeline.buildStagingImage(this._config, envConfig);
             if (!buildResult.success) {
+              console.error(`   ❌ Build failed: ${buildResult.error}`);
               return buildResult;
             }
+            console.log('   ✅ Staging image built successfully on staging server');
+          } else {
+            console.log('   ⚠️  Staging host not configured, skipping build');
           }
         } else if (stage === 'prod') {
           const stagingConfig = this._config.environments?.staging;

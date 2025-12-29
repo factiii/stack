@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
 import type {
@@ -184,9 +185,90 @@ export async function ensureServerReady(
 }
 
 /**
+ * Update docker-compose.yml to replace build context with staging image tag
+ * This is called after buildStagingImage() completes to ensure docker-compose uses the pre-built image
+ */
+async function updateComposeForStagingImage(
+  envConfig: EnvironmentConfig,
+  config: FactiiiConfig
+): Promise<void> {
+  const repoName = config.name ?? 'app';
+  const serviceName = `${repoName}-staging`;
+  const imageTag = `${repoName}:staging`;
+
+  const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+
+  if (isOnServer) {
+    // We're on the server - read and update directly
+    const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+    const composePath = path.join(factiiiDir, 'docker-compose.yml');
+
+    if (!fs.existsSync(composePath)) {
+      console.log('   ⚠️  docker-compose.yml not found, skipping update');
+      return;
+    }
+
+    const composeContent = fs.readFileSync(composePath, 'utf8');
+    const compose = yaml.load(composeContent) as {
+      services?: Record<
+        string,
+        {
+          build?: { context?: string; dockerfile?: string };
+          image?: string;
+          [key: string]: unknown;
+        }
+      >;
+      [key: string]: unknown;
+    };
+
+    if (compose.services && compose.services[serviceName]) {
+      // Remove build section and set image to staging tag
+      delete compose.services[serviceName].build;
+      compose.services[serviceName].image = imageTag;
+    }
+
+    // Write back
+    const updatedContent = yaml.dump(compose, { lineWidth: -1 });
+    fs.writeFileSync(composePath, updatedContent);
+  } else {
+    // We're remote - SSH to update
+    const composeContent = await sshExecCommand(
+      envConfig,
+      'cat ~/.factiii/docker-compose.yml'
+    );
+
+    // Parse and update
+    const compose = yaml.load(composeContent) as {
+      services?: Record<
+        string,
+        {
+          build?: { context?: string; dockerfile?: string };
+          image?: string;
+          [key: string]: unknown;
+        }
+      >;
+      [key: string]: unknown;
+    };
+
+    if (compose.services && compose.services[serviceName]) {
+      // Remove build section and set image to staging tag
+      delete compose.services[serviceName].build;
+      compose.services[serviceName].image = imageTag;
+    }
+
+    // Write back to server
+    const updatedContent = yaml.dump(compose, { lineWidth: -1 });
+    await sshExecCommand(
+      envConfig,
+      `cat > ~/.factiii/docker-compose.yml << 'EOF'\n${updatedContent}\nEOF`
+    );
+  }
+}
+
+/**
  * Deploy to staging environment
  * 
- * Note: Docker image building is handled by the pipeline plugin (utils/staging.ts)
+ * Note: Docker image building is handled by the pipeline plugin (staging.ts)
  * This method only handles deployment (regenerating docker-compose.yml and starting containers)
  */
 export async function deployStaging(config: FactiiiConfig): Promise<DeployResult> {
@@ -228,7 +310,11 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
         console.log('   ⚠️  generate-all.js not found, skipping regeneration');
       }
 
-      // Step 2: Deploy using unified docker-compose.yml
+      // Step 2: Update docker-compose.yml to use pre-built staging image
+      console.log('   🔄 Updating docker-compose.yml with staging image tag...');
+      await updateComposeForStagingImage(envConfig, config);
+
+      // Step 3: Deploy using unified docker-compose.yml
       const unifiedCompose = path.join(factiiiDir, 'docker-compose.yml');
       if (!fs.existsSync(unifiedCompose)) {
         return {
@@ -263,7 +349,11 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
          fi`
       );
 
-      // Step 2: Deploy using unified docker-compose.yml
+      // Step 2: Update docker-compose.yml to use pre-built staging image
+      console.log('   🔄 Updating docker-compose.yml with staging image tag...');
+      await updateComposeForStagingImage(envConfig, config);
+
+      // Step 3: Deploy using unified docker-compose.yml
       console.log('   🚀 Starting containers with unified docker-compose.yml on remote server...');
       await sshExecCommand(
         envConfig,
