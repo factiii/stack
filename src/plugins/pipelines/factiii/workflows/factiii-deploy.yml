@@ -66,6 +66,16 @@ jobs:
             exit 1
           fi
 
+      - name: Read staging config (for prod builds)
+        if: steps.check_env.outputs.has_env == 'true' && inputs.environment == 'prod'
+        id: staging_config
+        run: |
+          STAGING_HOST=$(yq eval '.environments.staging.host // ""' factiii.yml)
+          STAGING_SSH_USER=$(yq eval '.environments.staging.ssh_user // "ubuntu"' factiii.yml)
+          
+          echo "staging_host=$STAGING_HOST" >> $GITHUB_OUTPUT
+          echo "staging_ssh_user=$STAGING_SSH_USER" >> $GITHUB_OUTPUT
+
       - name: Setup SSH
         if: steps.check_env.outputs.has_env == 'true'
         env:
@@ -80,26 +90,46 @@ jobs:
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Bootstrap Node.js (one-time)
-        if: steps.check_env.outputs.has_env == 'true'
+      - name: Setup staging SSH (for prod builds)
+        if: steps.check_env.outputs.has_env == 'true' && inputs.environment == 'prod'
         env:
-          HOST: ${{ steps.config.outputs.host }}
-          USER: ${{ steps.config.outputs.ssh_user }}
-          ENVIRONMENT: ${{ inputs.environment }}
+          STAGING_SSH_KEY: ${{ secrets.STAGING_SSH }}
         run: |
-          echo "🔍 Checking Node.js on server..."
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
-            'if ! command -v node &> /dev/null; then
-               echo "📦 Installing Node.js...";
-               if [ -f /opt/homebrew/bin/brew ] || [ -f /usr/local/bin/brew ]; then
-                 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH";
-                 brew install node;
-               else
-                 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs;
-               fi;
-             else
-               echo "✅ Node.js already installed";
-             fi'
+          if [ -z "$STAGING_SSH_KEY" ]; then
+            echo "❌ Missing STAGING_SSH secret (needed to build prod image)"
+            exit 1
+          fi
+          
+          echo "$STAGING_SSH_KEY" > ~/.ssh/staging_deploy_key
+          chmod 600 ~/.ssh/staging_deploy_key
+
+      - name: Build production image on staging (prod only)
+        if: steps.check_env.outputs.has_env == 'true' && inputs.environment == 'prod'
+        env:
+          STAGING_HOST: ${{ steps.staging_config.outputs.staging_host }}
+          STAGING_USER: ${{ steps.staging_config.outputs.staging_ssh_user }}
+          COMMIT_HASH: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$STAGING_HOST" ]; then
+            echo "⚠️  Staging host not configured, skipping build step"
+            exit 0
+          fi
+          
+          echo "🔨 Building production image on staging server ($STAGING_HOST)..."
+          
+          ssh -i ~/.ssh/staging_deploy_key -o StrictHostKeyChecking=no "$STAGING_USER@$STAGING_HOST" \
+            "GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+             npx factiii deploy --prod --commit $COMMIT_HASH --branch $BRANCH"
+          
+          BUILD_EXIT_CODE=$?
+          if [ $BUILD_EXIT_CODE -ne 0 ]; then
+            echo "❌ Build step failed with exit code $BUILD_EXIT_CODE"
+            exit $BUILD_EXIT_CODE
+          fi
+          
+          echo "✅ Production image built and pushed to ECR"
 
       - name: Deploy via CLI
         if: steps.check_env.outputs.has_env == 'true'
@@ -110,7 +140,6 @@ jobs:
           COMMIT_HASH: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
           GITHUB_REPO: ${{ github.repository }}
-          REPO_NAME: ${{ steps.config.outputs.repo_name }}
         run: |
           if [ -z "$HOST" ]; then
             echo "❌ Missing host in factiii.yml: environments.$ENVIRONMENT.host"
@@ -119,38 +148,18 @@ jobs:
           
           echo "🚀 Deploying to $ENVIRONMENT ($HOST)..."
           
+          # For prod, skip build step (already done in previous step)
+          SKIP_BUILD_FLAG=""
+          if [ "$ENVIRONMENT" == "prod" ]; then
+            SKIP_BUILD_FLAG="SKIP_BUILD=true"
+          fi
+          
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
-            "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
-             REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
-             if [ ! -d \"\$REPO_DIR\" ]; then \
-               echo \"📦 Cloning repository...\" && \
-               mkdir -p \"\$HOME/.factiii\" && \
-               git clone \"https://github.com/$GITHUB_REPO.git\" \"\$REPO_DIR\"; \
-             else \
-               echo \"📦 Updating repository...\" && \
-               cd \"\$REPO_DIR\" && \
-               git fetch origin; \
-             fi && \
-             cd \"\$REPO_DIR\" && \
-             echo \"📦 Resetting any local changes...\" && \
-             git reset --hard && \
-             git clean -fd && \
-             git checkout \"$COMMIT_HASH\" && \
-             if [ ! -d \"node_modules\" ]; then \
-               echo \"📦 Installing dependencies...\" && \
-               if [ -f \"pnpm-lock.yaml\" ]; then \
-                 command -v pnpm >/dev/null 2>&1 || npm install -g pnpm && \
-                 pnpm install; \
-               else \
-                 npm install; \
-               fi; \
-             fi && \
-             cd \"\$REPO_DIR\" && \
-             GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+            "$SKIP_BUILD_FLAG GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
              npx factiii deploy --$ENVIRONMENT --commit $COMMIT_HASH --branch $BRANCH"
           
           DEPLOY_EXIT_CODE=$?
-          rm -f ~/.ssh/deploy_key
+          rm -f ~/.ssh/deploy_key ~/.ssh/staging_deploy_key
           
           if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
             echo "✅ Deployment complete!"

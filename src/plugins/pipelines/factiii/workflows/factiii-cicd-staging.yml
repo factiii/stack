@@ -63,26 +63,6 @@ jobs:
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Bootstrap Node.js (one-time)
-        if: steps.check_staging.outputs.has_staging == 'true'
-        env:
-          HOST: ${{ steps.config.outputs.host }}
-          USER: ${{ steps.config.outputs.ssh_user }}
-        run: |
-          echo "🔍 Checking Node.js on server..."
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
-            'if ! command -v node &> /dev/null; then
-               echo "📦 Installing Node.js...";
-               if [ -f /opt/homebrew/bin/brew ] || [ -f /usr/local/bin/brew ]; then
-                 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH";
-                 brew install node;
-               else
-                 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs;
-               fi;
-             else
-               echo "✅ Node.js already installed";
-             fi'
-
       - name: Deploy via CLI
         if: steps.check_staging.outputs.has_staging == 'true'
         env:
@@ -91,7 +71,6 @@ jobs:
           COMMIT_HASH: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
           GITHUB_REPO: ${{ github.repository }}
-          REPO_NAME: ${{ steps.config.outputs.repo_name }}
         run: |
           if [ -z "$HOST" ]; then
             echo "❌ Missing host in factiii.yml: environments.staging.host"
@@ -101,33 +80,7 @@ jobs:
           echo "🚀 Deploying to staging ($HOST)..."
           
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
-            "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
-             REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
-             if [ ! -d \"\$REPO_DIR\" ]; then \
-               echo \"📦 Cloning repository...\" && \
-               mkdir -p \"\$HOME/.factiii\" && \
-               git clone \"https://github.com/$GITHUB_REPO.git\" \"\$REPO_DIR\"; \
-             else \
-               echo \"📦 Updating repository...\" && \
-               cd \"\$REPO_DIR\" && \
-               git fetch origin; \
-             fi && \
-             cd \"\$REPO_DIR\" && \
-             echo \"📦 Resetting any local changes...\" && \
-             git reset --hard && \
-             git clean -fd && \
-             git checkout \"$COMMIT_HASH\" && \
-             if [ ! -d \"node_modules\" ]; then \
-               echo \"📦 Installing dependencies...\" && \
-               if [ -f \"pnpm-lock.yaml\" ]; then \
-                 command -v pnpm >/dev/null 2>&1 || npm install -g pnpm && \
-                 pnpm install; \
-               else \
-                 npm install; \
-               fi; \
-             fi && \
-             cd \"\$REPO_DIR\" && \
-             GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+            "GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
              npx factiii deploy --staging --commit $COMMIT_HASH --branch $BRANCH"
           
           DEPLOY_EXIT_CODE=$?

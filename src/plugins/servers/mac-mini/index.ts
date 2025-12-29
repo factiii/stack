@@ -971,48 +971,24 @@ class MacMiniPlugin {
   }
 
   /**
-   * Generate docker-compose.staging.yml for staging deployment
+   * Get dockerfile path from factiiiAuto.yml or use default
    */
-  private generateStagingCompose(config: FactiiiConfig): string {
-    const repoName = config.name ?? 'app';
-
-    return `services:
-  postgres:
-    image: postgres:latest
-    container_name: ${repoName}-postgres-staging
-    restart: always
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD:-password}
-      - POSTGRES_DB=${repoName}-staging
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-staging:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  server:
-    build:
-      context: .
-      dockerfile: apps/server/Dockerfile
-    container_name: ${repoName}-staging
-    restart: always
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:\${POSTGRES_PASSWORD:-password}@postgres:5432/${repoName}-staging
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-volumes:
-  postgres-staging:
-`;
+  private getDockerfilePath(repoDir: string): string {
+    const autoConfigPath = path.join(repoDir, 'factiiiAuto.yml');
+    if (fs.existsSync(autoConfigPath)) {
+      try {
+        const autoConfig = yaml.load(fs.readFileSync(autoConfigPath, 'utf8')) as {
+          dockerfile?: string;
+        } | null;
+        if (autoConfig?.dockerfile) {
+          // Remove OVERRIDE if present
+          return autoConfig.dockerfile.split(' ')[0] ?? 'apps/server/Dockerfile';
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+    return 'apps/server/Dockerfile';
   }
 
   private async deployStaging(config: FactiiiConfig): Promise<DeployResult> {
@@ -1022,15 +998,16 @@ volumes:
     // STAGING (this method):
     //   - Workflow SSHes to staging server
     //   - Runs: GITHUB_ACTIONS=true deploy --staging
-    //   - Builds container locally from source
-    //   - Deploys locally-built container (factiii-staging)
+    //   - Builds Docker image locally (arm64, no ECR push)
+    //   - Runs generate-all.js to regenerate unified docker-compose.yml
+    //   - Deploys using unified ~/.factiii/docker-compose.yml
     //
     // PRODUCTION (different flow):
     //   - Workflow SSHes to STAGING server (not prod!)
-    //   - Builds production image on staging
+    //   - Builds production image on staging (amd64)
     //   - Pushes to ECR
     //   - Workflow SSHes to prod server
-    //   - Pulls from ECR and deploys
+    //   - Pulls from ECR and deploys using unified docker-compose.yml
     //
     // Why workflows SSH first: Allows using GitHub Secrets (SSH keys)
     // without storing them on servers. Workflow passes secrets via SSH.
@@ -1054,7 +1031,6 @@ volumes:
     try {
       const repoName = config.name ?? 'app';
       const repoDir = `~/.factiii/${repoName}`;
-      const composeContent = this.generateStagingCompose(config);
 
       // Determine if we're running ON the server or remotely
       // When GITHUB_ACTIONS=true, we're executing on the server itself
@@ -1068,7 +1044,7 @@ volumes:
       // Why this exists: Staging builds containers locally from source.
       // Unlike production (which pulls pre-built images from ECR),
       // staging needs Docker daemon running to build the images.
-      // What breaks if changed: docker compose build fails with
+      // What breaks if changed: docker build fails with
       // "Cannot connect to the Docker daemon" error.
       // Dependencies: Docker Desktop must be installed and startable.
       // ============================================================
@@ -1078,30 +1054,14 @@ volumes:
       if (isOnServer) {
         // We're on the server - run commands directly
         const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
+        const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+        const dockerfile = this.getDockerfilePath(expandedRepoDir);
+        const imageTag = `${repoName}:staging`;
 
-        console.log(`   📝 Writing docker-compose.staging.yml to ${expandedRepoDir}`);
-        // Write docker-compose.staging.yml
-        fs.writeFileSync(
-          path.join(expandedRepoDir, 'docker-compose.staging.yml'),
-          composeContent
-        );
-
-        // ============================================================
-        // CRITICAL: Build BEFORE Deploy
-        // ============================================================
-        // Why: docker compose up --build doesn't reliably build images
-        // that don't exist yet. It tries to start the container first,
-        // fails with "unable to get image", then tries to build.
-        //
-        // What breaks: Deployment fails with Docker daemon errors.
-        //
-        // Solution: Always build explicitly first, then deploy.
-        // ============================================================
-
-        // Step 1: Build the image
-        console.log('   🔨 Building container image...');
+        // Step 1: Build Docker image explicitly with arm64 platform
+        console.log(`   🔨 Building Docker image (arm64): ${imageTag}...`);
         execSync(
-          `cd ${expandedRepoDir} && docker compose -f docker-compose.staging.yml build`,
+          `cd ${expandedRepoDir} && docker build --platform linux/arm64 -t ${imageTag} -f ${dockerfile} .`,
           {
             stdio: 'inherit',
             shell: '/bin/bash',
@@ -1112,82 +1072,82 @@ volumes:
           }
         );
 
-        // Step 2: Deploy using unified compose (if available)
-        const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
-        const unifiedCompose = path.join(factiiiDir, 'docker-compose.yml');
-        
-        if (fs.existsSync(unifiedCompose)) {
-          console.log('   🚀 Starting containers with unified docker-compose.yml...');
-          execSync(
-            `cd ${factiiiDir} && docker compose up -d`,
-            {
-              stdio: 'inherit',
-              shell: '/bin/bash',
-              env: {
-                ...process.env,
-                PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-              },
-            }
-          );
+        // Step 2: Regenerate unified docker-compose.yml
+        console.log('   🔄 Regenerating unified docker-compose.yml...');
+        const generateAllPath = path.join(factiiiDir, 'scripts', 'generate-all.js');
+        if (fs.existsSync(generateAllPath)) {
+          execSync(`node ${generateAllPath}`, {
+            stdio: 'inherit',
+            shell: '/bin/bash',
+            env: {
+              ...process.env,
+              PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+            },
+          });
         } else {
-          // Fallback to single-repo compose
-          console.log('   🚀 Starting containers with single-repo docker-compose.staging.yml...');
-          execSync(
-            `cd ${expandedRepoDir} && docker compose -f docker-compose.staging.yml up -d`,
-            {
-              stdio: 'inherit',
-              shell: '/bin/bash',
-              env: {
-                ...process.env,
-                PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-              },
-            }
-          );
+          console.log('   ⚠️  generate-all.js not found, skipping regeneration');
         }
+
+        // Step 3: Deploy using unified docker-compose.yml
+        const unifiedCompose = path.join(factiiiDir, 'docker-compose.yml');
+        if (!fs.existsSync(unifiedCompose)) {
+          return {
+            success: false,
+            error: 'Unified docker-compose.yml not found. Run generate-all.js first.',
+          };
+        }
+
+        console.log('   🚀 Starting containers with unified docker-compose.yml...');
+        execSync(
+          `cd ${factiiiDir} && docker compose up -d`,
+          {
+            stdio: 'inherit',
+            shell: '/bin/bash',
+            env: {
+              ...process.env,
+              PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+            },
+          }
+        );
       } else {
         // We're remote - SSH to the server
-        console.log('   📝 Writing docker-compose.staging.yml to remote server');
-        
-        await MacMiniPlugin.sshExec(
-          envConfig,
-          `cat > ${repoDir}/docker-compose.staging.yml << 'EOF'\n${composeContent}\nEOF`
+        const dockerfile = this.getDockerfilePath(
+          path.join(process.env.HOME ?? '/Users/jon', '.factiii', repoName)
         );
+        const imageTag = `${repoName}:staging`;
 
-        // ============================================================
-        // CRITICAL: Build BEFORE Deploy
-        // ============================================================
-        // Why: docker compose up --build doesn't reliably build images
-        // that don't exist yet. It tries to start the container first,
-        // fails with "unable to get image", then tries to build.
-        //
-        // What breaks: Deployment fails with Docker daemon errors.
-        //
-        // Solution: Always build explicitly first, then deploy.
-        // ============================================================
-
-        // Step 1: Build the image
-        console.log('   🔨 Building container image on remote server...');
+        // Step 1: Build Docker image explicitly with arm64 platform
+        console.log(`   🔨 Building Docker image (arm64) on remote server: ${imageTag}...`);
         await MacMiniPlugin.sshExec(
           envConfig,
           `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
            cd ${repoDir} && \
-           docker compose -f docker-compose.staging.yml build`
+           docker build --platform linux/arm64 -t ${imageTag} -f ${dockerfile} .`
         );
 
-        // Step 2: Deploy using unified compose (if available)
-        console.log('   🚀 Starting containers on remote server...');
+        // Step 2: Regenerate unified docker-compose.yml
+        console.log('   🔄 Regenerating unified docker-compose.yml on remote server...');
         await MacMiniPlugin.sshExec(
           envConfig,
           `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-           if [ -f ~/.factiii/docker-compose.yml ]; then \
-             echo "Using unified docker-compose.yml" && \
-             cd ~/.factiii && \
-             docker compose up -d; \
+           if [ -f ~/.factiii/scripts/generate-all.js ]; then \
+             node ~/.factiii/scripts/generate-all.js; \
            else \
-             echo "Using single-repo docker-compose.staging.yml" && \
-             cd ${repoDir} && \
-             docker compose -f docker-compose.staging.yml up -d; \
+             echo "⚠️  generate-all.js not found, skipping regeneration"; \
            fi`
+        );
+
+        // Step 3: Deploy using unified docker-compose.yml
+        console.log('   🚀 Starting containers with unified docker-compose.yml on remote server...');
+        await MacMiniPlugin.sshExec(
+          envConfig,
+          `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
+           if [ ! -f ~/.factiii/docker-compose.yml ]; then \
+             echo "❌ Unified docker-compose.yml not found. Run generate-all.js first." && \
+             exit 1; \
+           fi && \
+           cd ~/.factiii && \
+           docker compose up -d`
         );
       }
 
@@ -1198,6 +1158,135 @@ volumes:
       return {
         success: false,
         error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Build production Docker image on staging server and push to ECR
+   * This is called before production deployment
+   */
+  async buildProdImage(config: FactiiiConfig): Promise<DeployResult> {
+    const stagingConfig = config.environments?.staging;
+    if (!stagingConfig?.host) {
+      return { success: false, error: 'Staging host not configured (needed to build prod image)' };
+    }
+
+    const repoName = config.name ?? 'app';
+    const region = config.aws?.region ?? 'us-east-1';
+
+    // Get ECR registry
+    let ecrRegistry: string;
+    if (config.ecr_registry) {
+      ecrRegistry = config.ecr_registry;
+    } else {
+      // Construct from AWS account ID
+      try {
+        const accountId = execSync(
+          `aws sts get-caller-identity --query Account --output text --region ${region}`,
+          { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
+        ).trim();
+        ecrRegistry = `${accountId}.dkr.ecr.${region}.amazonaws.com`;
+      } catch (error) {
+        return {
+          success: false,
+          error: `Failed to get AWS account ID: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
+
+    // Get ECR repository
+    const ecrRepository = config.ecr_repository ?? repoName;
+    const imageTag = `${ecrRegistry}/${ecrRepository}:latest`;
+
+    console.log(`   🔨 Building production Docker image (amd64) on staging server...`);
+    console.log(`      Image: ${imageTag}`);
+
+    try {
+      const repoDir = `~/.factiii/${repoName}`;
+      const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+
+      // Get dockerfile path
+      let dockerfile: string;
+      if (isOnServer) {
+        const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
+        dockerfile = this.getDockerfilePath(expandedRepoDir);
+      } else {
+        // For remote, we need to read from the server
+        // We'll use a default and let the build command handle it
+        dockerfile = 'apps/server/Dockerfile';
+      }
+
+      // Ensure Docker is running
+      console.log('   🐳 Checking Docker status on staging server...');
+      await this.ensureDockerRunning(stagingConfig, isOnServer);
+
+      if (isOnServer) {
+        // We're on the staging server - run commands directly
+        const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
+
+        // Step 1: Build image with amd64 platform
+        console.log(`   🔨 Building Docker image (amd64): ${imageTag}...`);
+        execSync(
+          `cd ${expandedRepoDir} && docker build --platform linux/amd64 -t ${imageTag} -f ${dockerfile} .`,
+          {
+            stdio: 'inherit',
+            shell: '/bin/bash',
+            env: {
+              ...process.env,
+              PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+            },
+          }
+        );
+
+        // Step 2: Login to ECR
+        console.log('   🔐 Logging in to ECR...');
+        execSync(
+          `aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${ecrRegistry}`,
+          {
+            stdio: 'inherit',
+            shell: '/bin/bash',
+            env: {
+              ...process.env,
+              PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+            },
+          }
+        );
+
+        // Step 3: Push to ECR
+        console.log(`   📤 Pushing image to ECR: ${imageTag}...`);
+        execSync(`docker push ${imageTag}`, {
+          stdio: 'inherit',
+          shell: '/bin/bash',
+          env: {
+            ...process.env,
+            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+          },
+        });
+      } else {
+        // We're remote - SSH to staging server
+        await MacMiniPlugin.sshExec(
+          stagingConfig,
+          `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
+           cd ${repoDir} && \
+           dockerfile="${dockerfile}" && \
+           echo "🔨 Building Docker image (amd64): ${imageTag}..." && \
+           docker build --platform linux/amd64 -t ${imageTag} -f "\$dockerfile" . && \
+           echo "🔐 Logging in to ECR..." && \
+           aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${ecrRegistry} && \
+           echo "📤 Pushing image to ECR: ${imageTag}..." && \
+           docker push ${imageTag}`
+        );
+      }
+
+      console.log(`   ✅ Production image built and pushed: ${imageTag}`);
+      return { success: true, message: `Production image built and pushed: ${imageTag}` };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`   ❌ Failed to build/push production image: ${errorMessage}`);
+      return {
+        success: false,
+        error: `Failed to build/push production image: ${errorMessage}`,
       };
     }
   }

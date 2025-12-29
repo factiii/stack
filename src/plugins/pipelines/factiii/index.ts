@@ -707,6 +707,7 @@ class FactiiiPipeline {
           environment: string,
           options?: Record<string, string>
         ): Promise<DeployResult>;
+        buildProdImage?(config: FactiiiConfig): Promise<DeployResult>;
         deploy(config: FactiiiConfig, environment: string): Promise<DeployResult>;
       };
     } | undefined;
@@ -730,6 +731,18 @@ class FactiiiPipeline {
           commitHash: options.commit ?? '',
           repoUrl: repoUrl,
         });
+      }
+
+      // For production: build image on staging server and push to ECR first
+      // Skip if SKIP_BUILD is set (build was already done in workflow)
+      if (stage === 'prod' && serverInstance.buildProdImage && !process.env.SKIP_BUILD) {
+        console.log('   🔨 Building production image on staging server...');
+        const buildResult = await serverInstance.buildProdImage(this._config);
+        if (!buildResult.success) {
+          return buildResult;
+        }
+      } else if (stage === 'prod' && process.env.SKIP_BUILD) {
+        console.log('   ⏭️  Skipping build step (already built in workflow)');
       }
 
       // Run the actual deployment

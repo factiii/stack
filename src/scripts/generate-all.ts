@@ -156,7 +156,8 @@ export function generateDockerCompose(allConfigs: Record<string, FactiiiConfig>)
       const serviceName = `${repoName}-${envName}`;
       const repoPath = path.join(factiiiDir, repoName);
 
-      // Read dockerfile path from factiiiAuto.yml if exists
+      // Always use build context - this script is generic and only generates from factiii.yml
+      // Server plugins will modify docker-compose.yml after generation if needed (e.g., ECR images for prod)
       let dockerfile = 'Dockerfile';
       const autoConfigPath = path.join(repoPath, 'factiiiAuto.yml');
       if (fs.existsSync(autoConfigPath)) {

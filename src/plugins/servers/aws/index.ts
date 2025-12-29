@@ -10,7 +10,9 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import { execSync } from 'child_process';
+import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
 import ec2Config from './configs/ec2.js';
@@ -610,15 +612,37 @@ class AWSPlugin {
       const repoName = config.name ?? 'app';
       const region = config.aws?.region ?? 'us-east-1';
 
-      // Login to ECR and pull latest image
+      // Step 1: Regenerate unified docker-compose.yml (generic, uses build context)
+      console.log('   🔄 Regenerating unified docker-compose.yml...');
+      await AWSPlugin.sshExec(
+        envConfig,
+        `if [ -f ~/.factiii/scripts/generate-all.js ]; then \
+           node ~/.factiii/scripts/generate-all.js; \
+         else \
+           echo "⚠️  generate-all.js not found, skipping regeneration"; \
+         fi`
+      );
+
+      // Step 2: Update docker-compose.yml to use ECR image for prod services
+      console.log('   🔄 Updating docker-compose.yml with ECR image references...');
+      await this.updateComposeForECR(envConfig, config);
+
+      // Step 3: Login to ECR and pull latest image
+      console.log('   🔐 Logging in to ECR and pulling image...');
       await AWSPlugin.sshExec(
         envConfig,
         `
         aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin $(aws sts get-caller-identity --query Account --output text).dkr.ecr.${region}.amazonaws.com && \
         cd ~/.factiii && \
-        docker compose pull ${repoName}-prod && \
-        docker compose up -d ${repoName}-prod
+        docker compose pull ${repoName}-prod
       `
+      );
+
+      // Step 4: Start containers using unified docker-compose.yml
+      console.log('   🚀 Starting containers with unified docker-compose.yml...');
+      await AWSPlugin.sshExec(
+        envConfig,
+        `cd ~/.factiii && docker compose up -d ${repoName}-prod`
       );
 
       return { success: true, message: 'Production deployment complete' };
@@ -628,6 +652,73 @@ class AWSPlugin {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /**
+   * Update docker-compose.yml to replace build context with ECR image for prod services
+   * This is called after generate-all.js runs (which generates generic compose with build context)
+   */
+  private async updateComposeForECR(
+    envConfig: EnvironmentConfig,
+    config: FactiiiConfig
+  ): Promise<void> {
+    const repoName = config.name ?? 'app';
+    const region = config.aws?.region ?? 'us-east-1';
+    const serviceName = `${repoName}-prod`;
+
+    // Get ECR registry - use config value or construct from AWS account ID on server
+    let ecrRegistry: string;
+    if (config.ecr_registry) {
+      ecrRegistry = config.ecr_registry;
+    } else {
+      // Get AWS account ID from the server
+      try {
+        const accountId = await AWSPlugin.sshExec(
+          envConfig,
+          `aws sts get-caller-identity --query Account --output text --region ${region}`
+        );
+        ecrRegistry = `${accountId.trim()}.dkr.ecr.${region}.amazonaws.com`;
+      } catch (error) {
+        throw new Error(
+          `Failed to get AWS account ID from server: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    const ecrRepository = config.ecr_repository ?? repoName;
+    const imageTag = `${ecrRegistry}/${ecrRepository}:latest`;
+
+    // Read docker-compose.yml from server
+    const composeContent = await AWSPlugin.sshExec(
+      envConfig,
+      'cat ~/.factiii/docker-compose.yml'
+    );
+
+    // Parse and update
+    const compose = yaml.load(composeContent) as {
+      services?: Record<
+        string,
+        {
+          build?: { context?: string; dockerfile?: string };
+          image?: string;
+          [key: string]: unknown;
+        }
+      >;
+      [key: string]: unknown;
+    };
+
+    if (compose.services && compose.services[serviceName]) {
+      // Remove build section and set image to ECR
+      delete compose.services[serviceName].build;
+      compose.services[serviceName].image = imageTag;
+    }
+
+    // Write back to server
+    const updatedContent = yaml.dump(compose, { lineWidth: -1 });
+    await AWSPlugin.sshExec(
+      envConfig,
+      `cat > ~/.factiii/docker-compose.yml << 'EOF'\n${updatedContent}\nEOF`
+    );
   }
 
   /**
