@@ -4,19 +4,95 @@
  * DEV/TESTING ONLY - Syncs locally built infrastructure to remote servers
  * for testing beta features of @factiii/stack itself before releasing.
  *
+ * SETUP:
+ * In repositories you are testing with, add this to package.json:
+ *   "devDependencies": {
+ *     "@factiii/stack": "link:/Users/jon/infrastructure"
+ *   }
+ *
+ * Then use dev-sync to SSH and copy/paste the current infrastructure folder
+ * to staging/prod servers. This simulates pulling from npm without having
+ * the package published to npm.
+ *
+ * PRODUCTION:
+ * When @factiii/stack is published to npm, this command will be disabled.
+ * Production deployments will use npm to install @factiii/stack normally,
+ * so no infrastructure folder will exist on servers - npm handles it.
+ *
  * This is NOT for testing app code - only for developing the infrastructure package.
+ * Uses direct SCP to transfer infrastructure to servers (no GitHub releases/workflows).
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
+import * as readline from 'readline';
 import * as child_process from 'child_process';
 import { promisify } from 'util';
-import yaml from 'js-yaml';
-import { Octokit } from '@octokit/rest';
 
+import yaml from 'js-yaml';
 import type { FactiiiConfig, DevSyncOptions } from '../types/index.js';
 
 const exec = promisify(child_process.exec);
+
+/**
+ * Dev sync config structure
+ */
+interface DevSyncConfig {
+  sshKeys: {
+    stagingPath?: string;
+    prodPath?: string;
+  };
+}
+
+/**
+ * Get path to dev-sync config file
+ */
+function getDevSyncConfigPath(): string {
+  const homeDir = os.homedir();
+  const factiiiDir = path.join(homeDir, '.factiii');
+  return path.join(factiiiDir, 'dev-sync.json');
+}
+
+/**
+ * Load dev-sync config from ~/.factiii/dev-sync.json
+ */
+function loadDevSyncConfig(): DevSyncConfig {
+  const configPath = getDevSyncConfigPath();
+  
+  if (!fs.existsSync(configPath)) {
+    return { sshKeys: {} };
+  }
+  
+  try {
+    const content = fs.readFileSync(configPath, 'utf8');
+    const config = JSON.parse(content) as DevSyncConfig;
+    return config || { sshKeys: {} };
+  } catch (error) {
+    // If config file is corrupted, return empty config
+    console.warn(`⚠️  Could not read dev-sync config: ${error instanceof Error ? error.message : String(error)}`);
+    return { sshKeys: {} };
+  }
+}
+
+/**
+ * Save dev-sync config to ~/.factiii/dev-sync.json
+ */
+function saveDevSyncConfig(config: DevSyncConfig): void {
+  const configPath = getDevSyncConfigPath();
+  const factiiiDir = path.dirname(configPath);
+  
+  // Create ~/.factiii directory if it doesn't exist
+  if (!fs.existsSync(factiiiDir)) {
+    fs.mkdirSync(factiiiDir, { mode: 0o700 });
+  }
+  
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+  } catch (error) {
+    console.warn(`⚠️  Could not save dev-sync config: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 /**
  * Load config from factiii.yml
@@ -174,7 +250,7 @@ async function buildInfrastructure(infraPath: string): Promise<void> {
  * Create tarball of infrastructure
  */
 async function createTarball(infraPath: string): Promise<string> {
-  const tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'factiii-dev-sync-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factiii-dev-sync-'));
   const tarPath = path.join(tmpDir, 'infrastructure.tar.gz');
   
   console.log('📦 Creating artifact...');
@@ -199,144 +275,144 @@ async function createTarball(infraPath: string): Promise<string> {
 }
 
 /**
- * Upload artifact to GitHub as a draft release
+ * Get SSH key from environment, saved config, or prompt user
  */
-async function uploadArtifact(tarPath: string, repoOwner: string, repoName: string): Promise<{ releaseId: number; assetId: number; tag: string }> {
-  console.log('📤 Uploading infrastructure artifact to GitHub...');
+async function getOrPromptSSHKey(environment: string): Promise<string> {
+  // Check environment variable first
+  const envVar = environment === 'staging' ? 'STAGING_SSH' : 'PROD_SSH';
+  const sshKeyFromEnv = process.env[envVar];
   
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) {
-    console.error('❌ GITHUB_TOKEN environment variable not set');
-    console.error('   Set it with: export GITHUB_TOKEN=your_token');
-    console.error('   Or create one at: https://github.com/settings/tokens');
-    process.exit(1);
-  }
-  
-  const octokit = new Octokit({ auth: token });
-  
-  try {
-    // Generate unique tag with timestamp
-    const timestamp = Date.now();
-    const tag = `dev-sync-${timestamp}`;
-    
-    console.log(`   Creating draft release: ${tag}`);
-    
-    // Create draft release
-    const release = await octokit.repos.createRelease({
-      owner: repoOwner,
-      repo: repoName,
-      tag_name: tag,
-      name: `Dev Sync ${new Date().toISOString()}`,
-      body: '⚠️ Temporary dev-sync artifact - will be deleted after sync',
-      draft: true,
-      prerelease: true
-    });
-    
-    console.log(`   Uploading artifact (${(fs.statSync(tarPath).size / 1024 / 1024).toFixed(2)} MB)...`);
-    
-    // Read file and upload as release asset
-    const fileContent = fs.readFileSync(tarPath);
-    
-    const asset = await octokit.repos.uploadReleaseAsset({
-      owner: repoOwner,
-      repo: repoName,
-      release_id: release.data.id,
-      name: 'infrastructure.tar.gz',
-      data: fileContent as any,
-    });
-    
-    console.log('✅ Artifact uploaded successfully\n');
-    
-    // Clean up local temp file
-    fs.unlinkSync(tarPath);
-    fs.rmdirSync(path.dirname(tarPath));
-    
-    return {
-      releaseId: release.data.id,
-      assetId: asset.data.id,
-      tag
-    };
-  } catch (error) {
-    console.error('❌ Failed to upload artifact:');
-    if (error instanceof Error) {
-      console.error(`   ${error.message}`);
+  if (sshKeyFromEnv) {
+    // Check if it's a file path
+    if (fs.existsSync(sshKeyFromEnv)) {
+      // It's a file path - use it directly
+      return path.resolve(sshKeyFromEnv);
+    } else {
+      // It's the key content - save to temp file
+      const tmpDir = os.tmpdir();
+      const keyPath = path.join(tmpDir, `factiii-ssh-${environment}-${Date.now()}`);
+      fs.writeFileSync(keyPath, sshKeyFromEnv);
+      fs.chmodSync(keyPath, 0o600);
+      return keyPath;
     }
-    process.exit(1);
-  }
-}
-
-/**
- * Get repository info from git
- */
-async function getRepoInfo(rootDir: string): Promise<{ owner: string; repo: string }> {
-  try {
-    const { stdout } = await exec('git remote get-url origin', { cwd: rootDir });
-    const url = stdout.trim();
-    
-    // Parse GitHub URL (supports both HTTPS and SSH)
-    const match = url.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
-    if (!match || !match[1] || !match[2]) {
-      throw new Error('Could not parse GitHub repository URL');
-    }
-    
-    return {
-      owner: match[1],
-      repo: match[2]
-    };
-  } catch (error) {
-    console.error('❌ Failed to get repository info from git');
-    console.error('   Make sure you are in a git repository with a GitHub remote');
-    process.exit(1);
-  }
-}
-
-/**
- * Get current git branch
- */
-async function getCurrentBranch(rootDir: string): Promise<string> {
-  try {
-    const { stdout } = await exec('git rev-parse --abbrev-ref HEAD', { cwd: rootDir });
-    return stdout.trim();
-  } catch (error) {
-    return 'main'; // fallback
-  }
-}
-
-/**
- * Trigger workflow via GitHub API
- */
-async function triggerWorkflow(
-  repoOwner: string,
-  repoName: string,
-  environment: string,
-  releaseId: number,
-  assetId: number,
-  deploy: boolean,
-  branch: string
-): Promise<void> {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) {
-    console.error('❌ GITHUB_TOKEN not set');
-    process.exit(1);
   }
   
-  const octokit = new Octokit({ auth: token });
+  // Check saved config file
+  const config = loadDevSyncConfig();
+  const configKey = environment === 'staging' ? 'stagingPath' : 'prodPath';
+  const savedPath = config.sshKeys[configKey];
   
-  try {
-    await octokit.actions.createWorkflowDispatch({
-      owner: repoOwner,
-      repo: repoName,
-      workflow_id: 'factiii-dev-sync.yml',
-      ref: branch,
-      inputs: {
-        environment,
-        release_id: releaseId.toString(),
-        asset_id: assetId.toString(),
-        deploy: deploy.toString()
+  if (savedPath && fs.existsSync(savedPath)) {
+    const resolvedPath = path.resolve(savedPath);
+    console.log(`✅ Using saved SSH key path: ${resolvedPath}\n`);
+    return resolvedPath;
+  }
+  
+  // If saved path doesn't exist, remove it from config
+  if (savedPath && !fs.existsSync(savedPath)) {
+    const updatedConfig = { ...config };
+    delete updatedConfig.sshKeys[configKey];
+    saveDevSyncConfig(updatedConfig);
+  }
+  
+  // Prompt user for SSH key
+  console.log(`\n🔑 SSH key not found in ${envVar} environment variable`);
+  console.log('   Please provide your SSH private key for this environment');
+  console.log('   You can paste the key content or provide a file path');
+  console.log('   Note: File paths will be remembered for next time (key content will not be saved)\n');
+  
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  
+  return new Promise((resolve, reject) => {
+    rl.question('SSH key (paste content or file path): ', async (answer) => {
+      rl.close();
+      
+      let keyPath: string;
+      const trimmed = answer.trim();
+      let isFilePath = false;
+      
+      // Check if it's a file path
+      if (fs.existsSync(trimmed)) {
+        keyPath = path.resolve(trimmed);
+        isFilePath = true;
+      } else {
+        // It's the key content - save to temp file
+        const tmpDir = os.tmpdir();
+        keyPath = path.join(tmpDir, `factiii-ssh-${environment}-${Date.now()}`);
+        fs.writeFileSync(keyPath, trimmed);
+        fs.chmodSync(keyPath, 0o600);
+        isFilePath = false;
       }
+      
+      // Verify it's a valid key file
+      if (!fs.existsSync(keyPath)) {
+        console.error('❌ SSH key file not found');
+        process.exit(1);
+      }
+      
+      // Save file path to config for next time (only if it's a file path, not key content)
+      if (isFilePath) {
+        const updatedConfig = loadDevSyncConfig();
+        updatedConfig.sshKeys[configKey] = keyPath;
+        saveDevSyncConfig(updatedConfig);
+        console.log('✅ SSH key path saved for next time\n');
+      } else {
+        console.log('✅ Using SSH key (not saved - use file path to remember)\n');
+      }
+      
+      resolve(keyPath);
     });
+  });
+}
+
+/**
+ * SCP tarball to server and extract
+ */
+async function syncToServer(
+  tarPath: string,
+  environment: string,
+  config: FactiiiConfig,
+  sshKeyPath: string
+): Promise<void> {
+  const envConfig = environment === 'staging' 
+    ? config.environments?.staging 
+    : (config.environments?.prod || config.environments?.production);
+  
+  if (!envConfig?.host) {
+    console.error(`❌ ${environment} host not configured in factiii.yml`);
+    process.exit(1);
+  }
+  
+  const host = envConfig.host;
+  const user = envConfig.ssh_user || 'ubuntu';
+  
+  console.log(`📤 Syncing to ${environment} (${user}@${host})...`);
+  
+  try {
+    // SCP tarball to server
+    console.log('   Uploading tarball...');
+    await exec(
+      `scp -i "${sshKeyPath}" -o StrictHostKeyChecking=no "${tarPath}" "${user}@${host}:/tmp/infrastructure.tar.gz"`,
+      { maxBuffer: 50 * 1024 * 1024 }
+    );
+    
+    // SSH to server and extract
+    console.log('   Extracting on server...');
+    await exec(
+      `ssh -i "${sshKeyPath}" -o StrictHostKeyChecking=no "${user}@${host}" \
+        "mkdir -p ~/.factiii/infrastructure && \
+         cd ~/.factiii/infrastructure && \
+         tar -xzf /tmp/infrastructure.tar.gz && \
+         rm /tmp/infrastructure.tar.gz && \
+         echo '✅ Infrastructure synced successfully'"`
+    );
+    
+    console.log(`   ✅ Synced to ${environment}\n`);
   } catch (error) {
-    console.error(`❌ Failed to trigger workflow for ${environment}:`);
+    console.error(`❌ Failed to sync to ${environment}:`);
     if (error instanceof Error) {
       console.error(`   ${error.message}`);
     }
@@ -345,23 +421,42 @@ async function triggerWorkflow(
 }
 
 /**
- * Clean up draft release after successful sync
+ * Deploy after sync (optional)
  */
-async function cleanupRelease(repoOwner: string, repoName: string, releaseId: number): Promise<void> {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) return;
+async function deployAfterSync(
+  environment: string,
+  config: FactiiiConfig,
+  sshKeyPath: string
+): Promise<void> {
+  const envConfig = environment === 'staging' 
+    ? config.environments?.staging 
+    : (config.environments?.prod || config.environments?.production);
   
-  const octokit = new Octokit({ auth: token });
+  if (!envConfig?.host) {
+    return;
+  }
+  
+  const host = envConfig.host;
+  const user = envConfig.ssh_user || 'ubuntu';
+  const repoName = config.name || 'app';
+  
+  console.log(`🚀 Deploying to ${environment}...`);
   
   try {
-    await octokit.repos.deleteRelease({
-      owner: repoOwner,
-      repo: repoName,
-      release_id: releaseId
-    });
+    await exec(
+      `ssh -i "${sshKeyPath}" -o StrictHostKeyChecking=no "${user}@${host}" \
+        "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
+         cd ~/.factiii/${repoName} && \
+         GITHUB_ACTIONS=true node ~/.factiii/infrastructure/bin/factiii deploy --${environment}"`
+    );
+    
+    console.log(`   ✅ Deployed to ${environment}\n`);
   } catch (error) {
-    // Ignore cleanup errors - not critical
-    console.warn('   ⚠️  Failed to cleanup draft release (non-critical)');
+    console.error(`❌ Deployment failed for ${environment}:`);
+    if (error instanceof Error) {
+      console.error(`   ${error.message}`);
+    }
+    throw error;
   }
 }
 
@@ -395,51 +490,54 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
   // 4. Create tarball
   const tarPath = await createTarball(infraPath);
   
-  // 5. Get repo info and current branch
-  const { owner, repo } = await getRepoInfo(rootDir);
-  const branch = await getCurrentBranch(rootDir);
+  // 5. Sync to each environment
+  const sshKeyPaths: Map<string, string> = new Map();
+  const cleanupPaths: string[] = [];
   
-  // 6. Upload artifact to GitHub as draft release
-  const { releaseId, assetId, tag } = await uploadArtifact(tarPath, owner, repo);
-  
-  console.log('📤 Preparing to sync infrastructure...');
-  console.log(`   Release: ${tag}`);
-  console.log(`   Branch: ${branch}\n`);
-  
-  // 7. Trigger workflows
-  console.log('🚀 Triggering dev-sync workflows...\n');
-  
-  const successfulEnvs: string[] = [];
-  
-  for (const env of environments) {
-    const envConfig = env === 'staging' ? config.environments?.staging : (config.environments?.prod || config.environments?.production);
-    const host = envConfig?.host || 'unknown';
+  try {
+    for (const env of environments) {
+      // Get SSH key for this environment
+      let sshKeyPath = sshKeyPaths.get(env);
+      if (!sshKeyPath) {
+        sshKeyPath = await getOrPromptSSHKey(env);
+        sshKeyPaths.set(env, sshKeyPath);
+        
+        // Track temp files for cleanup (only if we created them)
+        if (sshKeyPath.includes(os.tmpdir())) {
+          cleanupPaths.push(sshKeyPath);
+        }
+      }
+      
+      // Sync to server
+      await syncToServer(tarPath, env, config, sshKeyPath);
+      
+      // Optionally deploy
+      if (options.deploy) {
+        await deployAfterSync(env, config, sshKeyPath);
+      }
+    }
     
-    console.log(`   → ${env}: ${host}`);
-    
+    console.log('✅ Dev sync complete!');
+  } catch (error) {
+    console.error('\n❌ Dev sync failed');
+    throw error;
+  } finally {
+    // Cleanup temp files
     try {
-      await triggerWorkflow(owner, repo, env, releaseId, assetId, options.deploy || false, branch);
-      console.log(`      ✅ Workflow triggered`);
-      successfulEnvs.push(env);
+      // Remove tarball
+      if (fs.existsSync(tarPath)) {
+        fs.unlinkSync(tarPath);
+        fs.rmdirSync(path.dirname(tarPath));
+      }
+      
+      // Remove SSH key temp files
+      for (const keyPath of cleanupPaths) {
+        if (fs.existsSync(keyPath)) {
+          fs.unlinkSync(keyPath);
+        }
+      }
     } catch (error) {
-      console.log(`      ❌ Failed to trigger workflow`);
+      // Ignore cleanup errors
     }
   }
-  
-  console.log('\n✅ Dev sync workflows triggered!');
-  console.log('\n📊 Monitor progress with:');
-  console.log('   gh run watch');
-  console.log('\n💡 Or view in GitHub Actions:');
-  console.log(`   https://github.com/${owner}/${repo}/actions`);
-  
-  // 8. Wait for workflows to download artifact, then cleanup release
-  if (successfulEnvs.length > 0) {
-    console.log('\n🧹 Cleaning up draft release after workflows download...');
-    // Give workflows 60 seconds to download the artifact
-    // This is plenty of time since workflows start quickly
-    await new Promise(resolve => setTimeout(resolve, 60000));
-    await cleanupRelease(owner, repo, releaseId);
-    console.log('   ✅ Draft release cleaned up');
-  }
 }
-

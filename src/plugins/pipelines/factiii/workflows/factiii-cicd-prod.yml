@@ -121,28 +121,9 @@ jobs:
                  npm install; \
                fi; \
              fi && \
-             INFRA_DIR=\"\$HOME/.factiii/infrastructure\" && \
-             if [ ! -d \"\$INFRA_DIR\" ] || [ ! -d \"\$INFRA_DIR/.git\" ]; then \
-               if [ -d \"\$INFRA_DIR\" ]; then \
-                 echo \"⚠️  Infrastructure directory exists but .git is missing/broken. Removing and re-cloning...\" && \
-                 rm -rf \"\$INFRA_DIR\"; \
-               fi && \
-               echo \"📦 Cloning infrastructure repo...\" && \
-               mkdir -p \"\$HOME/.factiii\" && \
-               GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git clone git@github.com:jsnyder10/infrastructure.git \"\$INFRA_DIR\"; \
-             fi && \
-             cd \"\$INFRA_DIR\" && \
-             echo \"📦 Updating infrastructure repo...\" && \
-             git reset --hard && \
-             git clean -fd && \
-             GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git fetch origin && \
-             (git checkout $BRANCH 2>/dev/null || git checkout main) && \
-             GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git pull && \
-             npm install && \
-             npm run build && \
              cd \"\$REPO_DIR\" && \
              GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-             node \"\$INFRA_DIR/bin/factiii\" deploy --prod --commit $COMMIT_HASH --branch $BRANCH"
+             npx factiii deploy --prod --commit $COMMIT_HASH --branch $BRANCH"
           
           DEPLOY_EXIT_CODE=$?
           rm -f ~/.ssh/deploy_key
