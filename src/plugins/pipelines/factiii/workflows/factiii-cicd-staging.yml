@@ -80,7 +80,8 @@ jobs:
           echo "🚀 Deploying to staging ($HOST)..."
           
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
-            "GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+            "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
+             GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
              npx factiii deploy --staging --commit $COMMIT_HASH --branch $BRANCH"
           
           DEPLOY_EXIT_CODE=$?

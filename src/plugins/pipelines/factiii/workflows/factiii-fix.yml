@@ -164,6 +164,7 @@ jobs:
              REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
              if [ -d \"\$REPO_DIR\" ]; then \
                cd \"\$REPO_DIR\" && \
+               export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
                GITHUB_ACTIONS=true npx factiii fix --$ENVIRONMENT; \
              else \
                echo \"❌ Repo directory not found at \$REPO_DIR\"; \

@@ -83,6 +83,7 @@ jobs:
             if [ -d "\$REPO_DIR" ]; then
               cd \$REPO_DIR
               echo "🚀 Running undeploy..."
+              export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
               GITHUB_ACTIONS=true npx factiii undeploy --$ENVIRONMENT || true
             else
               echo "⚠️ Repo directory not found, nothing to undeploy"
