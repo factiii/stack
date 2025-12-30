@@ -114,9 +114,49 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
 
   // First run scan to check for blocking issues
   const problems = await scan({ ...options, silent: true });
-  if (Object.values(problems).flat().filter(Boolean).length > 0) {
-    console.log('❌ Pre-deploy checks failed. Please fix the issues and try again.');
-    return { success: false, error: 'Pre-deploy checks failed' };
+
+  // Only block on CRITICAL issues - warnings/info will be auto-fixed during deployment
+  const criticalProblems = Object.values(problems)
+    .flat()
+    .filter(fix => fix && fix.severity === 'critical');
+
+  if (criticalProblems.length > 0) {
+    console.log('❌ Critical issues found that must be fixed before deployment:\n');
+
+    // Group by stage for clearer output
+    const problemsByStage: Record<string, typeof criticalProblems> = {
+      dev: [],
+      secrets: [],
+      staging: [],
+      prod: [],
+    };
+
+    for (const problem of criticalProblems) {
+      const stage = problem?.stage;
+      if (stage && stage in problemsByStage) {
+        const stageArray = problemsByStage[stage];
+        if (stageArray) {
+          stageArray.push(problem);
+        }
+      }
+    }
+
+    // Display each stage's critical problems
+    for (const [stageName, stageProblems] of Object.entries(problemsByStage)) {
+      if (stageProblems.length === 0) continue;
+
+      console.log(`${stageName.toUpperCase()}:`);
+      for (const problem of stageProblems) {
+        console.log(`   ❌ ${problem.description}`);
+        if (problem.manualFix) {
+          console.log(`      💡 ${problem.manualFix}`);
+        }
+      }
+      console.log('');
+    }
+
+    console.log('Please fix the issues above and try again.\n');
+    return { success: false, error: 'Critical pre-deploy checks failed' };
   } else {
     console.log('✅ All pre-deploy checks passed!\n');
   }

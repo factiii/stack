@@ -36,12 +36,12 @@ jobs:
         id: set-matrix
         run: |
           ENVS="[]"
-          
+
           if [ "${{ inputs.environment }}" == "all" ]; then
             # Check which environments are configured
-            HAS_STAGING=$(yq eval '.environments.staging != null' factiii.yml)
-            HAS_PROD=$(yq eval '.environments.prod != null' factiii.yml)
-            
+            HAS_STAGING=$(yq eval '.staging != null' factiii.yml)
+            HAS_PROD=$(yq eval '.prod != null' factiii.yml)
+
             if [ "$HAS_STAGING" == "true" ] && [ "$HAS_PROD" == "true" ]; then
               ENVS='["staging", "prod"]'
             elif [ "$HAS_STAGING" == "true" ]; then
@@ -52,7 +52,7 @@ jobs:
           else
             ENVS='["${{ inputs.environment }}"]'
           fi
-          
+
           echo "matrix={\"environment\":$ENVS}" >> $GITHUB_OUTPUT
 
   fix:
@@ -79,11 +79,11 @@ jobs:
             echo "❌ factiii.yml not found"
             exit 1
           fi
-          
+
           REPO_NAME=$(yq eval '.name' factiii.yml)
-          HOST=$(yq eval ".environments.$ENVIRONMENT.host // \"\"" factiii.yml)
-          SSH_USER=$(yq eval ".environments.$ENVIRONMENT.ssh_user // \"ubuntu\"" factiii.yml)
-          
+          HOST=$(yq eval ".$ENVIRONMENT.host // \"\"" factiii.yml)
+          SSH_USER=$(yq eval ".$ENVIRONMENT.ssh_user // \"ubuntu\"" factiii.yml)
+
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           echo "host=$HOST" >> $GITHUB_OUTPUT
           echo "ssh_user=$SSH_USER" >> $GITHUB_OUTPUT
@@ -93,9 +93,9 @@ jobs:
         env:
           ENVIRONMENT: ${{ matrix.environment }}
         run: |
-          HAS_ENV=$(yq eval ".environments.$ENVIRONMENT != null" factiii.yml)
+          HAS_ENV=$(yq eval ".$ENVIRONMENT != null" factiii.yml)
           echo "has_env=$HAS_ENV" >> $GITHUB_OUTPUT
-          
+
           if [ "$HAS_ENV" != "true" ]; then
             echo "⏭️  $ENVIRONMENT environment not configured in factiii.yml"
             exit 0
@@ -153,7 +153,7 @@ jobs:
           ENVIRONMENT: ${{ matrix.environment }}
         run: |
           if [ -z "$HOST" ]; then
-            echo "❌ Missing host in factiii.yml: environments.$ENVIRONMENT.host"
+            echo "❌ Missing host in factiii.yml: $ENVIRONMENT.host"
             exit 1
           fi
           

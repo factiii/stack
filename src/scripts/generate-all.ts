@@ -140,11 +140,24 @@ export function generateDockerCompose(allConfigs: Record<string, FactiiiConfig>)
   };
 
   // Add nginx reverse proxy
+  // ============================================================
+  // CRITICAL: SSL Certificate Volume Mounts
+  // ============================================================
+  // Why this exists: Nginx needs access to Let's Encrypt certificates
+  // What breaks if changed: HTTPS will fail if certificates not accessible
+  // /etc/letsencrypt - SSL certificates from certbot
+  // /var/www/certbot - ACME challenge files for certificate validation
+  // Must be read-only (:ro) for security
+  // ============================================================
   compose.services.nginx = {
     image: 'nginx:alpine',
     container_name: 'factiii_nginx',
     ports: ['80:80', '443:443'],
-    volumes: ['./nginx.conf:/etc/nginx/nginx.conf:ro'],
+    volumes: [
+      './nginx.conf:/etc/nginx/nginx.conf:ro',
+      '/etc/letsencrypt:/etc/letsencrypt:ro',
+      '/var/www/certbot:/var/www/certbot:ro',
+    ],
     networks: ['factiii'],
     restart: 'unless-stopped',
   };
@@ -278,12 +291,50 @@ http {
 
 `;
 
+  // ============================================================
+  // CRITICAL: HTTPS Certificate Paths
+  // ============================================================
+  // Why this exists: SSL certificates are obtained by certbot during deployment
+  // What breaks if changed: HTTPS will fail if certificate paths are wrong
+  // Certificate paths: /etc/letsencrypt/live/{domain}/fullchain.pem and privkey.pem
+  // Volume mounts: Must mount /etc/letsencrypt:ro in nginx container
+  // ============================================================
+
   for (const { domain, service, port } of routes) {
     nginxConf += `
     # ${service} - ${domain}
+
+    # HTTP - redirect to HTTPS
     server {
         listen 80;
         server_name ${domain};
+
+        # Allow certbot ACME challenge
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }
+
+        # Redirect all other traffic to HTTPS
+        location / {
+            return 301 https://$server_name$request_uri;
+        }
+    }
+
+    # HTTPS - main server block
+    server {
+        listen 443 ssl http2;
+        server_name ${domain};
+
+        # SSL certificate paths (Let's Encrypt)
+        ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+
+        # SSL security settings
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 10m;
 
         location / {
             proxy_pass http://${service}:${port};

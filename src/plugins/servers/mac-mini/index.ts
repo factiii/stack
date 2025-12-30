@@ -55,6 +55,7 @@ import { nodeFixes } from './scanfix/node.js';
 import { gitFixes } from './scanfix/git.js';
 import { containerFixes } from './scanfix/containers.js';
 import { configFixes } from './scanfix/config.js';
+import { certbotFixes } from './scanfix/certbot.js';
 
 // Import environment-specific operations
 import { deployDev } from './dev.js';
@@ -143,6 +144,7 @@ class MacMiniPlugin {
     ...gitFixes,
     ...containerFixes,
     ...configFixes,
+    ...certbotFixes,
   ];
 
   // ============================================================

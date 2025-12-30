@@ -133,6 +133,95 @@ async function installDependencies(
   await sshExecCommand(envConfig, `cd ${repoDir} && pnpm install`);
 }
 
+// ============================================================
+// CRITICAL: SSL Certificate Management
+// ============================================================
+// Why this exists: Automatically obtain/renew Let's Encrypt SSL certificates
+// What breaks if changed: HTTPS will fail, browsers show security warnings
+// Dependencies: certbot must be installed, ssl_email must be configured
+// ============================================================
+
+/**
+ * Ensure certbot is installed on the server
+ */
+async function ensureCertbotInstalled(envConfig: EnvironmentConfig): Promise<void> {
+  try {
+    await sshExecCommand(envConfig, 'which certbot');
+  } catch {
+    console.log('      Installing certbot...');
+    await sshExecCommand(
+      envConfig,
+      'brew install certbot || sudo apt-get update && sudo apt-get install -y certbot python3-certbot-nginx'
+    );
+  }
+}
+
+/**
+ * Run certbot to obtain/renew SSL certificates
+ * Called after nginx.conf is generated but before containers start
+ * Collects all domains from all environments in factiii.yml and obtains certificates
+ */
+async function runCertbot(
+  envConfig: EnvironmentConfig,
+  config: FactiiiConfig
+): Promise<void> {
+  const environments = extractEnvironments(config);
+
+  // Collect all domains that need certificates
+  const domains: string[] = [];
+  for (const env of Object.values(environments)) {
+    if (env.domain && !env.domain.startsWith('EXAMPLE-')) {
+      domains.push(env.domain);
+    }
+  }
+
+  if (domains.length === 0) {
+    console.log('      No domains configured, skipping SSL certificates');
+    return;
+  }
+
+  const sslEmail = config.ssl_email;
+  if (!sslEmail || sslEmail.startsWith('EXAMPLE-')) {
+    console.log('      ⚠️  ssl_email not configured in factiii.yml, skipping SSL');
+    console.log('      Add ssl_email to factiii.yml to enable automatic SSL certificates');
+    return;
+  }
+
+  console.log(`      Obtaining SSL certificates for: ${domains.join(', ')}`);
+
+  const domainFlags = domains.map(d => `-d ${d}`).join(' ');
+
+  await sshExecCommand(
+    envConfig,
+    `sudo certbot certonly --nginx ${domainFlags} --non-interactive --agree-tos --email ${sslEmail} || echo "⚠️  Certbot failed, continuing without SSL"`
+  );
+}
+
+/**
+ * Setup automatic certificate renewal via cron
+ * Only runs once - checks if renewal is already configured
+ */
+async function setupCertbotRenewal(envConfig: EnvironmentConfig): Promise<void> {
+  console.log('      Setting up automatic certificate renewal...');
+
+  // Check if certbot renewal is already configured
+  const cronCheck = await sshExecCommand(
+    envConfig,
+    'crontab -l 2>/dev/null | grep "certbot renew" || echo "NOT_FOUND"'
+  );
+
+  if (cronCheck.includes('NOT_FOUND')) {
+    // Add renewal cron job (runs twice daily)
+    await sshExecCommand(
+      envConfig,
+      '(crontab -l 2>/dev/null; echo "0 0,12 * * * certbot renew --quiet && docker exec factiii_nginx nginx -s reload") | crontab -'
+    );
+    console.log('      ✅ Configured automatic certificate renewal (twice daily)');
+  } else {
+    console.log('      ✅ Certificate renewal already configured');
+  }
+}
+
 /**
  * Write environment variables to .env file on server
  * Handles both local (on-server) and remote (SSH) execution
@@ -303,7 +392,11 @@ export async function ensureServerReady(
     console.log('   Installing dependencies...');
     await installDependencies(envConfig, repoDir);
 
-    // 6. Write environment variables from GitHub secrets if provided
+    // 6. Ensure certbot is installed
+    console.log('   Checking certbot...');
+    await ensureCertbotInstalled(envConfig);
+
+    // 7. Write environment variables from GitHub secrets if provided
     const envVarsString = process.env.STAGING_ENVS;
     if (envVarsString) {
       console.log('   Writing environment variables...');
@@ -312,7 +405,7 @@ export async function ensureServerReady(
       console.log('   ⚠️  STAGING_ENVS not provided, skipping env file write (using existing .env.staging if present)');
     }
 
-    // 7. Create .env from .env.staging for host commands
+    // 8. Create .env from .env.staging for host commands
     console.log('   Creating .env from .env.staging for host commands...');
     await createEnvFromStaging(envConfig, repoDir);
 
@@ -663,7 +756,12 @@ export async function deployStaging(
         }
       }
 
-      // Step 6: Start all containers
+      // Step 6: Manage SSL certificates
+      console.log('   🔐 Managing SSL certificates...');
+      await runCertbot(envConfig, config);
+      await setupCertbotRenewal(envConfig);
+
+      // Step 7: Start all containers
       console.log('   🚀 Starting containers with unified docker-compose.yml...');
       execSync(
         `cd ${factiiiDir} && docker compose up -d`,
@@ -718,7 +816,12 @@ export async function deployStaging(
          fi`
       );
 
-      // Step 5: Deploy using unified docker-compose.yml
+      // Step 5: Manage SSL certificates
+      console.log('   🔐 Managing SSL certificates on remote server...');
+      await runCertbot(envConfig, config);
+      await setupCertbotRenewal(envConfig);
+
+      // Step 6: Deploy using unified docker-compose.yml
       console.log('   🚀 Starting containers with unified docker-compose.yml on remote server...');
       await sshExecCommand(
         envConfig,
