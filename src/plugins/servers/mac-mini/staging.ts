@@ -618,6 +618,52 @@ export async function deployStaging(
         };
       }
 
+      // Step 4: Start postgres first and wait for it to be ready
+      console.log('   🔄 Starting postgres container...');
+      execSync(
+        `cd ${factiiiDir} && docker compose up -d postgres`,
+        {
+          stdio: 'inherit',
+          shell: '/bin/bash',
+          env: {
+            ...process.env,
+            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+          },
+        }
+      );
+
+      // Wait for postgres to be ready
+      console.log('   ⏳ Waiting for postgres to be ready...');
+      execSync(
+        `sleep 3`,
+        { stdio: 'inherit', shell: '/bin/bash' }
+      );
+
+      // Step 5: Run Prisma migrations if prisma schema exists
+      const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '/Users/jon');
+      const prismaSchemaPath = path.join(expandedRepoDir, config.prisma_schema ?? 'prisma/schema.prisma');
+
+      if (fs.existsSync(prismaSchemaPath)) {
+        console.log('   📦 Running Prisma migrations...');
+        try {
+          execSync(
+            `cd ${expandedRepoDir} && npx prisma migrate deploy`,
+            {
+              stdio: 'inherit',
+              shell: '/bin/bash',
+              env: {
+                ...process.env,
+                PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+              },
+            }
+          );
+          console.log('   ✅ Prisma migrations complete');
+        } catch (error) {
+          console.log('   ⚠️  Prisma migration failed, continuing anyway...');
+        }
+      }
+
+      // Step 6: Start all containers
       console.log('   🚀 Starting containers with unified docker-compose.yml...');
       execSync(
         `cd ${factiiiDir} && docker compose up -d`,
@@ -652,7 +698,27 @@ export async function deployStaging(
       console.log('   🔄 Updating docker-compose.yml with staging image tag...');
       await updateComposeForStagingImage(envConfig, config);
 
-      // Step 3: Deploy using unified docker-compose.yml
+      // Step 3: Start postgres first and wait
+      console.log('   🔄 Starting postgres container on remote server...');
+      await sshExecCommand(
+        envConfig,
+        `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
+         cd ~/.factiii && \
+         docker compose up -d postgres && \
+         sleep 3`
+      );
+
+      // Step 4: Run Prisma migrations if prisma schema exists
+      console.log('   📦 Running Prisma migrations on remote server...');
+      await sshExecCommand(
+        envConfig,
+        `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
+         if [ -f ${repoDir}/${config.prisma_schema ?? 'prisma/schema.prisma'} ]; then \
+           cd ${repoDir} && npx prisma migrate deploy || echo "⚠️  Prisma migration failed, continuing anyway..."; \
+         fi`
+      );
+
+      // Step 5: Deploy using unified docker-compose.yml
       console.log('   🚀 Starting containers with unified docker-compose.yml on remote server...');
       await sshExecCommand(
         envConfig,
