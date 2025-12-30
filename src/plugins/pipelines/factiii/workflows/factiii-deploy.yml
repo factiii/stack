@@ -108,6 +108,7 @@ jobs:
         env:
           STAGING_HOST: ${{ steps.staging_config.outputs.staging_host }}
           STAGING_USER: ${{ steps.staging_config.outputs.staging_ssh_user }}
+          REPO_NAME: ${{ steps.config.outputs.repo_name }}
           COMMIT_HASH: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
           GITHUB_REPO: ${{ github.repository }}
@@ -121,8 +122,15 @@ jobs:
           
           ssh -i ~/.ssh/staging_deploy_key -o StrictHostKeyChecking=no "$STAGING_USER@$STAGING_HOST" \
             "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
-             GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-             npx factiii deploy --prod --commit $COMMIT_HASH --branch $BRANCH"
+             REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
+             if [ -d \"\$REPO_DIR\" ]; then \
+               cd \"\$REPO_DIR\" && \
+               GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+               npx factiii deploy --prod --commit $COMMIT_HASH --branch $BRANCH; \
+             else \
+               echo \"❌ Repo directory not found at \$REPO_DIR\"; \
+               exit 1; \
+             fi"
           
           BUILD_EXIT_CODE=$?
           if [ $BUILD_EXIT_CODE -ne 0 ]; then
@@ -137,6 +145,7 @@ jobs:
         env:
           HOST: ${{ steps.config.outputs.host }}
           USER: ${{ steps.config.outputs.ssh_user }}
+          REPO_NAME: ${{ steps.config.outputs.repo_name }}
           ENVIRONMENT: ${{ inputs.environment }}
           COMMIT_HASH: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
@@ -157,8 +166,16 @@ jobs:
           
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
             "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
-             $SKIP_BUILD_FLAG GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-             npx factiii deploy --$ENVIRONMENT --commit $COMMIT_HASH --branch $BRANCH"
+             REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
+             if [ -d \"\$REPO_DIR\" ]; then \
+               cd \"\$REPO_DIR\" && \
+               $SKIP_BUILD_FLAG GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+               npx factiii deploy --$ENVIRONMENT --commit $COMMIT_HASH --branch $BRANCH; \
+             else \
+               echo \"❌ Repo directory not found at \$REPO_DIR\"; \
+               echo \"Run deployment first to clone the repository\"; \
+               exit 1; \
+             fi"
           
           DEPLOY_EXIT_CODE=$?
           rm -f ~/.ssh/deploy_key ~/.ssh/staging_deploy_key
