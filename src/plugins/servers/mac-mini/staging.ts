@@ -189,6 +189,70 @@ ${envFileContent}ENVEOF`
   }
 }
 
+/**
+ * Create .env file from .env.staging for host commands
+ * Replaces postgres:5432 with localhost:5438 so host commands can connect
+ * Handles both local (on-server) and remote (SSH) execution
+ */
+async function createEnvFromStaging(
+  envConfig: EnvironmentConfig,
+  repoDir: string
+): Promise<void> {
+  const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+  const stagingEnvPath = isOnServer
+    ? path.join(repoDir.replace('~', process.env.HOME ?? '/Users/jon'), '.env.staging')
+    : `${repoDir}/.env.staging`;
+  const envPath = isOnServer
+    ? path.join(repoDir.replace('~', process.env.HOME ?? '/Users/jon'), '.env')
+    : `${repoDir}/.env`;
+
+  // Read .env.staging
+  let envContent: string;
+  if (isOnServer) {
+    if (!fs.existsSync(stagingEnvPath)) {
+      // .env.staging might not exist yet, skip gracefully
+      return;
+    }
+    envContent = fs.readFileSync(stagingEnvPath, 'utf8');
+  } else {
+    // Remote - read via SSH
+    try {
+      envContent = await sshExecCommand(envConfig, `cat ${stagingEnvPath}`);
+    } catch {
+      // .env.staging might not exist yet, skip gracefully
+      return;
+    }
+  }
+
+  // Replace postgres:5432 with localhost:5438 in DATABASE_URL and TEST_DATABASE_URL
+  // This allows host commands to connect via the exposed port
+  const updatedContent = envContent
+    .split('\n')
+    .map((line) => {
+      // Match DATABASE_URL or TEST_DATABASE_URL lines
+      if (line.match(/^(DATABASE_URL|TEST_DATABASE_URL)=/)) {
+        // Replace postgres:5432 with localhost:5438
+        // Handle both postgresql:// and postgres:// protocols
+        return line.replace(/@postgres:5432\//g, '@localhost:5438/');
+      }
+      return line;
+    })
+    .join('\n');
+
+  // Write to .env file
+  if (isOnServer) {
+    fs.writeFileSync(envPath, updatedContent, 'utf8');
+    console.log('   📝 Created .env from .env.staging (with host port replacement)');
+  } else {
+    await sshExecCommand(
+      envConfig,
+      `cat > ${envPath} << 'ENVEOF'
+${updatedContent}ENVEOF`
+    );
+    console.log('   📝 Created .env from .env.staging on remote server (with host port replacement)');
+  }
+}
+
 
 /**
  * Ensure server is ready for deployment
@@ -243,6 +307,10 @@ export async function ensureServerReady(
       console.log('   ⚠️  STAGING_ENVS not provided, skipping env file write (using existing .env.staging if present)');
     }
 
+    // 7. Create .env from .env.staging for host commands
+    console.log('   Creating .env from .env.staging for host commands...');
+    await createEnvFromStaging(envConfig, repoDir);
+
     return { success: true, message: 'Server ready' };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -278,6 +346,7 @@ function parseDatabaseUrl(databaseUrl: string): {
 /**
  * Add postgres service to docker-compose.yml for staging
  * Reads DATABASE_URL from .env.staging to configure the postgres service
+ * Only applies to staging - production uses RDS
  */
 async function addPostgresServiceForStaging(
   envConfig: EnvironmentConfig,
@@ -344,6 +413,7 @@ async function addPostgresServiceForStaging(
 
   const compose = yaml.load(composeContent) as {
     services?: Record<string, unknown>;
+    volumes?: Record<string, unknown>;
     [key: string]: unknown;
   };
 
@@ -518,13 +588,13 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
         console.log('   ⚠️  generate-all.js not found, skipping regeneration');
       }
 
+      // Step 1.5: Add postgres service for staging if DATABASE_URL is configured
+      console.log('   🔄 Adding postgres service for staging...');
+      await addPostgresServiceForStaging(envConfig, config);
+
       // Step 2: Update docker-compose.yml to use pre-built staging image
       console.log('   🔄 Updating docker-compose.yml with staging image tag...');
       await updateComposeForStagingImage(envConfig, config);
-
-      // Step 2.5: Add postgres service for staging if DATABASE_URL is configured
-      console.log('   🔄 Adding postgres service for staging...');
-      await addPostgresServiceForStaging(envConfig, config);
 
       // Step 3: Deploy using unified docker-compose.yml
       const unifiedCompose = path.join(factiiiDir, 'docker-compose.yml');
@@ -561,13 +631,13 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
          fi`
       );
 
+      // Step 1.5: Add postgres service for staging if DATABASE_URL is configured
+      console.log('   🔄 Adding postgres service for staging...');
+      await addPostgresServiceForStaging(envConfig, config);
+
       // Step 2: Update docker-compose.yml to use pre-built staging image
       console.log('   🔄 Updating docker-compose.yml with staging image tag...');
       await updateComposeForStagingImage(envConfig, config);
-
-      // Step 2.5: Add postgres service for staging if DATABASE_URL is configured
-      console.log('   🔄 Adding postgres service for staging...');
-      await addPostgresServiceForStaging(envConfig, config);
 
       // Step 3: Deploy using unified docker-compose.yml
       console.log('   🚀 Starting containers with unified docker-compose.yml on remote server...');

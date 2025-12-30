@@ -1026,6 +1026,70 @@ Run it after any deployment to update configs:
 node ~/.factiii/scripts/generate-all.js
 ```
 
+### Server Plugin Docker Compose Modifications
+
+Server plugins are responsible for generating and modifying docker-compose.yml files. After calling `generate-all.js`, server plugins can modify the compose file for:
+
+- **Server-specific needs**: Updating image references (e.g., ECR image paths for production)
+- **Environment-specific needs**: Adding services required for specific environments (e.g., postgres for staging)
+
+**Standard Pattern:**
+
+```typescript
+// 1. Generate base docker-compose.yml
+await runGenerateAll();
+
+// 2. Modify for environment-specific needs (e.g., add postgres for staging)
+await addPostgresServiceForStaging(config, envConfig);
+
+// 3. Modify for server-specific needs (e.g., update image tags)
+await updateComposeForStagingImage(config, envConfig);
+
+// 4. Start containers
+await dockerComposeUp();
+```
+
+**Example: Adding Postgres Service for Staging**
+
+Server plugins can add services to docker-compose.yml based on environment configuration:
+
+```typescript
+async function addPostgresServiceForStaging(
+  envConfig: EnvironmentConfig,
+  config: FactiiiConfig
+): Promise<void> {
+  // Read DATABASE_URL from .env.staging
+  const databaseUrl = await readEnvFile('.env.staging', 'DATABASE_URL');
+  
+  // Parse connection details
+  const dbConfig = parseDatabaseUrl(databaseUrl);
+  
+  // Add postgres service to compose
+  compose.services.postgres = {
+    image: 'postgres:16-alpine',
+    environment: {
+      POSTGRES_USER: dbConfig.user,
+      POSTGRES_PASSWORD: dbConfig.password,
+      POSTGRES_DB: dbConfig.database,
+    },
+    ports: [`${dbConfig.port}:5432`],
+    volumes: ['postgres_data:/var/lib/postgresql/data'],
+    networks: ['factiii'],
+  };
+}
+```
+
+**When to Modify Compose:**
+
+- **Do modify** for environment-specific services (postgres for staging, redis for caching)
+- **Do modify** for server-specific image references (ECR paths, local image tags)
+- **Don't modify** for deployment-agnostic services (those should be in generate-all.js)
+- **Don't modify** for production managed services (use RDS, ElastiCache, etc. instead of containers)
+
+**Production Considerations:**
+
+Production environments typically use managed services (RDS, ElastiCache) rather than local containers. Server plugins should only add containerized services for staging/development environments where local services are appropriate.
+
 ### Deployment Flows
 
 **Staging (requiresFullRepo = true):**

@@ -53,6 +53,12 @@ aws:
 prisma:
   schema_path: null  # Optional override
   version: null      # Optional override
+
+# Exclude Docker containers from unmanaged container cleanup
+# Add container names that should not be stopped during cleanup:
+container_exclusions:
+  - factiii_postgres
+  - legacy_container
 ```
 
 **`factiiiAuto.yml`** - Auto-Detected Configuration

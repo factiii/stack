@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import yaml from 'js-yaml';
 
 import type { FactiiiConfig, Fix, DeployResult } from '../../../types/index.js';
 
@@ -239,6 +240,183 @@ class PrismaTrpcPlugin {
       },
       manualFix: 'Create .env.prod with production database URL',
     },
+    {
+      id: 'env-example-staging-format',
+      stage: 'dev',
+      severity: 'warning',
+      description: '.env.example and .env.staging should use postgres:5432 format (container format) and match each other',
+      scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+        const hasPrisma = await PrismaTrpcPlugin.hasPrisma(rootDir);
+        if (!hasPrisma) return false;
+
+        const examplePath = path.join(rootDir, '.env.example');
+        const stagingPath = path.join(rootDir, '.env.staging');
+
+        // Check if .env.example exists
+        if (!fs.existsSync(examplePath)) {
+          return false; // Missing .env.example is handled by another fix
+        }
+
+        // Parse .env.example
+        const exampleContent = fs.readFileSync(examplePath, 'utf8');
+        const exampleDbUrlMatch = exampleContent.match(/^DATABASE_URL=(.+)$/m);
+        const exampleTestDbUrlMatch = exampleContent.match(/^TEST_DATABASE_URL=(.+)$/m);
+
+        // Check if .env.example uses postgres:5432 format
+        const exampleUsesContainerFormat =
+          exampleDbUrlMatch?.[1]?.includes('@postgres:5432/') ?? false;
+        const exampleTestUsesContainerFormat =
+          exampleTestDbUrlMatch?.[1]?.includes('@postgres:5432/') ?? false;
+
+        if (!exampleUsesContainerFormat) {
+          return true; // .env.example doesn't use container format
+        }
+
+        // Check if .env.staging exists
+        if (!fs.existsSync(stagingPath)) {
+          return false; // Missing .env.staging is handled by another fix
+        }
+
+        // Parse .env.staging
+        const stagingContent = fs.readFileSync(stagingPath, 'utf8');
+        const stagingDbUrlMatch = stagingContent.match(/^DATABASE_URL=(.+)$/m);
+        const stagingTestDbUrlMatch = stagingContent.match(/^TEST_DATABASE_URL=(.+)$/m);
+
+        // Check if .env.staging uses postgres:5432 format
+        const stagingUsesContainerFormat =
+          stagingDbUrlMatch?.[1]?.includes('@postgres:5432/') ?? false;
+        const stagingTestUsesContainerFormat =
+          stagingTestDbUrlMatch?.[1]?.includes('@postgres:5432/') ?? false;
+
+        if (!stagingUsesContainerFormat) {
+          return true; // .env.staging doesn't use container format
+        }
+
+        // Check if they match (compare the URLs, ignoring host/port differences if one is container format)
+        // Extract the database name and credentials for comparison
+        const extractDbInfo = (url: string): string | null => {
+          try {
+            const urlObj = new URL(url);
+            return `${urlObj.username}:${urlObj.password}@${urlObj.pathname}`;
+          } catch {
+            return null;
+          }
+        };
+
+        const exampleDbInfo = exampleDbUrlMatch?.[1]
+          ? extractDbInfo(exampleDbUrlMatch[1])
+          : null;
+        const stagingDbInfo = stagingDbUrlMatch?.[1]
+          ? extractDbInfo(stagingDbUrlMatch[1])
+          : null;
+
+        if (exampleDbInfo && stagingDbInfo && exampleDbInfo !== stagingDbInfo) {
+          return true; // They don't match
+        }
+
+        // Check TEST_DATABASE_URL if both exist
+        if (exampleTestDbUrlMatch?.[1] && stagingTestDbUrlMatch?.[1]) {
+          const exampleTestDbInfo = extractDbInfo(exampleTestDbUrlMatch[1]);
+          const stagingTestDbInfo = extractDbInfo(stagingTestDbUrlMatch[1]);
+          if (exampleTestDbInfo && stagingTestDbInfo && exampleTestDbInfo !== stagingTestDbInfo) {
+            return true; // They don't match
+          }
+        }
+
+        // Check for port conflicts when on staging server
+        const isOnStagingServer = process.env.GITHUB_ACTIONS === 'true';
+        if (isOnStagingServer) {
+          const hasConflict = await PrismaTrpcPlugin.checkPortConflicts(rootDir, config);
+          if (hasConflict) {
+            return true; // Port conflict detected
+          }
+        }
+
+        return false; // All checks passed
+      },
+      fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+        const examplePath = path.join(rootDir, '.env.example');
+        const stagingPath = path.join(rootDir, '.env.staging');
+
+        if (!fs.existsSync(examplePath)) {
+          return false;
+        }
+
+        // Read .env.example
+        let exampleContent = fs.readFileSync(examplePath, 'utf8');
+
+        // Update DATABASE_URL to use postgres:5432 format if it doesn't
+        exampleContent = exampleContent.replace(
+          /^DATABASE_URL=(.+)$/m,
+          (match, url: string) => {
+            try {
+              const urlObj = new URL(url);
+              // Replace localhost:PORT or any host:PORT with postgres:5432
+              const newUrl = url.replace(/@[^:]+:\d+\//, '@postgres:5432/');
+              return `DATABASE_URL=${newUrl}`;
+            } catch {
+              return match; // Keep original if parsing fails
+            }
+          }
+        );
+
+        // Update TEST_DATABASE_URL similarly
+        exampleContent = exampleContent.replace(
+          /^TEST_DATABASE_URL=(.+)$/m,
+          (match, url: string) => {
+            try {
+              const urlObj = new URL(url);
+              const newUrl = url.replace(/@[^:]+:\d+\//, '@postgres:5432/');
+              return `TEST_DATABASE_URL=${newUrl}`;
+            } catch {
+              return match;
+            }
+          }
+        );
+
+        fs.writeFileSync(examplePath, exampleContent);
+
+        // Update .env.staging to match if it exists
+        if (fs.existsSync(stagingPath)) {
+          let stagingContent = fs.readFileSync(stagingPath, 'utf8');
+
+          // Extract database info from example
+          const exampleDbUrlMatch = exampleContent.match(/^DATABASE_URL=(.+)$/m);
+          if (exampleDbUrlMatch?.[1]) {
+            const exampleUrl = exampleDbUrlMatch[1];
+            try {
+              const urlObj = new URL(exampleUrl);
+              const newStagingUrl = `postgresql://${urlObj.username}:${urlObj.password}@postgres:5432${urlObj.pathname}${urlObj.search}`;
+              stagingContent = stagingContent.replace(/^DATABASE_URL=(.+)$/m, `DATABASE_URL=${newStagingUrl}`);
+            } catch {
+              // Keep original if parsing fails
+            }
+          }
+
+          // Update TEST_DATABASE_URL similarly
+          const exampleTestDbUrlMatch = exampleContent.match(/^TEST_DATABASE_URL=(.+)$/m);
+          if (exampleTestDbUrlMatch?.[1]) {
+            const exampleTestUrl = exampleTestDbUrlMatch[1];
+            try {
+              const urlObj = new URL(exampleTestUrl);
+              const newStagingTestUrl = `postgresql://${urlObj.username}:${urlObj.password}@postgres:5432${urlObj.pathname}${urlObj.search}`;
+              stagingContent = stagingContent.replace(/^TEST_DATABASE_URL=(.+)$/m, `TEST_DATABASE_URL=${newStagingTestUrl}`);
+            } catch {
+              // Keep original if parsing fails
+            }
+          }
+
+          fs.writeFileSync(stagingPath, stagingContent);
+          console.log('   Updated .env.example and .env.staging to use postgres:5432 format');
+        } else {
+          console.log('   Updated .env.example to use postgres:5432 format');
+        }
+
+        return true;
+      },
+      manualFix:
+        'Update .env.example and .env.staging to use postgres:5432 format (container format). They should match each other.',
+    },
   ];
 
   // ============================================================
@@ -336,6 +514,176 @@ class PrismaTrpcPlugin {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Check for port conflicts across repos in staging
+   * Returns true if a conflict is detected (will throw error in scan)
+   */
+  static async checkPortConflicts(
+    rootDir: string,
+    config: FactiiiConfig
+  ): Promise<boolean> {
+    // Only check when on staging server
+    const isOnStagingServer = process.env.GITHUB_ACTIONS === 'true';
+    if (!isOnStagingServer) {
+      return false;
+    }
+
+    // Import scanRepos from generate-all
+    // Use dynamic import to avoid circular dependencies
+    const generateAllModule = await import('../../../scripts/generate-all.js');
+    const scanRepos = generateAllModule.scanRepos;
+    if (!scanRepos) {
+      return false; // Can't check if scanRepos not available
+    }
+    const repos = scanRepos();
+
+    const factiiiDir = process.env.FACTIII_DIR ?? path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+    const composePath = path.join(factiiiDir, 'docker-compose.yml');
+
+    // Collect all exposed ports from existing postgres services
+    const usedPorts = new Map<number, string>(); // port -> repo name
+
+    if (fs.existsSync(composePath)) {
+      try {
+        const composeContent = fs.readFileSync(composePath, 'utf8');
+        const compose = yaml.load(composeContent) as {
+          services?: Record<
+            string,
+            {
+              ports?: string[];
+              [key: string]: unknown;
+            }
+          >;
+          [key: string]: unknown;
+        };
+
+        if (compose.services) {
+          for (const [serviceName, service] of Object.entries(compose.services)) {
+            // Check if this is a postgres service
+            if (serviceName === 'postgres' || serviceName.includes('postgres')) {
+              if (service.ports && Array.isArray(service.ports)) {
+                for (const portMapping of service.ports) {
+                  // Parse port mapping like "5438:5432"
+                  const match = portMapping.match(/^(\d+):\d+$/);
+                  if (match) {
+                    const exposedPort = parseInt(match[1]!, 10);
+                    // Try to find which repo this belongs to by checking service names
+                    for (const repo of repos) {
+                      if (serviceName.includes(repo.name)) {
+                        usedPorts.set(exposedPort, repo.name);
+                        break;
+                      }
+                    }
+                    // If we can't determine repo, still track the port
+                    if (!usedPorts.has(exposedPort)) {
+                      usedPorts.set(exposedPort, 'unknown');
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        // If we can't parse docker-compose.yml, skip conflict check
+        console.log(`   ⚠️  Could not parse docker-compose.yml for port conflict check: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
+      }
+    }
+
+    // Check current repo's planned port from .env.staging
+    const stagingPath = path.join(rootDir, '.env.staging');
+    if (!fs.existsSync(stagingPath)) {
+      return false; // No .env.staging, can't check
+    }
+
+    const stagingContent = fs.readFileSync(stagingPath, 'utf8');
+    const dbUrlMatch = stagingContent.match(/^DATABASE_URL=(.+)$/m);
+    if (!dbUrlMatch) {
+      return false; // No DATABASE_URL, can't check
+    }
+
+    const dbUrl = dbUrlMatch[1]!;
+    let plannedPort: number | null = null;
+
+    // If DATABASE_URL uses postgres:5432 format, we need to check docker-compose.yml
+    // to see what port would be exposed. But if docker-compose.yml doesn't exist yet,
+    // we can't determine the port. In that case, we'll skip the check.
+    if (dbUrl.includes('@postgres:5432/')) {
+      // Container format - check if we can determine exposed port from docker-compose
+      // For now, we'll check the current repo's service in docker-compose if it exists
+      const currentRepoName = config.name ?? 'app';
+      if (fs.existsSync(composePath)) {
+        try {
+          const composeContent = fs.readFileSync(composePath, 'utf8');
+          const compose = yaml.load(composeContent) as {
+            services?: Record<
+              string,
+              {
+                ports?: string[];
+                [key: string]: unknown;
+              }
+            >;
+            [key: string]: unknown;
+          };
+
+          // Look for postgres service
+          // Note: There should only be one postgres service in the unified docker-compose.yml
+          // but it might be shared or per-repo. For now, check for any postgres service.
+          if (compose.services) {
+            for (const [serviceName, service] of Object.entries(compose.services)) {
+              if (serviceName === 'postgres') {
+                if (service.ports && Array.isArray(service.ports)) {
+                  for (const portMapping of service.ports) {
+                    const match = portMapping.match(/^(\d+):\d+$/);
+                    if (match) {
+                      plannedPort = parseInt(match[1]!, 10);
+                      break;
+                    }
+                  }
+                }
+                if (plannedPort) break;
+              }
+            }
+          }
+        } catch {
+          // Skip if can't parse
+        }
+      }
+      // If we still don't have a planned port, we can't check for conflicts
+      // This will be checked after first deploy when docker-compose.yml is generated
+      if (!plannedPort) {
+        return false;
+      }
+    } else {
+      // Host format (localhost:PORT) - extract port from URL
+      try {
+        const urlObj = new URL(dbUrl);
+        plannedPort = parseInt(urlObj.port || '5432', 10);
+      } catch {
+        return false; // Can't parse URL
+      }
+    }
+
+    if (!plannedPort) {
+      return false;
+    }
+
+    // Check if planned port conflicts with any used port
+    if (usedPorts.has(plannedPort)) {
+      const conflictingRepo = usedPorts.get(plannedPort);
+      const currentRepoName = config.name ?? 'app';
+      throw new Error(
+        `Port conflict detected: Port ${plannedPort} is already used by ${conflictingRepo === 'unknown' ? 'another repo' : `repo "${conflictingRepo}"`}. ` +
+        `Each repo needs a unique port in their .env.staging DATABASE_URL. ` +
+        `Update your .env.staging to use a different port (e.g., 5438, 5439, 5440, etc.). ` +
+        `This ensures each database container can communicate with its server container properly.`
+      );
+    }
+
+    return false; // No conflict
   }
 
   // ============================================================

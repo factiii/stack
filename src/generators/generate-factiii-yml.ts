@@ -73,16 +73,36 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
   // Base schema with core fields
   const schema: Record<string, unknown> = {
     name: 'EXAMPLE-your-repo-name',
+    config_version: '1.1.0',
+    github_repo: 'EXAMPLE-username/repo-name',
+    ssl_email: 'EXAMPLE-admin@yourdomain.com',
+    aws: {
+      config: 'free-tier', // Options: ec2, free-tier, standard, enterprise
+      access_key_id: 'EXAMPLE-AKIAXXXXXXXX',
+      region: 'us-east-1',
+    },
+    plugins: ['github', 'ecr'],
+    servers: {
+      'mac-mini': {
+        plugin: 'mac-mini',
+      },
+    },
     environments: {
       staging: {
+        server: 'mac-mini',
         domain: 'EXAMPLE-staging.yourdomain.com',
         host: 'EXAMPLE-192.168.1.100',
+        env_file: '.env.staging',
       },
       prod: {
         domain: 'EXAMPLE-yourdomain.com',
         host: 'EXAMPLE-54.123.45.67',
       },
     },
+    ecr_registry: 'EXAMPLE-123456789012.dkr.ecr.us-east-1.amazonaws.com',
+    ecr_repository: 'EXAMPLE-repo-name',
+    prisma_schema: null, // Optional: override auto-detected schema path
+    prisma_version: null, // Optional: override auto-detected version
   };
 
   // Merge plugin config schemas
@@ -92,10 +112,31 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
     }
   }
 
-  return yaml.dump(schema, {
+  const yamlContent = yaml.dump(schema, {
     lineWidth: -1, // Don't wrap lines
     noRefs: true,
   });
+
+  // Add helpful comments after YAML generation
+  const comments = `
+# Additional server configurations (uncomment and configure as needed):
+# servers:
+#   aws-ec2-prod:
+#     plugin: aws
+#     region: us-east-1
+
+# Additional environment options (add to environments above):
+#   ssh_user: ubuntu  # Optional: override SSH user (defaults to ssh_user from factiiiAuto.yml, which defaults to ubuntu)
+#   env_file: .env.prod  # Optional: override env file name
+
+# Exclude Docker containers from unmanaged container cleanup
+# Uncomment and add container names to keep them running:
+# container_exclusions:
+#   - factiii_postgres
+#   - legacy_container
+`;
+
+  return yamlContent + comments;
 }
 
 /**
