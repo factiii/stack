@@ -9,6 +9,7 @@ import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
+import { extractEnvironments } from '../../../utils/config-helpers.js';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
@@ -263,13 +264,17 @@ export async function ensureServerReady(
   environment: string,
   options: EnsureServerReadyOptions = {}
 ): Promise<DeployResult> {
-  if (environment !== 'staging') {
-    return { success: true, message: 'Mac Mini only handles staging' };
+  // Mac Mini only handles staging-type environments (staging, staging2, etc.)
+  if (!environment.startsWith('staging') && !environment.startsWith('stage-')) {
+    return { success: true, message: 'Mac Mini only handles staging environments' };
   }
 
-  const envConfig = config.environments?.staging;
+  // Get environment config (supports both v1.x and v2.0.0+ formats)
+  const environments = extractEnvironments(config);
+  const envConfig = environments[environment];
+
   if (!envConfig?.host) {
-    throw new Error('Staging host not configured');
+    throw new Error(`${environment} host not configured`);
   }
 
   const { commitHash, branch = 'main', repoUrl } = options;
@@ -545,15 +550,23 @@ async function updateComposeForStagingImage(
 
 /**
  * Deploy to staging environment
- * 
+ *
  * Note: Docker image building is handled by the pipeline plugin (staging.ts)
  * This method only handles deployment (regenerating docker-compose.yml and starting containers)
+ *
+ * @param config - Factiii config (supports both v1.x and v2.0.0+)
+ * @param environment - Environment name (defaults to 'staging' for backward compatibility)
  */
-export async function deployStaging(config: FactiiiConfig): Promise<DeployResult> {
+export async function deployStaging(
+  config: FactiiiConfig,
+  environment: string = 'staging'
+): Promise<DeployResult> {
+  // Get environment config (supports both v1.x and v2.0.0+ formats)
+  const environments = extractEnvironments(config);
+  const envConfig = environments[environment];
 
-  const envConfig = config.environments?.staging;
   if (!envConfig?.host) {
-    return { success: false, error: 'Staging host not configured' };
+    return { success: false, error: `${environment} host not configured` };
   }
 
   console.log(`   🚀 Deploying on staging (${envConfig.host})...`);

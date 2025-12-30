@@ -65,12 +65,15 @@ export function extractWorkflowConfig(workflowPath: string): WorkflowConfig | nu
     for (const step of jobSteps) {
       if (step.run && step.run.includes('yq eval')) {
         // Extract what config values the workflow expects
-        // e.g., "yq eval '.environments.staging.host'"
-        const hostMatch = step.run.match(/\.environments\.(\w+)\.host/);
+        // e.g., "yq eval '.staging.host'"
+        const hostMatch = step.run.match(/\.(\w+)\.host/);
         if (hostMatch && hostMatch[1]) {
           const envName = hostMatch[1];
-          if (!config.environments[envName]) {
-            config.environments[envName] = {};
+          // Skip reserved config keys
+          if (!['name', 'config_version', 'github_repo', 'ssl_email', 'pipeline', 'prisma_schema', 'prisma_version', 'container_exclusions', 'trusted_plugins'].includes(envName)) {
+            if (!config.environments[envName]) {
+              config.environments[envName] = {};
+            }
           }
         }
       }
@@ -119,13 +122,15 @@ export function validateConfigSync(rootDir: string): ValidationResult {
     const workflowContent = fs.readFileSync(workflowPath, 'utf8');
     const mismatches: string[] = [];
 
+    // Extract environments from config (top-level keys)
+    const { extractEnvironments } = require('./config-helpers.js');
+    const environments = extractEnvironments(config);
+
     // Check if all environments in config have corresponding workflow logic
-    if (config.environments) {
-      for (const envName of Object.keys(config.environments)) {
-        // Check if workflow mentions this environment
-        if (!workflowContent.includes(`environment == '${envName}'`)) {
-          mismatches.push(`Environment '${envName}' not found in workflow`);
-        }
+    for (const envName of Object.keys(environments)) {
+      // Check if workflow mentions this environment
+      if (!workflowContent.includes(`environment == '${envName}'`)) {
+        mismatches.push(`Environment '${envName}' not found in workflow`);
       }
     }
 

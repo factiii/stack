@@ -117,24 +117,32 @@ class AWSPlugin {
    * Loads if config has AWS settings, prod host looks like AWS, or on init (no config)
    */
   static async shouldLoad(_rootDir: string, config: FactiiiConfig): Promise<boolean> {
-    // If config exists with AWS settings, load
-    if (config?.aws?.access_key_id && !config.aws.access_key_id.startsWith('EXAMPLE-')) {
-      return true;
-    }
+    // Dynamic import to avoid circular dependencies
+    const { extractEnvironments } = await import('../../../utils/config-helpers.js');
 
-    // If prod host looks like AWS, load
-    const prodHost = config?.environments?.prod?.host;
-    if (prodHost && !prodHost.startsWith('EXAMPLE-')) {
-      // Check if it's a public IP or AWS hostname
-      return (
-        /^(\d{1,3}\.){3}\d{1,3}$/.test(prodHost) ||
-        prodHost.includes('.compute.amazonaws.com') ||
-        prodHost.includes('.aws')
-      );
+    const environments = extractEnvironments(config);
+
+    for (const env of Object.values(environments)) {
+      // Load if environment explicitly uses 'aws' server
+      if (env.server === 'aws') {
+        // Verify it has real AWS config (not EXAMPLE values)
+        if (env.access_key_id && !env.access_key_id.startsWith('EXAMPLE-')) {
+          return true;
+        }
+      }
+
+      // Check if host looks like AWS
+      if (env.host && !env.host.startsWith('EXAMPLE-')) {
+        const isAwsHost =
+          /^(\d{1,3}\.){3}\d{1,3}$/.test(env.host) ||
+          env.host.includes('.compute.amazonaws.com') ||
+          env.host.includes('.aws');
+        if (isAwsHost) return true;
+      }
     }
 
     // On init (no config or EXAMPLE values), load as default prod option
-    return Object.keys(config).length === 0 || !config.environments;
+    return Object.keys(config).length === 0;
   }
 
   // Available configurations
@@ -255,8 +263,10 @@ class AWSPlugin {
         };
       }
     } else if (environment === 'prod' || environment === 'production') {
-      const envConfig =
-        config.environments?.prod ?? config.environments?.production;
+      const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+      const envConfig = environments.prod ?? environments.production;
+
       if (!envConfig?.host) {
         return { success: false, error: 'Production host not configured' };
       }

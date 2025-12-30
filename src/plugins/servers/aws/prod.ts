@@ -8,6 +8,7 @@ import * as path from 'path';
 import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
+import { extractEnvironments } from '../../../utils/config-helpers.js';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
@@ -237,14 +238,17 @@ export async function ensureServerReady(
   environment: string,
   options: EnsureServerReadyOptions = {}
 ): Promise<DeployResult> {
-  if (environment !== 'prod' && environment !== 'production') {
-    return { success: true, message: 'AWS only handles production' };
+  // AWS only handles prod-type environments (prod, prod2, production, etc.)
+  if (!environment.startsWith('prod') && environment !== 'production') {
+    return { success: true, message: 'AWS only handles production environments' };
   }
 
-  const envConfig =
-    config.environments?.prod ?? config.environments?.production;
+  // Get environment config (supports both v1.x and v2.0.0+ formats)
+  const environments = extractEnvironments(config);
+  const envConfig = environments[environment] ?? environments['prod'] ?? environments['production'];
+
   if (!envConfig?.host) {
-    throw new Error('Production host not configured');
+    throw new Error(`${environment} host not configured`);
   }
 
   const { commitHash, branch = 'main', repoUrl } = options;
@@ -285,12 +289,20 @@ export async function ensureServerReady(
 
 /**
  * Deploy to production server (pull from ECR)
+ *
+ * @param config - Factiii config (supports both v1.x and v2.0.0+)
+ * @param environment - Environment name (defaults to 'prod' for backward compatibility)
  */
-export async function deployProd(config: FactiiiConfig): Promise<DeployResult> {
-  const envConfig =
-    config.environments?.prod ?? config.environments?.production;
+export async function deployProd(
+  config: FactiiiConfig,
+  environment: string = 'prod'
+): Promise<DeployResult> {
+  // Get environment config (supports both v1.x and v2.0.0+ formats)
+  const environments = extractEnvironments(config);
+  const envConfig = environments[environment] ?? environments['prod'] ?? environments['production'];
+
   if (!envConfig?.host) {
-    return { success: false, error: 'Production host not configured' };
+    return { success: false, error: `${environment} host not configured` };
   }
 
   console.log(`   🚀 Deploying to production (${envConfig.host})...`);

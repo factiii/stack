@@ -15,6 +15,7 @@ import * as path from 'path';
 import yaml from 'js-yaml';
 
 import type { FactiiiConfig, EnvironmentConfig } from '../types/index.js';
+import { extractEnvironments } from '../utils/config-helpers.js';
 
 interface RepoInfo {
   name: string;
@@ -150,9 +151,12 @@ export function generateDockerCompose(allConfigs: Record<string, FactiiiConfig>)
 
   // For each repo and each environment, create a service
   for (const [repoName, config] of Object.entries(allConfigs)) {
-    if (!config.environments) continue;
+    // Extract environments
+    const environments = extractEnvironments(config);
 
-    for (const [envName, envConfig] of Object.entries(config.environments)) {
+    if (Object.keys(environments).length === 0) continue;
+
+    for (const [envName, envConfig] of Object.entries(environments)) {
       const serviceName = `${repoName}-${envName}`;
       const repoPath = path.join(factiiiDir, repoName);
 
@@ -224,9 +228,12 @@ export function generateNginx(allConfigs: Record<string, FactiiiConfig>): number
 
   // Collect all domains from all repos
   for (const [repoName, config] of Object.entries(allConfigs)) {
-    if (!config.environments) continue;
+    // Extract environments
+    const environments = extractEnvironments(config);
 
-    for (const [envName, envConfig] of Object.entries(config.environments)) {
+    if (Object.keys(environments).length === 0) continue;
+
+    for (const [envName, envConfig] of Object.entries(environments)) {
       const typedEnvConfig = envConfig as EnvironmentConfig & { port?: number };
       if (typedEnvConfig.domain) {
         routes.push({

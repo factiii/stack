@@ -401,8 +401,11 @@ class FactiiiPipeline {
       // Build Docker images before deployment
       // Skip if SKIP_BUILD is set (build was already done in workflow)
       if (!process.env.SKIP_BUILD) {
+        const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+        const environments = extractEnvironments(this._config);
+
         if (stage === 'staging') {
-          const envConfig = this._config.environments?.staging;
+          const envConfig = environments.staging;
           if (envConfig?.host) {
             console.log('   🔨 Building staging image on staging server...');
             console.log(`   📍 Target server: ${envConfig.host}`);
@@ -416,7 +419,7 @@ class FactiiiPipeline {
             console.log('   ⚠️  Staging host not configured, skipping build');
           }
         } else if (stage === 'prod') {
-          const stagingConfig = this._config.environments?.staging;
+          const stagingConfig = environments.staging;
           if (stagingConfig?.host) {
             console.log('   🔨 Building production image on staging server...');
             const buildResult = await FactiiiPipeline.buildProductionImage(

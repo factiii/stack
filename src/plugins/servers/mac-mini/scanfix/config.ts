@@ -51,14 +51,17 @@ export const configFixes: Fix[] = [
     severity: 'critical',
     description: 'Staging host not configured in factiii.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
       // Only check if staging environment is defined in config
-      const hasStagingEnv = config?.environments?.staging;
+      const hasStagingEnv = environments.staging;
       if (!hasStagingEnv) return false; // Skip check if staging not configured
 
-      return !config?.environments?.staging?.host;
+      return !environments.staging?.host;
     },
     fix: null,
-    manualFix: 'Add environments.staging.host to factiii.yml',
+    manualFix: 'Add staging.host to factiii.yml',
   },
   {
     id: 'staging-unreachable',
@@ -66,11 +69,14 @@ export const configFixes: Fix[] = [
     severity: 'critical',
     description: 'Cannot reach staging server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
       // Only check if staging environment is defined in config
-      const hasStagingEnv = config?.environments?.staging;
+      const hasStagingEnv = environments.staging;
       if (!hasStagingEnv) return false; // Skip check if staging not configured
 
-      const host = config?.environments?.staging?.host;
+      const host = environments.staging?.host;
       if (!host) return false; // Will be caught by staging-host-missing
 
       try {
@@ -90,10 +96,13 @@ export const configFixes: Fix[] = [
     severity: 'warning',
     description: 'Repository not cloned on staging server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      const hasStagingEnv = config?.environments?.staging;
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
+      const hasStagingEnv = environments.staging;
       if (!hasStagingEnv) return false;
 
-      const host = config?.environments?.staging?.host;
+      const host = environments.staging?.host;
       if (!host) return false;
 
       const repoName = config.name ?? 'app';

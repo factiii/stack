@@ -78,7 +78,7 @@ class MacMiniPlugin {
 
   // Schema for factiii.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
-    // No user config needed - uses environments.staging.host
+    // No user config needed - uses staging.host
     container_exclusions: 'array of container names to exclude from cleanup',
   };
 
@@ -92,20 +92,29 @@ class MacMiniPlugin {
    * Loads if config has staging host with local/private IP, or on init (no config)
    */
   static async shouldLoad(_rootDir: string, config: FactiiiConfig): Promise<boolean> {
-    // If explicitly configured as mac-mini server
-    if (config?.environments?.staging?.server === 'mac-mini') {
-      return true;
-    }
+    // Dynamic import to avoid circular dependencies
+    const { extractEnvironments } = await import('../../../utils/config-helpers.js');
 
-    // If config exists with staging host, check if it's local/private IP
-    const stagingHost = config?.environments?.staging?.host;
-    if (stagingHost && !stagingHost.startsWith('EXAMPLE-')) {
-      // Check if it's a local/private IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
-      return /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(stagingHost);
+    const environments = extractEnvironments(config);
+
+    for (const [name, env] of Object.entries(environments)) {
+      // Load if environment explicitly uses 'mac-mini' server
+      if (env.server === 'mac-mini') {
+        return true;
+      }
+
+      // Load if staging environment has local/private IP
+      if (name.startsWith('staging') && env.host && !env.host.startsWith('EXAMPLE-')) {
+        const isLocalIp =
+          /^192\.168\./.test(env.host) ||
+          /^10\./.test(env.host) ||
+          /^100\./.test(env.host); // Tailscale
+        if (isLocalIp) return true;
+      }
     }
 
     // On init (no config or EXAMPLE values), load as default staging option
-    return Object.keys(config).length === 0 || !config.environments;
+    return Object.keys(config).length === 0;
   }
 
   static helpText: Record<string, string> = {
@@ -206,7 +215,10 @@ class MacMiniPlugin {
         };
       }
     } else if (environment === 'staging') {
-      const envConfig = config.environments?.staging;
+      const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+      const envConfig = environments.staging;
+
       if (!envConfig?.host) {
         return { success: false, error: 'Staging host not configured' };
       }

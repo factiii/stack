@@ -32,6 +32,7 @@ import { promisify } from 'util';
 
 import yaml from 'js-yaml';
 import type { FactiiiConfig, DevSyncOptions } from '../types/index.js';
+import { extractEnvironments } from '../utils/config-helpers.js';
 
 const exec = promisify(child_process.exec);
 
@@ -153,42 +154,45 @@ function findInfrastructurePath(rootDir: string): string {
 
 /**
  * Get target environments based on config and options
+ * Supports both v1.x and v2.0.0 config formats
  */
 function getTargetEnvironments(config: FactiiiConfig, options: DevSyncOptions): string[] {
   const environments: string[] = [];
-  
+  const allEnvs = extractEnvironments(config);
+  const envNames = Object.keys(allEnvs);
+
   if (options.staging) {
-    if (config.environments?.staging) {
-      environments.push('staging');
+    // Look for any staging-type environment
+    const stagingEnv = envNames.find(name => name.startsWith('staging') || name.startsWith('stage-'));
+    if (stagingEnv) {
+      environments.push(stagingEnv);
     } else {
       console.warn('⚠️  Staging environment not configured in factiii.yml');
     }
   }
-  
+
   if (options.prod) {
-    if (config.environments?.prod || config.environments?.production) {
-      environments.push('prod');
+    // Look for any prod-type environment
+    const prodEnv = envNames.find(name => name.startsWith('prod') || name === 'production');
+    if (prodEnv) {
+      environments.push(prodEnv);
     } else {
       console.warn('⚠️  Production environment not configured in factiii.yml');
     }
   }
-  
+
   // If no specific environment specified, sync to all configured
   if (!options.staging && !options.prod) {
-    if (config.environments?.staging) {
-      environments.push('staging');
-    }
-    if (config.environments?.prod || config.environments?.production) {
-      environments.push('prod');
-    }
+    // Add all configured environments
+    environments.push(...envNames);
   }
-  
+
   if (environments.length === 0) {
     console.error('❌ No environments configured in factiii.yml');
     console.error('   Add staging and/or prod environments to factiii.yml');
     process.exit(1);
   }
-  
+
   return environments;
 }
 
@@ -377,15 +381,15 @@ async function syncToServer(
   config: FactiiiConfig,
   sshKeyPath: string
 ): Promise<void> {
-  const envConfig = environment === 'staging' 
-    ? config.environments?.staging 
-    : (config.environments?.prod || config.environments?.production);
-  
+  // Get environment config (supports both v1.x and v2.0.0 formats)
+  const allEnvs = extractEnvironments(config);
+  const envConfig = allEnvs[environment];
+
   if (!envConfig?.host) {
     console.error(`❌ ${environment} host not configured in factiii.yml`);
     process.exit(1);
   }
-  
+
   const host = envConfig.host;
   const user = envConfig.ssh_user || 'ubuntu';
   
@@ -436,14 +440,14 @@ async function deployAfterSync(
   config: FactiiiConfig,
   sshKeyPath: string
 ): Promise<void> {
-  const envConfig = environment === 'staging' 
-    ? config.environments?.staging 
-    : (config.environments?.prod || config.environments?.production);
-  
+  // Get environment config (supports both v1.x and v2.0.0 formats)
+  const allEnvs = extractEnvironments(config);
+  const envConfig = allEnvs[environment];
+
   if (!envConfig?.host) {
     return;
   }
-  
+
   const host = envConfig.host;
   const user = envConfig.ssh_user || 'ubuntu';
   const repoName = config.name || 'app';

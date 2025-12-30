@@ -14,17 +14,17 @@ export const configFixes: Fix[] = [
     severity: 'critical',
     description: 'Production host not configured in factiii.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
       // Only check if prod environment is defined in config
-      const hasProdEnv =
-        config?.environments?.prod || config?.environments?.production;
+      const hasProdEnv = environments.prod || environments.production;
       if (!hasProdEnv) return false; // Skip check if prod not configured
 
-      return (
-        !config?.environments?.prod?.host && !config?.environments?.production?.host
-      );
+      return !environments.prod?.host && !environments.production?.host;
     },
     fix: null,
-    manualFix: 'Add environments.prod.host to factiii.yml',
+    manualFix: 'Add prod.host to factiii.yml',
   },
   {
     id: 'prod-aws-config-missing',
@@ -32,15 +32,18 @@ export const configFixes: Fix[] = [
     severity: 'critical',
     description: 'AWS configuration missing in factiii.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
       // Only check if prod environment is defined in config
-      const hasProdEnv =
-        config?.environments?.prod || config?.environments?.production;
+      const hasProdEnv = environments.prod || environments.production;
       if (!hasProdEnv) return false; // Skip check if prod not configured
 
-      return !config?.aws?.access_key_id || !config?.aws?.region;
+      const prodEnv = environments.prod ?? environments.production;
+      return !prodEnv?.access_key_id || !prodEnv?.region;
     },
     fix: null,
-    manualFix: 'Add aws.access_key_id and aws.region to factiii.yml',
+    manualFix: 'Add access_key_id and region to prod environment in factiii.yml',
   },
   {
     id: 'prod-unreachable',
@@ -48,13 +51,14 @@ export const configFixes: Fix[] = [
     severity: 'critical',
     description: 'Cannot reach production server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
       // Only check if prod environment is defined in config
-      const hasProdEnv =
-        config?.environments?.prod || config?.environments?.production;
+      const hasProdEnv = environments.prod || environments.production;
       if (!hasProdEnv) return false; // Skip check if prod not configured
 
-      const host =
-        config?.environments?.prod?.host ?? config?.environments?.production?.host;
+      const host = environments.prod?.host ?? environments.production?.host;
       if (!host) return false;
 
       try {
@@ -73,8 +77,10 @@ export const configFixes: Fix[] = [
     severity: 'warning',
     description: 'Repository not cloned on production server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      const envConfig =
-        config?.environments?.prod ?? config?.environments?.production;
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
+      const envConfig = environments.prod ?? environments.production;
       if (!envConfig) return false;
       if (!envConfig?.host) return false;
 

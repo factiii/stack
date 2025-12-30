@@ -13,8 +13,11 @@ export const secretsFixes: Fix[] = [
     severity: 'critical',
     description: 'STAGING_SSH secret not found in GitHub',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
       // Only check if staging environment is defined in config
-      const hasStagingEnv = config?.environments?.staging;
+      const hasStagingEnv = environments.staging;
       if (!hasStagingEnv) return false; // Skip check if staging not configured
 
       const store = new GitHubSecretsStore({});
@@ -35,8 +38,11 @@ export const secretsFixes: Fix[] = [
     severity: 'critical',
     description: 'PROD_SSH secret not found in GitHub',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
       // Only check if prod environment is defined in config
-      const hasProdEnv = config?.environments?.prod;
+      const hasProdEnv = environments.prod;
       if (!hasProdEnv) return false; // Skip check if prod not configured
 
       const store = new GitHubSecretsStore({});
@@ -56,8 +62,14 @@ export const secretsFixes: Fix[] = [
     severity: 'warning',
     description: 'AWS_SECRET_ACCESS_KEY not found in GitHub (needed for ECR)',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      // Only check if AWS is configured
-      if (!config?.aws?.access_key_id) return false;
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
+      // Check if any environment uses AWS
+      const hasAwsEnv = Object.values(environments).some(env =>
+        env.server === 'aws' && env.access_key_id
+      );
+      if (!hasAwsEnv) return false;
 
       const store = new GitHubSecretsStore({});
       const result = await store.checkSecrets(['AWS_SECRET_ACCESS_KEY']);

@@ -23,6 +23,7 @@ import yaml from 'js-yaml';
 import { scan } from './scan.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import type { FactiiiConfig, DeployOptions, DeployResult, Stage } from '../types/index.js';
+import { extractEnvironments, getStageFromEnvironment } from '../utils/config-helpers.js';
 
 /**
  * Pipeline plugin class interface
@@ -76,6 +77,39 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   console.log('🚀 FACTIII DEPLOY');
   console.log('════════════════════════════════════════════════════════════\n');
 
+  // ============================================================
+  // CRITICAL: Environment Validation
+  // ============================================================
+  // Why this exists: Supports multiple environments per stage
+  // What breaks if changed: Invalid environments could be deployed
+  // Dependencies: extractEnvironments, getStageFromEnvironment
+  // ============================================================
+
+  // Validate environment exists in config
+  const environments = extractEnvironments(config);
+
+  if (!environments[environment]) {
+    const available = Object.keys(environments).join(', ');
+    console.log(`❌ Environment '${environment}' not found in config.`);
+    console.log(`   Available environments: ${available || 'none'}`);
+    return {
+      success: false,
+      error: `Environment '${environment}' not found. Available: ${available}`,
+    };
+  }
+
+  // Map environment name to stage (staging2 -> staging, prod2 -> prod, etc.)
+  let stage: Stage;
+  try {
+    stage = getStageFromEnvironment(environment);
+  } catch (e) {
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    console.log(`❌ ${errorMessage}`);
+    return { success: false, error: errorMessage };
+  }
+
+  console.log(`📋 Environment: ${environment} (${stage} stage)\n`);
+
   console.log('📋 Stage 1: Running pre-deploy checks...\n');
 
   // First run scan to check for blocking issues
@@ -102,7 +136,9 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   try {
     // Delegate to pipeline plugin - IT decides how to reach the stage
     const pipeline = new PipelineClass(config);
-    const result = await pipeline.deployStage(environment as Stage, { ...options, rootDir });
+    // Note: Pass the stage (staging, prod) not the environment name (staging2, prod2)
+    // The pipeline plugin handles routing based on stage
+    const result = await pipeline.deployStage(stage, { ...options, rootDir, environment });
 
     if (result.success) {
       console.log(`\n✅ Deployment to ${environment} complete!`);

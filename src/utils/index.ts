@@ -6,7 +6,6 @@
 
 export * from './ssh-helper.js';
 export * from './config-schema.js';
-export * from './config-migrations.js';
 export * from './env-validator.js';
 export * from './dns-validator.js';
 // Re-export version-check without conflicting compareVersions

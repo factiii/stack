@@ -72,37 +72,47 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
 
   // Base schema with core fields
   const schema: Record<string, unknown> = {
+    // ============================================================
+    // RESERVED CONFIG FIELDS
+    // ============================================================
     name: 'EXAMPLE-your-repo-name',
-    config_version: '1.1.0',
+    config_version: '0.1.0',
     github_repo: 'EXAMPLE-username/repo-name',
     ssl_email: 'EXAMPLE-admin@yourdomain.com',
-    aws: {
+    pipeline: 'factiii',  // Pipeline plugin (e.g., factiii for GitHub Actions)
+
+    // Optional config fields
+    prisma_schema: null, // Optional: override auto-detected schema path
+    prisma_version: null, // Optional: override auto-detected version
+
+    // ============================================================
+    // ENVIRONMENTS (top-level keys)
+    // ============================================================
+    staging: {
+      server: 'mac-mini',  // Server plugin to use
+      domain: 'EXAMPLE-staging.yourdomain.com',
+      host: 'EXAMPLE-192.168.1.100',
+      env_file: '.env.staging',
+    },
+
+    prod: {
+      server: 'aws',  // Server plugin to use
+      domain: 'EXAMPLE-yourdomain.com',
+      host: 'EXAMPLE-54.123.45.67',
+
+      // AWS-specific config (when server: aws)
       config: 'free-tier', // Options: ec2, free-tier, standard, enterprise
       access_key_id: 'EXAMPLE-AKIAXXXXXXXX',
       region: 'us-east-1',
-    },
-    plugins: ['github', 'ecr'],
-    servers: {
-      'mac-mini': {
-        plugin: 'mac-mini',
+
+      // Plugin configs for this environment
+      plugins: {
+        ecr: {
+          ecr_registry: 'EXAMPLE-123456789012.dkr.ecr.us-east-1.amazonaws.com',
+          ecr_repository: 'EXAMPLE-repo-name',
+        },
       },
     },
-    environments: {
-      staging: {
-        server: 'mac-mini',
-        domain: 'EXAMPLE-staging.yourdomain.com',
-        host: 'EXAMPLE-192.168.1.100',
-        env_file: '.env.staging',
-      },
-      prod: {
-        domain: 'EXAMPLE-yourdomain.com',
-        host: 'EXAMPLE-54.123.45.67',
-      },
-    },
-    ecr_registry: 'EXAMPLE-123456789012.dkr.ecr.us-east-1.amazonaws.com',
-    ecr_repository: 'EXAMPLE-repo-name',
-    prisma_schema: null, // Optional: override auto-detected schema path
-    prisma_version: null, // Optional: override auto-detected version
   };
 
   // Merge plugin config schemas
@@ -119,16 +129,38 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
 
   // Add helpful comments after YAML generation
   const comments = `
-# Additional server configurations (uncomment and configure as needed):
-# servers:
-#   aws-ec2-prod:
-#     plugin: aws
-#     region: us-east-1
+# ============================================================
+# ADDITIONAL ENVIRONMENTS
+# ============================================================
+# You can add as many environments as needed (staging2, prod2, qa, demo, etc.)
+# Each environment must specify a 'server' plugin and can have server-specific configs.
+#
+# Example - Additional staging environment:
+# staging2:
+#   server: mac-mini
+#   domain: staging2.yourdomain.com
+#   host: 192.168.1.101
+#   env_file: .env.staging2
+#
+# Example - Additional prod environment:
+# prod2:
+#   server: aws
+#   domain: app2.yourdomain.com
+#   host: 54.123.45.99
+#   config: free-tier
+#   access_key_id: EXAMPLE-AKIAXXXXXXXX
+#   region: us-west-2
 
-# Additional environment options (add to environments above):
-#   ssh_user: ubuntu  # Optional: override SSH user (defaults to ssh_user from factiiiAuto.yml, which defaults to ubuntu)
-#   env_file: .env.prod  # Optional: override env file name
+# ============================================================
+# ENVIRONMENT OPTIONS
+# ============================================================
+# All environments support these optional fields:
+#   ssh_user: ubuntu  # Override SSH user (defaults to factiiiAuto.yml ssh_user)
+#   env_file: .env.{environment}  # Override env file name
 
+# ============================================================
+# CONTAINER EXCLUSIONS
+# ============================================================
 # Exclude Docker containers from unmanaged container cleanup
 # Uncomment and add container names to keep them running:
 # container_exclusions:
