@@ -185,12 +185,15 @@ export function generateDockerCompose(allConfigs: Record<string, FactiiiConfig>)
       };
 
       // Add env file if exists
+      // Use relative path from factiiiDir (where docker-compose runs from)
       const envFile = path.join(
         repoPath,
         `.env.${envName === 'production' ? 'prod' : envName}`
       );
       if (fs.existsSync(envFile)) {
-        compose.services[serviceName]!.env_file!.push(envFile);
+        // Docker compose runs from ~/.factiii/, so use relative path
+        const relativeEnvFile = path.relative(factiiiDir, envFile);
+        compose.services[serviceName]!.env_file!.push(relativeEnvFile);
       }
 
       // Add ports if configured

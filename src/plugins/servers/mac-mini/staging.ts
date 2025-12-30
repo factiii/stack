@@ -132,6 +132,63 @@ async function installDependencies(
   await sshExecCommand(envConfig, `cd ${repoDir} && pnpm install`);
 }
 
+/**
+ * Write environment variables to .env file on server
+ * Handles both local (on-server) and remote (SSH) execution
+ */
+async function writeEnvFile(
+  envConfig: EnvironmentConfig,
+  repoDir: string,
+  environment: string,
+  envVarsString: string | undefined
+): Promise<void> {
+  if (!envVarsString) {
+    // If no env vars provided, skip writing (allow manual .env files)
+    return;
+  }
+
+  const envFileName = `.env.${environment === 'production' ? 'prod' : environment}`;
+  const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+
+  // Parse env vars string (newline-separated KEY=VALUE format)
+  const envVars = envVarsString
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .filter((line) => line.includes('='));
+
+  if (envVars.length === 0) {
+    console.log(`   ⚠️  No environment variables found in ${environment} secrets`);
+    return;
+  }
+
+  // Build env file content
+  const envFileContent = envVars.join('\n') + '\n';
+
+  if (isOnServer) {
+    // We're on the server - write directly
+    const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '/Users/jon');
+    const envFilePath = path.join(expandedRepoDir, envFileName);
+    
+    console.log(`   📝 Writing ${envFileName} (${envVars.length} variables)...`);
+    fs.writeFileSync(envFilePath, envFileContent, 'utf8');
+  } else {
+    // We're remote - SSH to write
+    console.log(`   📝 Writing ${envFileName} on remote server (${envVars.length} variables)...`);
+    
+    // Escape the content for shell
+    const escapedContent = envFileContent
+      .replace(/'/g, "'\\''")
+      .replace(/\n/g, '\\n');
+    
+    await sshExecCommand(
+      envConfig,
+      `cat > ${repoDir}/${envFileName} << 'ENVEOF'
+${envFileContent}ENVEOF`
+    );
+  }
+}
+
 
 /**
  * Ensure server is ready for deployment
@@ -177,11 +234,162 @@ export async function ensureServerReady(
     console.log('   Installing dependencies...');
     await installDependencies(envConfig, repoDir);
 
+    // 6. Write environment variables from GitHub secrets if provided
+    const envVarsString = process.env.STAGING_ENVS;
+    if (envVarsString) {
+      console.log('   Writing environment variables...');
+      await writeEnvFile(envConfig, repoDir, 'staging', envVarsString);
+    } else {
+      console.log('   ⚠️  STAGING_ENVS not provided, skipping env file write (using existing .env.staging if present)');
+    }
+
     return { success: true, message: 'Server ready' };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to prepare server: ${errorMessage}`);
   }
+}
+
+/**
+ * Parse DATABASE_URL to extract connection details
+ * Format: postgresql://user:password@host:port/database
+ */
+function parseDatabaseUrl(databaseUrl: string): {
+  user: string;
+  password: string;
+  host: string;
+  port: number;
+  database: string;
+} | null {
+  try {
+    const url = new URL(databaseUrl);
+    return {
+      user: url.username || 'postgres',
+      password: url.password || 'password',
+      host: url.hostname || 'localhost',
+      port: parseInt(url.port || '5432', 10),
+      database: url.pathname.slice(1) || 'postgres', // Remove leading /
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Add postgres service to docker-compose.yml for staging
+ * Reads DATABASE_URL from .env.staging to configure the postgres service
+ */
+async function addPostgresServiceForStaging(
+  envConfig: EnvironmentConfig,
+  config: FactiiiConfig
+): Promise<void> {
+  const repoName = config.name ?? 'app';
+  const repoDir = `~/.factiii/${repoName}`;
+  const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+
+  // Read .env.staging to get DATABASE_URL
+  let databaseUrl: string | null = null;
+  if (isOnServer) {
+    const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '/Users/jon');
+    const envFilePath = path.join(expandedRepoDir, '.env.staging');
+    if (fs.existsSync(envFilePath)) {
+      const envContent = fs.readFileSync(envFilePath, 'utf8');
+      const match = envContent.match(/^DATABASE_URL=(.+)$/m);
+      if (match) {
+        databaseUrl = match[1]?.trim() || null;
+      }
+    }
+  } else {
+    // Remote - read via SSH
+    try {
+      const envContent = await sshExecCommand(envConfig, `cat ${repoDir}/.env.staging`);
+      const match = envContent.match(/^DATABASE_URL=(.+)$/m);
+      if (match) {
+        databaseUrl = match[1]?.trim() || null;
+      }
+    } catch {
+      // .env.staging might not exist yet
+    }
+  }
+
+  if (!databaseUrl) {
+    console.log('   ⚠️  DATABASE_URL not found in .env.staging, skipping postgres service');
+    return;
+  }
+
+  const dbConfig = parseDatabaseUrl(databaseUrl);
+  if (!dbConfig) {
+    console.log('   ⚠️  Could not parse DATABASE_URL, skipping postgres service');
+    return;
+  }
+
+  const factiiiDir = isOnServer
+    ? path.join(process.env.HOME ?? '/Users/jon', '.factiii')
+    : '~/.factiii';
+  const composePath = isOnServer
+    ? path.join(factiiiDir, 'docker-compose.yml')
+    : '~/.factiii/docker-compose.yml';
+
+  // Read docker-compose.yml
+  let composeContent: string;
+  if (isOnServer) {
+    if (!fs.existsSync(composePath)) {
+      console.log('   ⚠️  docker-compose.yml not found, skipping postgres service');
+      return;
+    }
+    composeContent = fs.readFileSync(composePath, 'utf8');
+  } else {
+    composeContent = await sshExecCommand(envConfig, `cat ${composePath}`);
+  }
+
+  const compose = yaml.load(composeContent) as {
+    services?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+
+  // Check if postgres service already exists
+  if (compose.services && 'postgres' in compose.services) {
+    console.log('   ℹ️  Postgres service already exists in docker-compose.yml');
+    return;
+  }
+
+  // Add postgres service
+  if (!compose.services) {
+    compose.services = {};
+  }
+
+  compose.services.postgres = {
+    image: 'postgres:16-alpine',
+    container_name: 'factiii_postgres',
+    restart: 'unless-stopped',
+    environment: {
+      POSTGRES_USER: dbConfig.user,
+      POSTGRES_PASSWORD: dbConfig.password,
+      POSTGRES_DB: dbConfig.database,
+    },
+    ports: [`${dbConfig.port}:5432`],
+    volumes: ['postgres_data:/var/lib/postgresql/data'],
+    networks: ['factiii'],
+  };
+
+  // Add volumes section if it doesn't exist
+  if (!compose.volumes) {
+    compose.volumes = {};
+  }
+  (compose.volumes as Record<string, unknown>).postgres_data = {};
+
+  // Write back
+  const updatedContent = yaml.dump(compose, { lineWidth: -1 });
+  if (isOnServer) {
+    fs.writeFileSync(composePath, updatedContent);
+  } else {
+    await sshExecCommand(
+      envConfig,
+      `cat > ${composePath} << 'EOF'\n${updatedContent}\nEOF`
+    );
+  }
+
+  console.log(`   ✅ Added postgres service (port ${dbConfig.port}, database: ${dbConfig.database})`);
 }
 
 /**
@@ -314,6 +522,10 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
       console.log('   🔄 Updating docker-compose.yml with staging image tag...');
       await updateComposeForStagingImage(envConfig, config);
 
+      // Step 2.5: Add postgres service for staging if DATABASE_URL is configured
+      console.log('   🔄 Adding postgres service for staging...');
+      await addPostgresServiceForStaging(envConfig, config);
+
       // Step 3: Deploy using unified docker-compose.yml
       const unifiedCompose = path.join(factiiiDir, 'docker-compose.yml');
       if (!fs.existsSync(unifiedCompose)) {
@@ -352,6 +564,10 @@ export async function deployStaging(config: FactiiiConfig): Promise<DeployResult
       // Step 2: Update docker-compose.yml to use pre-built staging image
       console.log('   🔄 Updating docker-compose.yml with staging image tag...');
       await updateComposeForStagingImage(envConfig, config);
+
+      // Step 2.5: Add postgres service for staging if DATABASE_URL is configured
+      console.log('   🔄 Adding postgres service for staging...');
+      await addPostgresServiceForStaging(envConfig, config);
 
       // Step 3: Deploy using unified docker-compose.yml
       console.log('   🚀 Starting containers with unified docker-compose.yml on remote server...');

@@ -3,6 +3,8 @@
  * Handles production deployment, server preparation, and production-specific helpers
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
@@ -104,6 +106,58 @@ async function pullAndCheckout(
   }
 
   await sshExecCommand(envConfig, commands.join(' && '));
+}
+
+/**
+ * Write environment variables to .env file on server
+ * Handles both local (on-server) and remote (SSH) execution
+ */
+async function writeEnvFile(
+  envConfig: EnvironmentConfig,
+  repoDir: string,
+  environment: string,
+  envVarsString: string | undefined
+): Promise<void> {
+  if (!envVarsString) {
+    // If no env vars provided, skip writing (allow manual .env files)
+    return;
+  }
+
+  const envFileName = `.env.${environment === 'production' ? 'prod' : environment}`;
+  const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+
+  // Parse env vars string (newline-separated KEY=VALUE format)
+  const envVars = envVarsString
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .filter((line) => line.includes('='));
+
+  if (envVars.length === 0) {
+    console.log(`   ⚠️  No environment variables found in ${environment} secrets`);
+    return;
+  }
+
+  // Build env file content
+  const envFileContent = envVars.join('\n') + '\n';
+
+  if (isOnServer) {
+    // We're on the server - write directly
+    const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '/home/ubuntu');
+    const envFilePath = path.join(expandedRepoDir, envFileName);
+    
+    console.log(`   📝 Writing ${envFileName} (${envVars.length} variables)...`);
+    fs.writeFileSync(envFilePath, envFileContent, 'utf8');
+  } else {
+    // We're remote - SSH to write
+    console.log(`   📝 Writing ${envFileName} on remote server (${envVars.length} variables)...`);
+    
+    await sshExecCommand(
+      envConfig,
+      `cat > ${repoDir}/${envFileName} << 'ENVEOF'
+${envFileContent}ENVEOF`
+    );
+  }
 }
 
 /**
@@ -210,6 +264,15 @@ export async function ensureServerReady(
     console.log('   Syncing repository...');
     await ensureRepoCloned(envConfig, repoUrl, repoDir, repoName);
     await pullAndCheckout(envConfig, repoDir, branch, commitHash);
+
+    // 4. Write environment variables from GitHub secrets if provided
+    const envVarsString = process.env.PROD_ENVS;
+    if (envVarsString) {
+      console.log('   Writing environment variables...');
+      await writeEnvFile(envConfig, repoDir, 'prod', envVarsString);
+    } else {
+      console.log('   ⚠️  PROD_ENVS not provided, skipping env file write (using existing .env.prod if present)');
+    }
 
     // Note: Production doesn't install dependencies - it pulls pre-built images from ECR
 

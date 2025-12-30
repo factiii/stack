@@ -72,6 +72,7 @@ jobs:
           COMMIT_HASH: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
           GITHUB_REPO: ${{ github.repository }}
+          STAGING_ENVS: ${{ secrets.STAGING_ENVS }}
         run: |
           if [ -z "$HOST" ]; then
             echo "❌ Missing host in factiii.yml: environments.staging.host"
@@ -80,12 +81,19 @@ jobs:
           
           echo "🚀 Deploying to staging ($HOST)..."
           
+          # Prepare environment variables for SSH (base64 encode to handle special characters)
+          ENV_VARS_EXPORT=""
+          if [ -n "$STAGING_ENVS" ]; then
+            ENV_VARS_B64=$(echo -n "$STAGING_ENVS" | base64 -w 0)
+            ENV_VARS_EXPORT="STAGING_ENVS=\$(echo '$ENV_VARS_B64' | base64 -d) && export STAGING_ENVS && "
+          fi
+          
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
             "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
              REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
              if [ -d \"\$REPO_DIR\" ]; then \
                cd \"\$REPO_DIR\" && \
-               GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+               $ENV_VARS_EXPORT GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
                npx factiii deploy --staging --commit $COMMIT_HASH --branch $BRANCH; \
              else \
                echo \"❌ Repo directory not found at \$REPO_DIR\"; \

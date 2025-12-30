@@ -150,6 +150,8 @@ jobs:
           COMMIT_HASH: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
           GITHUB_REPO: ${{ github.repository }}
+          STAGING_ENVS: ${{ inputs.environment == 'staging' && secrets.STAGING_ENVS || '' }}
+          PROD_ENVS: ${{ inputs.environment == 'prod' && secrets.PROD_ENVS || '' }}
         run: |
           if [ -z "$HOST" ]; then
             echo "❌ Missing host in factiii.yml: environments.$ENVIRONMENT.host"
@@ -164,12 +166,22 @@ jobs:
             SKIP_BUILD_FLAG="SKIP_BUILD=true"
           fi
           
+          # Prepare environment variables for SSH (base64 encode to handle special characters)
+          ENV_VARS_EXPORT=""
+          if [ "$ENVIRONMENT" == "staging" ] && [ -n "$STAGING_ENVS" ]; then
+            ENV_VARS_B64=$(echo -n "$STAGING_ENVS" | base64 -w 0)
+            ENV_VARS_EXPORT="STAGING_ENVS=\$(echo '$ENV_VARS_B64' | base64 -d) && export STAGING_ENVS && "
+          elif [ "$ENVIRONMENT" == "prod" ] && [ -n "$PROD_ENVS" ]; then
+            ENV_VARS_B64=$(echo -n "$PROD_ENVS" | base64 -w 0)
+            ENV_VARS_EXPORT="PROD_ENVS=\$(echo '$ENV_VARS_B64' | base64 -d) && export PROD_ENVS && "
+          fi
+          
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
             "export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
              REPO_DIR=\"\$HOME/.factiii/$REPO_NAME\" && \
              if [ -d \"\$REPO_DIR\" ]; then \
                cd \"\$REPO_DIR\" && \
-               $SKIP_BUILD_FLAG GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
+               $ENV_VARS_EXPORT$SKIP_BUILD_FLAG GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
                npx factiii deploy --$ENVIRONMENT --commit $COMMIT_HASH --branch $BRANCH; \
              else \
                echo \"❌ Repo directory not found at \$REPO_DIR\"; \
