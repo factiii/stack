@@ -1,413 +1,170 @@
-# Factiii Stack Infrastructure Package - Development Rules
+# Factiii Stack Infrastructure - AI Development Rules
 
-## ⚠️ IMPORTANT: This is the FACTIII STACK package itself
-This repository IS the `@factiii/stack` infrastructure management tool.
-**DO NOT run `npx factiii` commands inside this repository.**
+## Project Identity
+This repository IS the `@factiii/stack` CLI tool. It is NOT an application that uses the tool.
 
+## Hard Rules (Never Violate)
 
-## ⚠️ CRITICAL: DO NOT EDIT FILES OUTSIDE THIS REPOSITORY
-**NEVER use file editing tools (StrReplace, Write, EditNotebook, etc.) on files outside `/Users/jon/infrastructure/`.**
+### Boundaries
+- NEVER edit files outside `/Users/jon/infrastructure/`
+- NEVER run `npx factiii` commands in this repository (test in app repos)
+- NEVER run `git add`, `git commit`, `git push` without explicit user approval
+- NEVER delete or modify existing code comments without asking
 
-This package is tested in application repositories (like `/Users/jon/factiii/`), but you must NEVER edit files in those repos directly. Instead:
-- Tell the user what changes to make in their application repo
-- Only edit files within `/Users/jon/infrastructure/` (the Factiii Stack package itself)
-- Use read-only tools (Read, Grep, Shell with read-only commands) to inspect application repos
+### When Testing Changes
+1. Edit source files in `src/`
+2. Test in a SEPARATE app repository: `cd /path/to/app && pnpm link /Users/jon/infrastructure && npx factiii`
 
-## ⚠️ CRITICAL: DO NOT COMMIT CODE WITHOUT EXPLICIT PERMISSION
-**NEVER use git commit or git push commands unless the user explicitly asks you to commit/push.**
+## Tech Stack
+- Runtime: Node.js with TypeScript
+- Package manager: pnpm
+- CLI framework: Commander.js
+- Config format: YAML (factiii.yml, factiiiAuto.yml)
+- Deployment: Docker, GitHub Actions, AWS ECR
 
-- You may make file edits, run builds, and run tests
-- You may use `git status`, `git diff`, `git log` and other read-only git commands
-- You MUST NOT run `git add`, `git commit`, `git push`, or any other git commands that modify the repository
-- When changes are complete, tell the user what was changed and ask if they want you to commit
-- Only commit/push after the user explicitly approves
+## Architecture
 
-Commands like `npx factiii`, `npx factiii deploy`, etc. should ONLY be run in APPLICATION repositories that consume this package, not here.
+### Plugin Categories
+| Category | Purpose | Examples |
+|----------|---------|----------|
+| SECRETS | Credential storage | github, aws-sm, vault |
+| SERVERS | Runtime environments | mac-mini, ubuntu-server, aws-free-tier |
+| FRAMEWORKS | Deployable apps | expo, nextjs, prisma-trpc-server |
+| ADDONS | Framework extensions | auth, payments, storage |
+| PIPELINES | CI/CD systems | github-actions, gitlab-ci |
 
-## Architecture Overview
+### Stage Execution Pattern
+Commands use stages: `--dev`, `--secrets`, `--staging`, `--prod`
 
-**Philosophy:** Auto-scanning T3 stack with plugins.
+For each stage, pipeline decides execution:
+- `via: 'local'` - run locally
+- `via: 'workflow'` - trigger GitHub workflow
+- `reachable: false` - show error, stop
 
-Factiii Stack scans application repositories to:
-- Detect stack components (Next.js, Expo, tRPC, Prisma)
-- Auto-configure deployment settings
-- Generate `factiiiAuto.yml` with detected values
-- Validate `factiii.yml` manual settings
-- Deploy to staging (Mac) and production (Ubuntu) servers
+**Scan/fix functions run LOCALLY only:**
+- NO SSH calls in fix functions
+- Use `execSync` for local commands
+- CLI/Pipeline handles remote execution context
 
-**CRITICAL: Always follow [STANDARDS.md](STANDARDS.md) for all patterns, conventions, and architectural decisions.**
+### Configuration Files
+| File | Purpose | Editable By |
+|------|---------|-------------|
+| `factiii.yml` | Manual settings | User |
+| `factiiiAuto.yml` | Auto-detected settings | Factiii (user can OVERRIDE) |
 
-**CRITICAL: Always reference [README.md](README.md) for user-facing documentation and usage patterns.**
+**Required values:** Prefix with `EXAMPLE-` (blocks deployment until replaced)
+**Override pattern:** `detected_value OVERRIDE custom_value`
 
-## Stage Execution Pattern (CRITICAL - BROKEN 500+ TIMES)
+## CLI Commands
 
-**How commands work:**
-1. User specifies stage: `--dev`, `--secrets`, `--staging`, `--prod`
-2. Command groups plugin fixes by stage
-3. For each stage, asks pipeline: `canReach(stage)?`
-   - `via: 'local'` → run locally
-   - `via: 'workflow'` → pipeline triggers workflow with `--staging` or `--prod`
-   - `reachable: false` → show error, stop
-
-**Individual fix scan/fix functions run LOCALLY only:**
-- NO SSH calls in fix functions  
-- Assume running locally on target machine
-- Use execSync for local commands
-
-**CLI/Pipeline handles execution context:**
-- CLI asks pipeline `canReach()` for each stage
-- Pipeline decides local vs workflow
-- Workflows SSH ONCE, run with `GITHUB_ACTIONS=true npx factiii [cmd] --staging`
-
-**CRITICAL: Workflows MUST specify --staging or --prod:**
-```
-GITHUB_ACTIONS=true npx factiii fix --staging   # Correct
-npx factiii fix                                  # WRONG - tries all stages
-```
-
-**Result format:**
-- Clean per-stage breakdown WITH issue details
-- Shows WHAT was fixed and HOW to fix manual issues
-- Never just counts - always show descriptions
-
-## Plugin Architecture
-
-**5 Plugin Categories:**
-1. **SECRETS** - Where credentials are stored (github, aws-sm, vault)
-2. **SERVERS** - Where code runs (mac-mini, ubuntu-server, aws-free-tier, vercel)
-3. **FRAMEWORKS** - What gets deployed (expo, nextjs, prisma-trpc-server, postgres)
-4. **ADDONS** - Extensions to frameworks (auth, payments, storage)
-5. **PIPELINES** - How code flows (github-actions, gitlab-ci)
-
-**Plugin Interfaces:** `src/plugins/interfaces/`
-- `server-provider.js` - Base class for server plugins
-- `secret-store.js` - Base class for secret plugins
-- `app-framework.js` - Base class for framework plugins
-- `addon.js` - Base class for addon plugins
-- `pipeline.js` - Base class for pipeline plugins
-
-## Configuration Pattern
-
-**Two configuration files:**
-- `factiii.yml` - Manual settings (user edits, `EXAMPLE-` prefix for required values)
-- `factiiiAuto.yml` - Auto-detected settings (Factiii generates, override with `OVERRIDE` keyword)
-
-**Secrets vs Config (Minimal Secrets):**
-- GitHub Secrets: Only `{ENV}_SSH` and `AWS_SECRET_ACCESS_KEY`
-- factiii.yml: `aws.access_key_id`, `aws.region`, `environments.{env}.host`
-- factiiiAuto.yml: `ssh_user` (defaults to ubuntu)
-
-**Example factiii.yml:**
-```yaml
-name: factiii
-aws:
-  access_key_id: AKIAXXXXXXXXXXXXXXXX
-  region: us-east-1
-environments:
-  staging:
-    domain: staging.factiii.com
-    host: 192.168.1.100
-```
-
-**Example factiiiAuto.yml override:**
-```yaml
-ssh_user: ubuntu OVERRIDE admin
-dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
-```
-
-## Three Commands Only
-
-| Command | Purpose |
-|---------|---------|
-| `npx factiii` | Scan + auto-fix local dev, check-only for remote |
-| `npx factiii fix` | Explicitly fix ALL environments including remote |
-| `npx factiii deploy` | Run scan check, then deploy if checks pass |
-
-**No separate `validate` command** - `npx factiii` handles all validation.
+| Command | Behavior |
+|---------|----------|
+| `npx factiii` | Scan + auto-fix local, check-only remote |
+| `npx factiii fix` | Fix ALL environments including remote |
+| `npx factiii deploy` | Run scan, deploy if checks pass |
 
 ## Project Structure
 ```
-/Users/jon/infrastructure/
-├── bin/factiii                 # CLI entry point (npx factiii)
-├── src/
-│   ├── cli/                    # Command implementations
-│   │   ├── scan.js            # Scan + auto-fix local (default command)
-│   │   ├── fix.js        # Fix all environments
-│   │   ├── deploy.js          # Deploy to servers
-│   │   ├── undeploy.js        # Remove from servers
-│   │   └── generate-workflows.js  # Generate .github/workflows
-│   ├── generators/            # Config generators
-│   │   ├── generate-compose.js    # Docker compose generation
-│   │   ├── generate-nginx.js      # Nginx config generation
-│   │   ├── generate-factiii-auto.js  # factiiiAuto.yml generation
-│   │   └── merge-configs.js       # Multi-repo config merging
-│   ├── plugins/               # Plugin system
-│   │   ├── interfaces/        # Base classes for all plugins
-│   │   ├── server/            # Server provider plugins
-│   │   ├── secrets/           # Secret store plugins
-│   │   └── approved.json      # Approved external plugins list
-│   ├── utils/                 # Utilities
-│   │   ├── github-secrets.js      # GitHub API integration
-│   │   ├── env-validator.js       # Environment file validation
-│   │   ├── server-check.js        # SSH server checks
-│   │   └── deployment-report.js   # Deployment reporting
-│   └── workflows/             # Workflow templates (generated for repos)
-│       ├── factiii-deploy.yml     # Manual deployment workflow
-│       ├── factiii-staging.yml    # Auto-deploy on push to main
-│       ├── factiii-production.yml # Auto-deploy on merge to production
-│       └── factiii-undeploy.yml   # Manual cleanup trigger
-├── scripts/                   # Bash scripts for servers
-├── templates/                 # Config templates
-├── STANDARDS.md               # Architecture standards
-├── README.md                  # User documentation
-└── test/                     # Test suites
+src/
+├── cli/                    # Command implementations
+│   ├── scan.js            # Default command
+│   ├── fix.js             # Fix all environments
+│   └── deploy.js          # Deploy to servers
+├── generators/            # Config generators
+│   ├── generate-compose.js
+│   ├── generate-nginx.js
+│   └── generate-factiii-auto.js
+├── plugins/
+│   ├── interfaces/        # Base classes (server-provider.js, secret-store.js, etc.)
+│   ├── servers/           # Server plugins
+│   ├── secrets/           # Secret store plugins
+│   └── approved.json      # Approved external plugins
+├── utils/                 # Shared utilities
+└── workflows/             # GitHub Actions templates
 ```
 
-## Development Workflow
+Key files:
+- `bin/factiii` - CLI entry point
+- `STANDARDS.md` - Architecture decisions (always reference)
+- `README.md` - User documentation
 
-### Testing Changes
-1. Make changes to source files in `src/`
-2. Test in a SEPARATE application repository:
-   ```bash
-   cd /path/to/test-app
-   pnpm link /Users/jon/infrastructure  # Link local package
-   npx factiii                     # Test the command
-   ```
-3. Do NOT run `npx factiii` inside `/Users/jon/infrastructure`
+## Workflow Rules
 
-### Key Files to Edit
-- **CLI Commands**: `src/cli/*.js` - Command implementations
-- **Generators**: `src/generators/*.js` - Config generation
-- **Plugins**: `src/plugins/` - Plugin implementations
-- **Workflow Templates**: `src/workflows/*.yml` - GitHub Actions
-- **Package Entry**: `bin/factiii` - Main CLI entry point
+GitHub workflow YML files must be ultra-thin.
 
-## Scan Command Behavior
-
-**Local dev (where command runs):**
-- Auto-fix allowed (delete/modify files, install deps)
-- Developers understand git and can revert
-
-**Remote environments (staging/prod):**
-- Check-only mode
-- NO modifications via SSH
-- Only `npx factiii fix` can modify remote
-
-## Deploy Command Behavior
-
-**Triggers GitHub workflow for deployment:**
-- Validates config locally first
-- Checks GitHub secrets exist (`{ENV}_SSH`, `AWS_SECRET_ACCESS_KEY`)
-- Triggers `factiii-deploy.yml` workflow
-- Workflow builds, pushes to ECR, and deploys via SSH
-
-**Blocking failures:**
-- `EXAMPLE-` values present in factiii.yml
-- Invalid YAML syntax
-- Missing GitHub secrets
-- Missing host in factiii.yml
-
-## ⚠️ CRITICAL: Workflow YML Files Must Be Ultra-Thin
-
-**GitHub workflow YML files should ONLY:**
-- Trigger the deployment
+**Workflows MUST:**
+- Trigger deployment
 - Pass secrets (SSH keys, AWS credentials)
 - SSH to server and run CLI command
+- Use `GITHUB_ACTIONS=true` and `--staging`/`--prod` flags
 
-**Workflows should NEVER contain:**
-- Server setup logic (Node.js, Docker, git installation)
-- Repository cloning/pulling
+**Workflows MUST NOT contain:**
+- Server setup logic
+- Repository cloning
 - Dependency installation
 - Build logic
-- Any bash scripts longer than 5 lines
+- Bash scripts longer than 5 lines
 
-**Why?** All logic belongs in plugins (scan/fix/deploy methods), not workflows.
-
-**Correct workflow pattern:**
+**Correct pattern:**
 ```yaml
 ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
-  "GITHUB_ACTIONS=true COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-   npx factiii deploy --staging --commit=$COMMIT_HASH --branch=$BRANCH"
+  "GITHUB_ACTIONS=true npx factiii deploy --staging"
 ```
 
-**The CLI handles everything:**
-1. deploy.js runs scan first (checks all plugins for issues)
-2. If issues found: abort or fix (depending on command)
-3. If no issues: calls server plugin's ensureServerReady() then deploy()
+**Why:** All logic belongs in plugins, not workflows. Exception: Node.js bootstrap (chicken-and-egg).
 
-**Each plugin owns its checks:**
-- Pipeline plugin: Checks Node.js availability on servers
-- Server plugins: Check Docker, git, pnpm
-- Framework plugins: Check dependencies, configs
+## Code Patterns
 
-All checks merge together in the scan phase.
-
-
-## GitHub Actions Workflows
-
-**Factiii generates workflows for repos:**
-- `factiii-deploy.yml` - Manual deployment triggered by `npx factiii deploy`
-- `factiii-fix.yml` - Fix triggered by `npx factiii fix`
-- `factiii-scan.yml` - Scan triggered by `npx factiii scan`
-- `factiii-cicd-staging.yml` - Auto-deploy on push to main
-- `factiii-cicd-prod.yml` - Auto-deploy on push to prod
-- `factiii-undeploy.yml` - Manual cleanup trigger
-
-
-**Workflow responsibilities (ultra-thin):**
-1. Read configuration from factiii.yml
-2. Setup SSH keys from GitHub Secrets
-3. **Bootstrap Node.js (one-time prerequisite)** - Check if Node.js exists, install if missing
-4. SSH to server and execute `GITHUB_ACTIONS=true npx factiii deploy --staging`
-5. Pass environment variables: COMMIT_HASH, BRANCH, GITHUB_REPO
-
-**Why workflows bootstrap Node.js:**
-- Chicken-and-egg problem: `npx factiii` requires Node.js to run
-- Workflows handle this one-time prerequisite check
-- Plugins verify Node.js is present for ongoing operations
-- After bootstrap, all logic lives in plugins (not workflows)
-
-**CRITICAL: Workflows MUST use GITHUB_ACTIONS=true and --staging/--prod:**
-```bash
-# Correct:
-GITHUB_ACTIONS=true npx factiii fix --staging
-
-# WRONG - will try all stages and may trigger more workflows:
-npx factiii fix
-```
-
-**Workflow reads config from:**
-- `factiii.yml`: aws.access_key_id, aws.region, environments.{env}.host
-- `factiiiAuto.yml`: ssh_user, dockerfile, prisma settings
-- GitHub Secrets: {ENV}_SSH, AWS_SECRET_ACCESS_KEY
-
-**Staging (main branch):**
-- PR to main → auto-deploy to staging
-- Flow: test → build → push to ECR → deploy container
-
-**Production (production branch):**
-- Merge to production triggers full deploy
-- Flow: test → build → push to ECR → backup DB → deploy → migrations
-
-## Common Fixes & Patterns
-
-### YAML Syntax in Workflows
-❌ BAD (causes YAML errors):
-```javascript
-console.log(`Value: ${variable}`)
-```
-
-✅ GOOD:
-```javascript
-console.log('Value: ' + variable)
-```
-
-### File Generation Pattern
-Always check if content changed before writing:
+### When generating files
 ```javascript
 const exists = fs.existsSync(outputPath);
 if (exists) {
-  const existingContent = fs.readFileSync(outputPath, 'utf8');
-  if (existingContent === newContent) {
-    console.log('⏭️  Unchanged');
-    return; // Skip write
-  }
+  const existing = fs.readFileSync(outputPath, 'utf8');
+  if (existing === newContent) return; // Skip if unchanged
 }
 fs.writeFileSync(outputPath, newContent);
 ```
 
-### EXAMPLE- Pattern for Required Settings
-```yaml
-# factiii.yml - user must replace EXAMPLE- values
-name: EXAMPLE-factiii
-ssl_email: EXAMPLE-admin@yourdomain.com
+### When writing YAML templates
+Avoid template literals with `${}` - causes YAML parse errors:
+```javascript
+// BAD
+console.log(`Value: ${variable}`)
+
+// GOOD
+console.log('Value: ' + variable)
 ```
 
-Factiii blocks deployment if any `EXAMPLE-` values remain.
-
-### OVERRIDE Pattern for Auto-Detected Settings
-```yaml
-# factiiiAuto.yml - user can override detected values
-dockerfile: apps/server/Dockerfile OVERRIDE custom/Dockerfile
+### When adding critical code
+Add protection comments:
+```javascript
+// ============================================================
+// CRITICAL: [Brief description]
+// ============================================================
+// Why: [Purpose]
+// Breaks if changed: [Impact]
+// ============================================================
 ```
 
-Factiii warns if auto-detected != deployed (unexpected drift).
+## Common Mistakes to Avoid
 
-## External Plugins
+- Running `npx factiii` in this repo instead of an app repo
+- Adding SSH calls inside scan/fix functions (pipeline handles this)
+- Running workflows without `GITHUB_ACTIONS=true --staging`/`--prod`
+- Putting server setup logic in workflow YML files
+- Forgetting `EXAMPLE-` prefix on required factiii.yml values
+- Deleting comments without understanding their purpose
 
-**Approved plugins:** Listed in `src/plugins/approved.json`
-- Approved plugins load without warnings
-- Unapproved plugins show a warning but still work
-- Users can add to `trusted_plugins` in factiii.yml to suppress warnings
+## When User Asks To...
 
-**Creating plugins:**
-1. Extend appropriate base class from `src/plugins/interfaces/`
-2. Implement required methods (scanDev, fixDev, deploy)
-3. Export with static `id` and `category` properties
-4. Publish to npm as `@factiii/stack-plugin-*` or custom name
+| Request | Action |
+|---------|--------|
+| Test a change | Link package to app repo, test there |
+| Edit app repo files | Explain what to change, don't edit directly |
+| Commit changes | Ask for confirmation first |
+| Add new plugin | Extend base class from `src/plugins/interfaces/` |
+| Debug workflow | Check for `GITHUB_ACTIONS=true` and stage flag |
 
-## Future: Plugin Roadmap
-
-Plugins will be extracted from the base package one by one:
-1. Phase 1: Base Factiii Stack only (current)
-2. Phase 2: Expo plugin
-3. Phase 3: Prisma/tRPC plugin
-4. Phase 4: AWS Free Tier plugin
-5. Phase 5: Next.js/Vercel plugin
-6. Phase 6: Next.js/Server plugin
-
-## Related Documentation
+## Reference Documents
+- [STANDARDS.md](STANDARDS.md) - Architecture patterns and conventions
 - [README.md](README.md) - User-facing documentation
-- [STANDARDS.md](STANDARDS.md) - Complete architecture standards
-
----
-
-Remember: This is the TOOL, not an app that uses the tool.
-Test all commands in separate application repositories!
-
-## ⚠️ CRITICAL: Code Comments Must Be Preserved
-
-**NEVER delete or modify existing comments in code:**
-- All comments in the codebase serve a purpose (documentation, warnings, explanations)
-- Comments may contain critical architectural decisions or workarounds
-- Comments may explain why code exists in a specific form
-- When refactoring, preserve all comments and update them if the code changes
-- If you're unsure about a comment, ask the user before removing it
-
-**ALWAYS respect comments in code:**
-- Read and understand comments before making changes
-- Comments may indicate intentional design decisions that should not be changed
-- Comments may warn about breaking changes or dependencies
-- Comments may explain non-obvious behavior or edge cases
-- If a comment says "DO NOT CHANGE" or similar, respect it completely
-
-**When adding new code:**
-- Add comments to explain complex logic, non-obvious behavior, or architectural decisions
-- Follow the existing comment style in the file
-- Use protection comments (see below) for critical code sections
-
-## Code Protection Comments
-
-**When implementing new features or critical logic, ALWAYS add protection comments:**
-
-**Format:**
-```
-// ============================================================
-// CRITICAL: [Brief description of what this does]
-// ============================================================
-// Why this exists: [1-2 sentences explaining the purpose]
-// What breaks if changed: [What will fail]
-// Dependencies: [What depends on this]
-// ============================================================
-```
-
-**Examples of critical code that needs protection:**
-- Filters that prevent operations (like workflow filter in scan.ts)
-- Dependency checks (like GITHUB_TOKEN check in pipeline)
-- Security-related logic
-- Architecture decisions that aren't obvious
-
-**Keep comments concise but informative:**
-- Explain WHY, not just WHAT
-- Mention what breaks if changed
-- Note any non-obvious dependencies
