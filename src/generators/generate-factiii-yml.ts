@@ -90,15 +90,13 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
     // ============================================================
     staging: {
       server: 'mac-mini',  // Server plugin to use
-      domain: 'EXAMPLE-staging.yourdomain.com',
-      host: 'EXAMPLE-192.168.1.100',
+      domain: 'EXAMPLE-staging.yourdomain.com',  // Used for nginx AND SSH
       env_file: '.env.staging',
     },
 
     prod: {
       server: 'aws',  // Server plugin to use
-      domain: 'EXAMPLE-yourdomain.com',
-      host: 'EXAMPLE-54.123.45.67',
+      domain: 'EXAMPLE-yourdomain.com',  // Used for nginx AND SSH
 
       // AWS-specific config (when server: aws)
       config: 'free-tier', // Options: ec2, free-tier, standard, enterprise
@@ -139,14 +137,12 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
 # staging2:
 #   server: mac-mini
 #   domain: staging2.yourdomain.com
-#   host: 192.168.1.101
 #   env_file: .env.staging2
 #
 # Example - Additional prod environment:
 # prod2:
 #   server: aws
 #   domain: app2.yourdomain.com
-#   host: 54.123.45.99
 #   config: free-tier
 #   access_key_id: EXAMPLE-AKIAXXXXXXXX
 #   region: us-west-2

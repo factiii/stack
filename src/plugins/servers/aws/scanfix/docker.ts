@@ -75,7 +75,7 @@ export const dockerFixes: Fix[] = [
       const envConfig =
         config?.environments?.prod ?? config?.environments?.production;
       if (!envConfig) return false; // Skip check if prod not configured
-      if (!envConfig?.host) return false;
+      if (!envConfig?.domain) return false;
 
       // Executed locally - SSH handled by CLI wrapper
       try {

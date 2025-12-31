@@ -46,10 +46,10 @@ export const configFixes: Fix[] = [
 
   // STAGING STAGE FIXES
   {
-    id: 'staging-host-missing',
+    id: 'staging-domain-missing',
     stage: 'staging',
     severity: 'critical',
-    description: 'Staging host not configured in factiii.yml',
+    description: 'Staging domain not configured in factiii.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -58,10 +58,10 @@ export const configFixes: Fix[] = [
       const hasStagingEnv = environments.staging;
       if (!hasStagingEnv) return false; // Skip check if staging not configured
 
-      return !environments.staging?.host;
+      return !environments.staging?.domain;
     },
     fix: null,
-    manualFix: 'Add staging.host to factiii.yml',
+    manualFix: 'Add staging.domain to factiii.yml',
   },
   {
     id: 'staging-unreachable',
@@ -76,12 +76,12 @@ export const configFixes: Fix[] = [
       const hasStagingEnv = environments.staging;
       if (!hasStagingEnv) return false; // Skip check if staging not configured
 
-      const host = environments.staging?.host;
-      if (!host) return false; // Will be caught by staging-host-missing
+      const domain = environments.staging?.domain;
+      if (!domain) return false; // Will be caught by staging-domain-missing
 
       try {
-        // Try to ping the host
-        execSync(`ping -c 1 -W 3 ${host}`, { stdio: 'pipe' });
+        // Try to ping the domain
+        execSync(`ping -c 1 -W 3 ${domain}`, { stdio: 'pipe' });
         return false;
       } catch {
         return true;
@@ -102,8 +102,8 @@ export const configFixes: Fix[] = [
       const hasStagingEnv = environments.staging;
       if (!hasStagingEnv) return false;
 
-      const host = environments.staging?.host;
-      if (!host) return false;
+      const domain = environments.staging?.domain;
+      if (!domain) return false;
 
       const repoName = config.name ?? 'app';
 

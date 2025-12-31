@@ -363,8 +363,8 @@ export async function ensureServerReady(
   const environments = extractEnvironments(config);
   const envConfig = environments[environment];
 
-  if (!envConfig?.host) {
-    throw new Error(`${environment} host not configured`);
+  if (!envConfig?.domain) {
+    throw new Error(`${environment} domain not configured`);
   }
 
   const { commitHash, branch = 'main', repoUrl } = options;
@@ -659,11 +659,11 @@ export async function deployStaging(
   const environments = extractEnvironments(config);
   const envConfig = environments[environment];
 
-  if (!envConfig?.host) {
-    return { success: false, error: `${environment} host not configured` };
+  if (!envConfig?.domain) {
+    return { success: false, error: `${environment} domain not configured` };
   }
 
-  console.log(`   🚀 Deploying on staging (${envConfig.host})...`);
+  console.log(`   🚀 Deploying on staging (${envConfig.domain})...`);
 
   try {
     const repoName = config.name ?? 'app';

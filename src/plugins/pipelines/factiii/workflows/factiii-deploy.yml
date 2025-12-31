@@ -39,10 +39,10 @@ jobs:
           REPO_NAME=$(yq eval '.name' factiii.yml)
 
           if [ "${{ inputs.environment }}" == "staging" ]; then
-            HOST=$(yq eval '.staging.host // ""' factiii.yml)
+            HOST=$(yq eval '.staging.domain // ""' factiii.yml)
             SSH_USER=$(yq eval '.staging.ssh_user // "ubuntu"' factiii.yml)
           else
-            HOST=$(yq eval '.prod.host // ""' factiii.yml)
+            HOST=$(yq eval '.prod.domain // ""' factiii.yml)
             SSH_USER=$(yq eval '.prod.ssh_user // "ubuntu"' factiii.yml)
           fi
 
@@ -70,7 +70,7 @@ jobs:
         if: steps.check_env.outputs.has_env == 'true' && inputs.environment == 'prod'
         id: staging_config
         run: |
-          STAGING_HOST=$(yq eval '.staging.host // ""' factiii.yml)
+          STAGING_HOST=$(yq eval '.staging.domain // ""' factiii.yml)
           STAGING_SSH_USER=$(yq eval '.staging.ssh_user // "ubuntu"' factiii.yml)
 
           echo "staging_host=$STAGING_HOST" >> $GITHUB_OUTPUT
@@ -154,7 +154,7 @@ jobs:
           PROD_ENVS: ${{ inputs.environment == 'prod' && secrets.PROD_ENVS || '' }}
         run: |
           if [ -z "$HOST" ]; then
-            echo "❌ Missing host in factiii.yml: $ENVIRONMENT.host"
+            echo "❌ Missing domain in factiii.yml: $ENVIRONMENT.domain"
             exit 1
           fi
           

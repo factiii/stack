@@ -385,12 +385,12 @@ async function syncToServer(
   const allEnvs = extractEnvironments(config);
   const envConfig = allEnvs[environment];
 
-  if (!envConfig?.host) {
-    console.error(`❌ ${environment} host not configured in factiii.yml`);
+  if (!envConfig?.domain) {
+    console.error(`❌ ${environment} domain not configured in factiii.yml`);
     process.exit(1);
   }
 
-  const host = envConfig.host;
+  const host = envConfig.domain;
   const user = envConfig.ssh_user || 'ubuntu';
   
   console.log(`📤 Syncing to ${environment} (${user}@${host})...`);
@@ -444,11 +444,11 @@ async function deployAfterSync(
   const allEnvs = extractEnvironments(config);
   const envConfig = allEnvs[environment];
 
-  if (!envConfig?.host) {
+  if (!envConfig?.domain) {
     return;
   }
 
-  const host = envConfig.host;
+  const host = envConfig.domain;
   const user = envConfig.ssh_user || 'ubuntu';
   const repoName = config.name || 'app';
   

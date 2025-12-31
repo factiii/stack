@@ -96,8 +96,8 @@ export const dockerFixes: Fix[] = [
       const hasStagingEnv = config?.environments?.staging;
       if (!hasStagingEnv) return false; // Skip check if staging not configured
 
-      const host = config?.environments?.staging?.host;
-      if (!host) return false;
+      const domain = config?.environments?.staging?.domain;
+      if (!domain) return false;
 
       // Executed locally - SSH handled by CLI wrapper
       try {
@@ -131,8 +131,8 @@ export const dockerFixes: Fix[] = [
       const hasStagingEnv = config?.environments?.staging;
       if (!hasStagingEnv) return false; // Skip check if staging not configured
 
-      const host = config?.environments?.staging?.host;
-      if (!host) return false;
+      const domain = config?.environments?.staging?.domain;
+      if (!domain) return false;
 
       // Executed locally - SSH handled by CLI wrapper
       try {
@@ -176,8 +176,8 @@ export const dockerFixes: Fix[] = [
       const hasStagingEnv = config?.environments?.staging;
       if (!hasStagingEnv) return false; // Skip check if staging not configured
 
-      const host = config?.environments?.staging?.host;
-      if (!host) return false;
+      const domain = config?.environments?.staging?.domain;
+      if (!domain) return false;
 
       // If Docker is running, don't worry about autostart config
       try {

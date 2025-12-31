@@ -62,7 +62,7 @@ export async function checkServerConnectivity(
   envConfig: EnvironmentConfig,
   sshKey: string
 ): Promise<ConnectivityResult> {
-  const host = envConfig.host;
+  const host = envConfig.domain;
   const ssh_user = envConfig.ssh_user ?? 'ubuntu';
 
   if (!host) {
@@ -84,7 +84,7 @@ export async function checkServerSoftware(
   envConfig: EnvironmentConfig,
   sshKey: string
 ): Promise<ServerSoftwareChecks> {
-  const host = envConfig.host;
+  const host = envConfig.domain;
   const ssh_user = envConfig.ssh_user ?? 'ubuntu';
 
   const checks: ServerSoftwareChecks = {
@@ -121,7 +121,7 @@ export async function checkServerRepo(
   sshKey: string,
   repoName: string
 ): Promise<RepoCheckResult> {
-  const host = envConfig.host;
+  const host = envConfig.domain;
   const ssh_user = envConfig.ssh_user ?? 'ubuntu';
 
   const repoPath = `~/.factiii/${repoName}`;
@@ -160,7 +160,7 @@ export async function validateDeployedConfigs(
   sshKey: string,
   localConfig: FactiiiConfig
 ): Promise<ConfigValidationResult> {
-  const host = envConfig.host;
+  const host = envConfig.domain;
   const ssh_user = envConfig.ssh_user ?? 'ubuntu';
 
   const validation: ConfigValidationResult = {
@@ -276,7 +276,7 @@ export async function detectServerEnvironment(
   envConfig: EnvironmentConfig,
   sshKey: string
 ): Promise<ServerEnvironment> {
-  const host = envConfig.host;
+  const host = envConfig.domain;
   const ssh_user = envConfig.ssh_user ?? 'ubuntu';
 
   const env: ServerEnvironment = {
@@ -325,7 +325,7 @@ export async function installServerDependencies(
   sshKey: string,
   _options: InstallOptions = {}
 ): Promise<InstallDependenciesResult> {
-  const host = envConfig.host;
+  const host = envConfig.domain;
   const ssh_user = envConfig.ssh_user ?? 'ubuntu';
 
   const results: {

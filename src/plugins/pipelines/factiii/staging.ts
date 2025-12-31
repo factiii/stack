@@ -183,7 +183,7 @@ export async function buildStagingImage(
 
       // Build Docker image explicitly with arm64 platform on remote staging server
       console.log(`   🔨 Building Docker image (arm64) on staging server: ${imageTag}...`);
-      console.log(`   📍 Building on: ${envConfig.host}`);
+      console.log(`   📍 Building on: ${envConfig.domain}`);
       
       await sshExec(
         envConfig,

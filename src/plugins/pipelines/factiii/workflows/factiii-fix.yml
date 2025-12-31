@@ -81,7 +81,7 @@ jobs:
           fi
 
           REPO_NAME=$(yq eval '.name' factiii.yml)
-          HOST=$(yq eval ".$ENVIRONMENT.host // \"\"" factiii.yml)
+          HOST=$(yq eval ".$ENVIRONMENT.domain // \"\"" factiii.yml)
           SSH_USER=$(yq eval ".$ENVIRONMENT.ssh_user // \"ubuntu\"" factiii.yml)
 
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
@@ -153,7 +153,7 @@ jobs:
           ENVIRONMENT: ${{ matrix.environment }}
         run: |
           if [ -z "$HOST" ]; then
-            echo "❌ Missing host in factiii.yml: $ENVIRONMENT.host"
+            echo "❌ Missing domain in factiii.yml: $ENVIRONMENT.domain"
             exit 1
           fi
           

@@ -38,10 +38,10 @@ jobs:
           REPO_NAME=$(yq eval '.name' factiii.yml)
           
           if [ "${{ inputs.environment }}" == "staging" ]; then
-            HOST=$(yq eval '.environments.staging.host // ""' factiii.yml)
+            HOST=$(yq eval '.environments.staging.domain // ""' factiii.yml)
             SSH_USER=$(yq eval '.environments.staging.ssh_user // "ubuntu"' factiii.yml)
           else
-            HOST=$(yq eval '.environments.prod.host // ""' factiii.yml)
+            HOST=$(yq eval '.environments.prod.domain // ""' factiii.yml)
             SSH_USER=$(yq eval '.environments.prod.ssh_user // "ubuntu"' factiii.yml)
           fi
           
@@ -70,7 +70,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
         run: |
           if [ -z "$HOST" ]; then
-            echo "❌ Missing host in factiii.yml: environments.$ENVIRONMENT.host"
+            echo "❌ Missing domain in factiii.yml: environments.$ENVIRONMENT.domain"
             exit 1
           fi
           

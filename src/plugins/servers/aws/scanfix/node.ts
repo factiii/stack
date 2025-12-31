@@ -16,7 +16,7 @@ export const nodeFixes: Fix[] = [
       const envConfig =
         config?.environments?.prod ?? config?.environments?.production;
       if (!envConfig) return false;
-      if (!envConfig?.host) return false;
+      if (!envConfig?.domain) return false;
 
       // Executed locally - SSH handled by CLI wrapper
       try {

@@ -132,13 +132,14 @@ class AWSPlugin {
         }
       }
 
-      // Check if host looks like AWS
-      if (env.host && !env.host.startsWith('EXAMPLE-')) {
-        const isAwsHost =
-          /^(\d{1,3}\.){3}\d{1,3}$/.test(env.host) ||
-          env.host.includes('.compute.amazonaws.com') ||
-          env.host.includes('.aws');
-        if (isAwsHost) return true;
+      // Check if domain looks like AWS (IP or AWS domain)
+      if (env.domain && !env.domain.startsWith('EXAMPLE-')) {
+        const isAwsDomain =
+          /^(\d{1,3}\.){3}\d{1,3}$/.test(env.domain) ||
+          env.domain.includes('.compute.amazonaws.com') ||
+          env.domain.includes('.amazonaws.com') ||
+          env.domain.includes('.aws');
+        if (isAwsDomain) return true;
       }
     }
 
@@ -269,8 +270,8 @@ class AWSPlugin {
       const environments = extractEnvironments(config);
       const envConfig = environments.prod ?? environments.production;
 
-      if (!envConfig?.host) {
-        return { success: false, error: 'Production host not configured' };
+      if (!envConfig?.domain) {
+        return { success: false, error: 'Production domain not configured' };
       }
 
       try {

@@ -35,7 +35,7 @@ export async function sshExec(
   }
 
   // Running from dev machine - SSH to server
-  const host = envConfig.host;
+  const host = envConfig.domain;
   const user = envConfig.ssh_user ?? 'ubuntu';
 
   // Try to find SSH key

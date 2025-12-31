@@ -406,9 +406,9 @@ class FactiiiPipeline {
 
         if (stage === 'staging') {
           const envConfig = environments.staging;
-          if (envConfig?.host) {
+          if (envConfig?.domain) {
             console.log('   🔨 Building staging image on staging server...');
-            console.log(`   📍 Target server: ${envConfig.host}`);
+            console.log(`   📍 Target server: ${envConfig.domain}`);
             const buildResult = await FactiiiPipeline.buildStagingImage(this._config, envConfig);
             if (!buildResult.success) {
               console.error(`   ❌ Build failed: ${buildResult.error}`);
@@ -416,11 +416,11 @@ class FactiiiPipeline {
             }
             console.log('   ✅ Staging image built successfully on staging server');
           } else {
-            console.log('   ⚠️  Staging host not configured, skipping build');
+            console.log('   ⚠️  Staging domain not configured, skipping build');
           }
         } else if (stage === 'prod') {
           const stagingConfig = environments.staging;
-          if (stagingConfig?.host) {
+          if (stagingConfig?.domain) {
             console.log('   🔨 Building production image on staging server...');
             const buildResult = await FactiiiPipeline.buildProductionImage(
               this._config,

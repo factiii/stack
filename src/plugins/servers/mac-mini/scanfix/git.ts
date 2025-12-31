@@ -16,8 +16,8 @@ export const gitFixes: Fix[] = [
       const hasStagingEnv = config?.environments?.staging;
       if (!hasStagingEnv) return false;
 
-      const host = config?.environments?.staging?.host;
-      if (!host) return false;
+      const domain = config?.environments?.staging?.domain;
+      if (!domain) return false;
 
       // Executed locally - SSH handled by CLI wrapper
       try {

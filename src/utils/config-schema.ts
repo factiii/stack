@@ -35,7 +35,7 @@ export const SCHEMAS: Record<string, ConfigVersionSchema> = {
     },
     environmentFields: {
       // Environment fields
-      required: ['server', 'domain', 'host'],
+      required: ['server', 'domain'],
       optional: [
         'env_file',
         'ssh_user',

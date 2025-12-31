@@ -31,7 +31,7 @@ jobs:
           fi
 
           REPO_NAME=$(yq eval '.name' factiii.yml)
-          HOST=$(yq eval '.staging.host // ""' factiii.yml)
+          HOST=$(yq eval '.staging.domain // ""' factiii.yml)
           SSH_USER=$(yq eval '.staging.ssh_user // "ubuntu"' factiii.yml)
 
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
@@ -75,7 +75,7 @@ jobs:
           STAGING_ENVS: ${{ secrets.STAGING_ENVS }}
         run: |
           if [ -z "$HOST" ]; then
-            echo "❌ Missing host in factiii.yml: staging.host"
+            echo "❌ Missing domain in factiii.yml: staging.domain"
             exit 1
           fi
           

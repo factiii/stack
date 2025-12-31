@@ -337,8 +337,8 @@ export async function ensureServerReady(
   const environments = extractEnvironments(config);
   const envConfig = environments[environment] ?? environments['prod'] ?? environments['production'];
 
-  if (!envConfig?.host) {
-    throw new Error(`${environment} host not configured`);
+  if (!envConfig?.domain) {
+    throw new Error(`${environment} domain not configured`);
   }
 
   const { commitHash, branch = 'main', repoUrl } = options;
@@ -395,11 +395,11 @@ export async function deployProd(
   const environments = extractEnvironments(config);
   const envConfig = environments[environment] ?? environments['prod'] ?? environments['production'];
 
-  if (!envConfig?.host) {
-    return { success: false, error: `${environment} host not configured` };
+  if (!envConfig?.domain) {
+    return { success: false, error: `${environment} domain not configured` };
   }
 
-  console.log(`   🚀 Deploying to production (${envConfig.host})...`);
+  console.log(`   🚀 Deploying to production (${envConfig.domain})...`);
 
   try {
     const repoName = config.name ?? 'app';

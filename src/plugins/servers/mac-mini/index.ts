@@ -104,13 +104,14 @@ class MacMiniPlugin {
         return true;
       }
 
-      // Load if staging environment has local/private IP
-      if (name.startsWith('staging') && env.host && !env.host.startsWith('EXAMPLE-')) {
-        const isLocalIp =
-          /^192\.168\./.test(env.host) ||
-          /^10\./.test(env.host) ||
-          /^100\./.test(env.host); // Tailscale
-        if (isLocalIp) return true;
+      // Load if staging environment has local/private IP or staging domain
+      if (name.startsWith('staging') && env.domain && !env.domain.startsWith('EXAMPLE-')) {
+        const isLocal =
+          /^192\.168\./.test(env.domain) ||
+          /^10\./.test(env.domain) ||
+          /^100\./.test(env.domain) || // Tailscale
+          env.domain.includes('staging');
+        if (isLocal) return true;
       }
     }
 
@@ -221,8 +222,8 @@ class MacMiniPlugin {
       const environments = extractEnvironments(config);
       const envConfig = environments.staging;
 
-      if (!envConfig?.host) {
-        return { success: false, error: 'Staging host not configured' };
+      if (!envConfig?.domain) {
+        return { success: false, error: 'Staging domain not configured' };
       }
 
       try {

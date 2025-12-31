@@ -14,8 +14,7 @@
 export interface EnvironmentConfig {
   // Required fields
   server: string;  // Server plugin name (aws, mac-mini, etc.)
-  domain: string;
-  host: string;
+  domain: string;  // Domain for nginx/SSL AND SSH connection
 
   // Optional base fields
   ssh_user?: string;
