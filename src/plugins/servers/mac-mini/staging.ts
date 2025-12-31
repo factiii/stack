@@ -10,6 +10,7 @@ import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
 import { extractEnvironments } from '../../../utils/config-helpers.js';
+import { generateDockerCompose, generateNginx, scanRepos, loadConfigs } from '../../../scripts/index.js';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
@@ -680,19 +681,10 @@ export async function deployStaging(
 
       // Step 1: Regenerate unified docker-compose.yml
       console.log('   🔄 Regenerating unified docker-compose.yml...');
-      const generateAllPath = path.join(factiiiDir, 'scripts', 'generate-all.js');
-      if (fs.existsSync(generateAllPath)) {
-        execSync(`node ${generateAllPath}`, {
-          stdio: 'inherit',
-          shell: '/bin/bash',
-          env: {
-            ...process.env,
-            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-          },
-        });
-      } else {
-        console.log('   ⚠️  generate-all.js not found, skipping regeneration');
-      }
+      const repos = scanRepos();
+      const configs = loadConfigs(repos);
+      generateDockerCompose(configs);
+      generateNginx(configs);
 
       // Step 1.5: Add postgres service for staging if DATABASE_URL is configured
       console.log('   🔄 Adding postgres service for staging...');
@@ -777,16 +769,11 @@ export async function deployStaging(
     } else {
       // We're remote - SSH to the server
       // Step 1: Regenerate unified docker-compose.yml
-      console.log('   🔄 Regenerating unified docker-compose.yml on remote server...');
-      await sshExecCommand(
-        envConfig,
-        `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-         if [ -f ~/.factiii/scripts/generate-all.js ]; then \
-           node ~/.factiii/scripts/generate-all.js; \
-         else \
-           echo "⚠️  generate-all.js not found, skipping regeneration"; \
-         fi`
-      );
+      console.log('   🔄 Regenerating unified docker-compose.yml...');
+      const repos = scanRepos();
+      const configs = loadConfigs(repos);
+      generateDockerCompose(configs);
+      generateNginx(configs);
 
       // Step 1.5: Add postgres service for staging if DATABASE_URL is configured
       console.log('   🔄 Adding postgres service for staging...');

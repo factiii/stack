@@ -9,6 +9,7 @@ import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
 import { extractEnvironments } from '../../../utils/config-helpers.js';
+import { generateDockerCompose, generateNginx, scanRepos, loadConfigs } from '../../../scripts/index.js';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
@@ -406,14 +407,10 @@ export async function deployProd(
 
     // Step 1: Regenerate unified docker-compose.yml (generic, uses build context)
     console.log('   🔄 Regenerating unified docker-compose.yml...');
-    await sshExecCommand(
-      envConfig,
-      `if [ -f ~/.factiii/scripts/generate-all.js ]; then \
-         node ~/.factiii/scripts/generate-all.js; \
-       else \
-         echo "⚠️  generate-all.js not found, skipping regeneration"; \
-       fi`
-    );
+    const repos = scanRepos();
+    const configs = loadConfigs(repos);
+    generateDockerCompose(configs);
+    generateNginx(configs);
 
     // Step 2: Update docker-compose.yml to use ECR image for prod services
     console.log('   🔄 Updating docker-compose.yml with ECR image references...');
