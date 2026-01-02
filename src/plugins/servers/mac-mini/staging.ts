@@ -139,28 +139,15 @@ async function installDependencies(
 // ============================================================
 // Why this exists: Automatically obtain/renew Let's Encrypt SSL certificates
 // What breaks if changed: HTTPS will fail, browsers show security warnings
-// Dependencies: certbot must be installed, ssl_email must be configured
+// Dependencies: Docker must be installed, ssl_email must be configured
+// Uses Docker certbot for portability (no host certbot installation needed)
 // ============================================================
 
 /**
- * Ensure certbot is installed on the server
- */
-async function ensureCertbotInstalled(envConfig: EnvironmentConfig): Promise<void> {
-  try {
-    await sshExecCommand(envConfig, 'which certbot');
-  } catch {
-    console.log('      Installing certbot...');
-    await sshExecCommand(
-      envConfig,
-      'brew install certbot || sudo apt-get update && sudo apt-get install -y certbot python3-certbot-nginx'
-    );
-  }
-}
-
-/**
- * Run certbot to obtain/renew SSL certificates
+ * Run certbot to obtain/renew SSL certificates using Docker
  * Called after nginx.conf is generated but before containers start
  * Collects all domains from all environments in factiii.yml and obtains certificates
+ * Uses standalone mode with Docker certbot (nginx must be stopped first)
  */
 async function runCertbot(
   envConfig: EnvironmentConfig,
@@ -188,38 +175,101 @@ async function runCertbot(
     return;
   }
 
-  console.log(`      Obtaining SSL certificates for: ${domains.join(', ')}`);
+  const isOnServer = process.env.GITHUB_ACTIONS === 'true';
 
-  const domainFlags = domains.map(d => `-d ${d}`).join(' ');
+  // For each domain, obtain certificate using Docker certbot
+  for (const domain of domains) {
+    console.log(`      Obtaining SSL certificate for: ${domain}`);
 
-  await sshExecCommand(
-    envConfig,
-    `sudo certbot certonly --nginx ${domainFlags} --non-interactive --agree-tos --email ${sslEmail} || echo "⚠️  Certbot failed, continuing without SSL"`
-  );
+    // Build Docker certbot command (standalone mode - port 80 must be free)
+    const certbotCmd = [
+      'docker run --rm',
+      '-v /etc/letsencrypt:/etc/letsencrypt',
+      '-v /var/lib/letsencrypt:/var/lib/letsencrypt',
+      '-p 80:80',
+      'certbot/certbot certonly',
+      '--standalone',
+      '-d ' + domain,
+      '--email ' + sslEmail,
+      '--agree-tos',
+      '--non-interactive',
+    ].join(' ');
+
+    try {
+      if (isOnServer) {
+        // We're on the server - run directly
+        execSync(certbotCmd, {
+          stdio: 'inherit',
+          shell: '/bin/bash',
+          env: {
+            ...process.env,
+            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+          },
+        });
+      } else {
+        // We're remote - SSH to server
+        await sshExecCommand(
+          envConfig,
+          `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && ${certbotCmd}`
+        );
+      }
+      console.log(`      ✅ SSL certificate obtained for ${domain}`);
+    } catch (error) {
+      console.log(`      ⚠️  Certbot failed for ${domain}, continuing without SSL`);
+    }
+  }
 }
 
 /**
- * Setup automatic certificate renewal via cron
+ * Setup automatic certificate renewal via cron using Docker certbot
  * Only runs once - checks if renewal is already configured
  */
 async function setupCertbotRenewal(envConfig: EnvironmentConfig): Promise<void> {
   console.log('      Setting up automatic certificate renewal...');
 
-  // Check if certbot renewal is already configured
-  const cronCheck = await sshExecCommand(
-    envConfig,
-    'crontab -l 2>/dev/null | grep "certbot renew" || echo "NOT_FOUND"'
-  );
+  const isOnServer = process.env.GITHUB_ACTIONS === 'true';
 
-  if (cronCheck.includes('NOT_FOUND')) {
-    // Add renewal cron job (runs twice daily)
-    await sshExecCommand(
-      envConfig,
-      '(crontab -l 2>/dev/null; echo "0 0,12 * * * certbot renew --quiet && docker exec factiii_nginx nginx -s reload") | crontab -'
-    );
-    console.log('      ✅ Configured automatic certificate renewal (twice daily)');
+  // Docker certbot renewal command (webroot mode since nginx will be running)
+  const renewCmd = 'docker run --rm -v /etc/letsencrypt:/etc/letsencrypt -v /var/lib/letsencrypt:/var/lib/letsencrypt -v /var/www/certbot:/var/www/certbot certbot/certbot renew --quiet && docker exec factiii_nginx nginx -s reload';
+
+  if (isOnServer) {
+    // Check if certbot renewal is already configured
+    try {
+      const result = execSync('crontab -l 2>/dev/null | grep "certbot/certbot renew" || echo "NOT_FOUND"', {
+        encoding: 'utf-8',
+        shell: '/bin/bash',
+      });
+
+      if (result.includes('NOT_FOUND')) {
+        // Add renewal cron job (runs twice daily)
+        execSync(
+          `(crontab -l 2>/dev/null; echo "0 0,12 * * * ${renewCmd}") | crontab -`,
+          { stdio: 'inherit', shell: '/bin/bash' }
+        );
+        console.log('      ✅ Configured automatic certificate renewal (twice daily)');
+      } else {
+        console.log('      ✅ Certificate renewal already configured');
+      }
+    } catch {
+      console.log('      ⚠️  Could not configure certificate renewal');
+    }
   } else {
-    console.log('      ✅ Certificate renewal already configured');
+    // Check if certbot renewal is already configured
+    const cronCheck = await sshExecCommand(
+      envConfig,
+      'crontab -l 2>/dev/null | grep "certbot/certbot renew" || echo "NOT_FOUND"'
+    );
+
+    if (cronCheck.includes('NOT_FOUND')) {
+      // Add renewal cron job (runs twice daily)
+      await sshExecCommand(
+        envConfig,
+        `(crontab -l 2>/dev/null; echo "0 0,12 * * * ${renewCmd}") | crontab -`
+      );
+      console.log('      ✅ Configured automatic certificate renewal (twice daily)');
+    } else {
+      console.log('      ✅ Certificate renewal already configured');
+    }
   }
 }
 
@@ -393,11 +443,7 @@ export async function ensureServerReady(
     console.log('   Installing dependencies...');
     await installDependencies(envConfig, repoDir);
 
-    // 6. Ensure certbot is installed
-    console.log('   Checking certbot...');
-    await ensureCertbotInstalled(envConfig);
-
-    // 7. Write environment variables from GitHub secrets if provided
+    // 6. Write environment variables from GitHub secrets if provided
     const envVarsString = process.env.STAGING_ENVS;
     if (envVarsString) {
       console.log('   Writing environment variables...');
@@ -406,7 +452,7 @@ export async function ensureServerReady(
       console.log('   ⚠️  STAGING_ENVS not provided, skipping env file write (using existing .env.staging if present)');
     }
 
-    // 8. Create .env from .env.staging for host commands
+    // 7. Create .env from .env.staging for host commands
     console.log('   Creating .env from .env.staging for host commands...');
     await createEnvFromStaging(envConfig, repoDir);
 
