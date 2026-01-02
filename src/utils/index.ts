@@ -24,4 +24,5 @@ export * from './server-check.js';
 export * from './config-validator.js';
 export * from './deployment-report.js';
 export { default as GitHubWorkflowMonitor } from './github-workflow-monitor.js';
+// ssl-cert-helper moved to src/scanfix/ssl-cert-helper.ts
 

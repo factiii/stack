@@ -64,13 +64,17 @@ import type {
   EnsureServerReadyOptions,
 } from '../../../types/index.js';
 
-// Import scanfix arrays
-import { dockerFixes } from './scanfix/docker.js';
+// Import shared scanfix factories
+import {
+  getDockerFixes,
+  getNodeFixes,
+  getGitFixes,
+  createCertbotFix,
+} from '../../../scanfix/index.js';
+
+// Import plugin-specific scanfix arrays
 import { awsCliFixes } from './scanfix/aws-cli.js';
-import { nodeFixes } from './scanfix/node.js';
-import { gitFixes } from './scanfix/git.js';
 import { configFixes } from './scanfix/config.js';
-import { certbotFixes } from './scanfix/certbot.js';
 
 // Import environment-specific operations
 import { deployDev } from './dev.js';
@@ -177,12 +181,18 @@ class AWSPlugin {
   // ============================================================
 
   static readonly fixes = [
-    ...dockerFixes,
+    // Dev stage - shared fixes
+    ...getDockerFixes('dev', 'aws'),
+
+    // Prod stage - shared fixes
+    ...getDockerFixes('prod'),
+    ...getNodeFixes('prod'),
+    ...getGitFixes('prod'),
+    createCertbotFix('prod', 'prod'),
+
+    // Plugin-specific fixes
     ...awsCliFixes,
-    ...nodeFixes,
-    ...gitFixes,
     ...configFixes,
-    ...certbotFixes,
   ];
 
   // ============================================================

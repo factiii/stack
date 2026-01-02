@@ -49,13 +49,18 @@ import type {
   EnsureServerReadyOptions,
 } from '../../../types/index.js';
 
-// Import scanfix arrays
-import { dockerFixes } from './scanfix/docker.js';
-import { nodeFixes } from './scanfix/node.js';
-import { gitFixes } from './scanfix/git.js';
+// Import shared scanfix factories
+import {
+  getDockerFixes,
+  getNodeFixes,
+  getGitFixes,
+  getPnpmFixes,
+  createCertbotFix,
+} from '../../../scanfix/index.js';
+
+// Import plugin-specific scanfix arrays
 import { containerFixes } from './scanfix/containers.js';
 import { configFixes } from './scanfix/config.js';
-import { certbotFixes } from './scanfix/certbot.js';
 
 // Import environment-specific operations
 import { deployDev } from './dev.js';
@@ -140,12 +145,19 @@ class MacMiniPlugin {
   // ============================================================
 
   static readonly fixes = [
-    ...dockerFixes,
-    ...nodeFixes,
-    ...gitFixes,
+    // Dev stage - shared fixes
+    ...getDockerFixes('dev'),
+
+    // Staging stage - shared fixes
+    ...getDockerFixes('staging'),
+    ...getNodeFixes('staging'),
+    ...getGitFixes('staging'),
+    ...getPnpmFixes('staging'),
+    createCertbotFix('staging', 'staging'),
+
+    // Plugin-specific fixes
     ...containerFixes,
     ...configFixes,
-    ...certbotFixes,
   ];
 
   // ============================================================

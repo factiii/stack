@@ -235,6 +235,12 @@ export function generateDockerCompose(allConfigs: Record<string, FactiiiConfig>)
 
 /**
  * Generate nginx.conf from all repos' configs
+ *
+ * ACME-Compatible: If SSL certificates don't exist for a domain, nginx
+ * is configured with HTTP-only proxy (no HTTPS redirect). This allows:
+ * 1. Nginx to start without SSL certificates
+ * 2. Certbot to complete ACME challenge on port 80
+ * 3. After certs are obtained, re-run deploy to enable HTTPS
  */
 export function generateNginx(allConfigs: Record<string, FactiiiConfig>): number {
   const routes: NginxRoute[] = [];
@@ -301,15 +307,17 @@ http {
   // ============================================================
 
   for (const { domain, service, port } of routes) {
+    // Always generate HTTPS-capable config
+    // Certificates must exist before nginx can start (obtained via: npx factiii fix --staging/--prod)
     nginxConf += `
     # ${service} - ${domain}
 
-    # HTTP - redirect to HTTPS
+    # HTTP - ACME challenge + redirect to HTTPS
     server {
         listen 80;
         server_name ${domain};
 
-        # Allow certbot ACME challenge
+        # Allow certbot ACME challenge (for renewals)
         location /.well-known/acme-challenge/ {
             root /var/www/certbot;
         }
