@@ -110,7 +110,7 @@ export function registerPluginCommands(
   if (backupCommands && backupCommands.length > 0) {
     const backupCmd = program
       .command('backup')
-      .description('Backup operations (create, restore, health-check)');
+      .description('Backup operations (create, restore, health)');
 
     for (const cmd of backupCommands) {
       registerCommand(backupCmd, cmd, pipelinePlugin);

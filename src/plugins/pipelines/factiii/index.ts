@@ -258,7 +258,7 @@ class FactiiiPipeline {
       },
     },
     {
-      name: 'migrate-reset',
+      name: 'reset',
       description: 'Reset database and re-run all migrations (DATA LOSS!)',
       category: 'db',
       stages: ['dev', 'staging', 'prod'],
@@ -273,7 +273,7 @@ class FactiiiPipeline {
       },
     },
     {
-      name: 'migrate-status',
+      name: 'status',
       description: 'Check migration status',
       category: 'db',
       stages: ['dev', 'staging', 'prod'],
@@ -438,7 +438,7 @@ class FactiiiPipeline {
       },
     },
     {
-      name: 'health-check',
+      name: 'health',
       description: 'Check application and database health',
       category: 'backup',
       stages: ['staging', 'prod'],

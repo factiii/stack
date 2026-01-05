@@ -35,12 +35,11 @@ program
     await init(options);
   });
 
-// Default command: scan (npx factiii with no subcommand runs scan)
+// Default action: show help when no subcommand provided
 program
-  .action(async (options, command) => {
-    // Only run scan if no subcommand was provided
+  .action((options, command) => {
     if (command.args.length === 0) {
-      await scan({});
+      program.help();
     }
   });
 
