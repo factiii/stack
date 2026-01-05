@@ -479,26 +479,25 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   }
 
   if (workflowStages.length > 0 && !options.silent) {
-    console.log('\n🔄 Triggering remote scans via GitHub Actions...\n');
-    
+    console.log('\n🔄 Running remote scans via GitHub Actions...\n');
+
     try {
       const monitor = new GitHubWorkflowMonitor();
-      
+
       for (const stage of workflowStages) {
         const workflowFile = 'factiii-scan.yml';
         console.log(`   Triggering ${stage} scan...`);
-        
+
         try {
-          const runId = await monitor.triggerWorkflow(workflowFile, stage);
-          const url = `https://github.com/${config.name}/actions/runs/${runId}`;
-          console.log(`   ✅ ${stage} scan triggered: ${url}`);
+          const result = await monitor.triggerAndWatch(workflowFile, stage);
+          if (!result.success) {
+            console.log(`   ⚠️  ${stage} scan failed`);
+          }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          console.log(`   ⚠️  Failed to trigger ${stage} scan: ${errorMessage}`);
+          console.log(`   ⚠️  Failed to run ${stage} scan: ${errorMessage}`);
         }
       }
-      
-      console.log('\n💡 View scan results in GitHub Actions');
     } catch (error) {
       // GitHub CLI not available - show helpful message
       const errorMessage = error instanceof Error ? error.message : String(error);

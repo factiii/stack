@@ -13,7 +13,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 
 import type {
   FactiiiConfig,
@@ -51,7 +51,37 @@ function loadConfig(rootDir: string): FactiiiConfig {
 }
 
 /**
- * Trigger a workflow to run the command remotely
+ * Stream logs from a workflow run using gh run watch
+ */
+async function streamWorkflowLogs(runId: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const watch = spawn('gh', ['run', 'watch', runId.toString()], {
+      stdio: 'inherit',
+    });
+
+    watch.on('close', (code) => {
+      resolve(code === 0);
+    });
+
+    watch.on('error', () => {
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Get the final status of a workflow run
+ */
+function getWorkflowStatus(runId: number): { conclusion: string; url: string } {
+  const result = execSync('gh run view ' + runId + ' --json conclusion,url', {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  return JSON.parse(result) as { conclusion: string; url: string };
+}
+
+/**
+ * Trigger a workflow to run the command remotely and stream logs
  */
 async function triggerCommandWorkflow(
   command: PluginCommand,
@@ -88,12 +118,27 @@ async function triggerCommandWorkflow(
 
     const runData = JSON.parse(runs) as Array<{ databaseId: number; url: string }>;
     if (runData.length > 0 && runData[0]) {
+      const runId = runData[0].databaseId;
+
       console.log('');
-      console.log('Workflow triggered successfully!');
-      console.log('View progress: ' + runData[0].url);
+      console.log('Monitoring workflow progress...');
       console.log('');
-      console.log('Run this to watch logs:');
-      console.log('  gh run watch ' + runData[0].databaseId);
+
+      // Stream logs from the workflow
+      await streamWorkflowLogs(runId);
+
+      // Get final status
+      const status = getWorkflowStatus(runId);
+      const isSuccess = status.conclusion === 'success';
+
+      console.log('');
+      if (isSuccess) {
+        console.log('Command completed successfully!');
+      } else {
+        console.log('Command failed! (' + status.conclusion + ')');
+        console.log('View full logs: ' + status.url);
+        process.exit(1);
+      }
     }
   } catch (error) {
     throw new Error(

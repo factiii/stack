@@ -223,6 +223,35 @@ class FactiiiPipeline {
   // COMMANDS - Plugin commands for maintenance operations
   // ============================================================
 
+  /**
+   * Find the directory containing Prisma schema
+   * Searches common monorepo locations
+   */
+  static findPrismaDir(rootDir: string): string | null {
+    const locations = [
+      '.',                    // root
+      'apps/server',          // monorepo
+      'packages/db',          // monorepo
+      'packages/database',    // monorepo
+      'server',               // simple
+      'backend',              // simple
+    ];
+
+    for (const loc of locations) {
+      const schemaPath = path.join(rootDir, loc, 'prisma', 'schema.prisma');
+      if (fs.existsSync(schemaPath)) {
+        return path.join(rootDir, loc);
+      }
+      // Also check for prisma.config.ts
+      const configPath = path.join(rootDir, loc, 'prisma.config.ts');
+      if (fs.existsSync(configPath)) {
+        return path.join(rootDir, loc);
+      }
+    }
+
+    return null;
+  }
+
   static readonly commands: PluginCommand[] = [
     // ────────────────────────────────────────────────────────────
     // DATABASE COMMANDS
@@ -234,8 +263,12 @@ class FactiiiPipeline {
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'destructive',
       execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
+        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
+        if (!prismaDir) {
+          return { success: false, error: 'Could not find Prisma schema directory' };
+        }
         try {
-          execSync('npx prisma db seed', { cwd: rootDir, stdio: 'inherit' });
+          execSync('npx prisma db seed', { cwd: prismaDir, stdio: 'inherit' });
           return { success: true, message: 'Database seeded successfully' };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -249,8 +282,12 @@ class FactiiiPipeline {
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'caution',
       execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
+        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
+        if (!prismaDir) {
+          return { success: false, error: 'Could not find Prisma schema directory' };
+        }
         try {
-          execSync('npx prisma migrate deploy', { cwd: rootDir, stdio: 'inherit' });
+          execSync('npx prisma migrate deploy', { cwd: prismaDir, stdio: 'inherit' });
           return { success: true, message: 'Migrations applied successfully' };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -264,8 +301,12 @@ class FactiiiPipeline {
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'destructive',
       execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
+        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
+        if (!prismaDir) {
+          return { success: false, error: 'Could not find Prisma schema directory' };
+        }
         try {
-          execSync('npx prisma migrate reset --force', { cwd: rootDir, stdio: 'inherit' });
+          execSync('npx prisma migrate reset --force', { cwd: prismaDir, stdio: 'inherit' });
           return { success: true, message: 'Database reset successfully' };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -279,8 +320,12 @@ class FactiiiPipeline {
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'safe',
       execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
+        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
+        if (!prismaDir) {
+          return { success: false, error: 'Could not find Prisma schema directory' };
+        }
         try {
-          execSync('npx prisma migrate status', { cwd: rootDir, stdio: 'inherit' });
+          execSync('npx prisma migrate status', { cwd: prismaDir, stdio: 'inherit' });
           return { success: true };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -456,23 +501,28 @@ class FactiiiPipeline {
         }
 
         // Check database connectivity
-        try {
-          execSync('npx prisma db execute --stdin <<< "SELECT 1"', {
-            cwd: rootDir,
-            stdio: 'pipe',
-          });
-          results.push('Database: Connected');
-        } catch {
-          results.push('Database: NOT CONNECTED');
+        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
+        if (prismaDir) {
+          try {
+            execSync('npx prisma db execute --stdin <<< "SELECT 1"', {
+              cwd: prismaDir,
+              stdio: 'pipe',
+            });
+            results.push('Database: Connected');
+          } catch {
+            results.push('Database: NOT CONNECTED');
+          }
+        } else {
+          results.push('Database: Prisma not found');
         }
 
         console.log('\nHealth Check Results:');
         for (const r of results) {
-          const icon = r.includes('NOT') ? 'X' : 'OK';
+          const icon = r.includes('NOT') || r.includes('not found') ? 'X' : 'OK';
           console.log('  [' + icon + '] ' + r);
         }
 
-        const allGood = !results.some((r) => r.includes('NOT'));
+        const allGood = !results.some((r) => r.includes('NOT') || r.includes('not found'));
         return {
           success: allGood,
           message: allGood ? 'All systems healthy' : 'Issues detected',
