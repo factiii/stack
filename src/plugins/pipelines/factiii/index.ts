@@ -54,6 +54,8 @@ import type {
   DeployResult,
   DeployOptions,
   EnvironmentConfig,
+  PluginCommand,
+  CommandResult,
 } from '../../../types/index.js';
 import { loadRelevantPlugins } from '../../index.js';
 import GitHubWorkflowMonitor from '../../../utils/github-workflow-monitor.js';
@@ -215,6 +217,268 @@ class FactiiiPipeline {
     ...githubCliFixes,
     ...workflowFixes,
     ...secretsFixes,
+  ];
+
+  // ============================================================
+  // COMMANDS - Plugin commands for maintenance operations
+  // ============================================================
+
+  static readonly commands: PluginCommand[] = [
+    // ────────────────────────────────────────────────────────────
+    // DATABASE COMMANDS
+    // ────────────────────────────────────────────────────────────
+    {
+      name: 'seed',
+      description: 'Seed the database with initial data',
+      category: 'db',
+      stages: ['dev', 'staging', 'prod'],
+      prodSafety: 'destructive',
+      execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
+        try {
+          execSync('npx prisma db seed', { cwd: rootDir, stdio: 'inherit' });
+          return { success: true, message: 'Database seeded successfully' };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+    {
+      name: 'migrate',
+      description: 'Run pending database migrations',
+      category: 'db',
+      stages: ['dev', 'staging', 'prod'],
+      prodSafety: 'caution',
+      execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
+        try {
+          execSync('npx prisma migrate deploy', { cwd: rootDir, stdio: 'inherit' });
+          return { success: true, message: 'Migrations applied successfully' };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+    {
+      name: 'migrate-reset',
+      description: 'Reset database and re-run all migrations (DATA LOSS!)',
+      category: 'db',
+      stages: ['dev', 'staging', 'prod'],
+      prodSafety: 'destructive',
+      execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
+        try {
+          execSync('npx prisma migrate reset --force', { cwd: rootDir, stdio: 'inherit' });
+          return { success: true, message: 'Database reset successfully' };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+    {
+      name: 'migrate-status',
+      description: 'Check migration status',
+      category: 'db',
+      stages: ['dev', 'staging', 'prod'],
+      prodSafety: 'safe',
+      execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
+        try {
+          execSync('npx prisma migrate status', { cwd: rootDir, stdio: 'inherit' });
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+
+    // ────────────────────────────────────────────────────────────
+    // OPS COMMANDS
+    // ────────────────────────────────────────────────────────────
+    {
+      name: 'logs',
+      description: 'View container logs',
+      category: 'ops',
+      stages: ['staging', 'prod'],
+      prodSafety: 'safe',
+      options: [
+        { flags: '-f, --follow', description: 'Follow log output' },
+        { flags: '-n, --lines <number>', description: 'Number of lines to show', defaultValue: '100' },
+        { flags: '-s, --service <name>', description: 'Service name (default: app container)' },
+      ],
+      execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
+        const serviceName = (options.service as string) ?? config.name + '-' + stage;
+        const followFlag = options.follow ? '-f' : '';
+        const lines = (options.lines as string) ?? '100';
+
+        try {
+          execSync(
+            'docker logs ' + followFlag + ' --tail ' + lines + ' ' + serviceName,
+            { stdio: 'inherit' }
+          );
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+    {
+      name: 'restart',
+      description: 'Restart application containers',
+      category: 'ops',
+      stages: ['staging', 'prod'],
+      prodSafety: 'caution',
+      options: [
+        { flags: '-s, --service <name>', description: 'Service to restart (default: app container)' },
+      ],
+      execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
+        const factiiiDir = process.env.HOME + '/.factiii';
+        const serviceName = (options.service as string) ?? config.name + '-' + stage;
+
+        try {
+          execSync(
+            'docker compose -f ' + factiiiDir + '/docker-compose.yml restart ' + serviceName,
+            { stdio: 'inherit' }
+          );
+          return { success: true, message: 'Restarted ' + serviceName };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+    {
+      name: 'shell',
+      description: 'Open a shell in the application container',
+      category: 'ops',
+      stages: ['staging', 'prod'],
+      prodSafety: 'caution',
+      execute: async (stage, _options, config, _rootDir): Promise<CommandResult> => {
+        const serviceName = config.name + '-' + stage;
+
+        try {
+          execSync('docker exec -it ' + serviceName + ' /bin/sh', { stdio: 'inherit' });
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+    {
+      name: 'status',
+      description: 'Show container status',
+      category: 'ops',
+      stages: ['staging', 'prod'],
+      prodSafety: 'safe',
+      execute: async (_stage, _options, _config, _rootDir): Promise<CommandResult> => {
+        const factiiiDir = process.env.HOME + '/.factiii';
+
+        try {
+          execSync(
+            'docker compose -f ' + factiiiDir + '/docker-compose.yml ps',
+            { stdio: 'inherit' }
+          );
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+
+    // ────────────────────────────────────────────────────────────
+    // BACKUP COMMANDS
+    // ────────────────────────────────────────────────────────────
+    {
+      name: 'create',
+      description: 'Create a database backup',
+      category: 'backup',
+      stages: ['staging', 'prod'],
+      prodSafety: 'safe',
+      options: [
+        { flags: '-o, --output <path>', description: 'Output file path' },
+      ],
+      execute: async (stage, options, _config, _rootDir): Promise<CommandResult> => {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const outputPath = (options.output as string) ?? 'backup-' + stage + '-' + timestamp + '.sql';
+
+        const dbUrl = process.env.DATABASE_URL;
+        if (!dbUrl) {
+          return { success: false, error: 'DATABASE_URL not set' };
+        }
+
+        try {
+          execSync('pg_dump "' + dbUrl + '" > ' + outputPath, { stdio: 'inherit' });
+          return { success: true, message: 'Backup created: ' + outputPath };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+    {
+      name: 'restore',
+      description: 'Restore database from backup (DATA LOSS!)',
+      category: 'backup',
+      stages: ['staging', 'prod'],
+      prodSafety: 'destructive',
+      options: [
+        { flags: '-i, --input <path>', description: 'Backup file to restore' },
+      ],
+      execute: async (_stage, options, _config, _rootDir): Promise<CommandResult> => {
+        const inputPath = options.input as string;
+        if (!inputPath) {
+          return { success: false, error: 'Input file required (--input)' };
+        }
+
+        const dbUrl = process.env.DATABASE_URL;
+        if (!dbUrl) {
+          return { success: false, error: 'DATABASE_URL not set' };
+        }
+
+        try {
+          execSync('psql "' + dbUrl + '" < ' + inputPath, { stdio: 'inherit' });
+          return { success: true, message: 'Database restored from ' + inputPath };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    },
+    {
+      name: 'health-check',
+      description: 'Check application and database health',
+      category: 'backup',
+      stages: ['staging', 'prod'],
+      prodSafety: 'safe',
+      execute: async (stage, _options, config, rootDir): Promise<CommandResult> => {
+        const results: string[] = [];
+
+        // Check container status
+        try {
+          const serviceName = config.name + '-' + stage;
+          execSync('docker ps | grep ' + serviceName, { stdio: 'pipe' });
+          results.push('Container: Running');
+        } catch {
+          results.push('Container: NOT RUNNING');
+        }
+
+        // Check database connectivity
+        try {
+          execSync('npx prisma db execute --stdin <<< "SELECT 1"', {
+            cwd: rootDir,
+            stdio: 'pipe',
+          });
+          results.push('Database: Connected');
+        } catch {
+          results.push('Database: NOT CONNECTED');
+        }
+
+        console.log('\nHealth Check Results:');
+        for (const r of results) {
+          const icon = r.includes('NOT') ? 'X' : 'OK';
+          console.log('  [' + icon + '] ' + r);
+        }
+
+        const allGood = !results.some((r) => r.includes('NOT'));
+        return {
+          success: allGood,
+          message: allGood ? 'All systems healthy' : 'Issues detected',
+        };
+      },
+    },
   ];
 
   // ============================================================

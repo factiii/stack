@@ -44,6 +44,7 @@ export async function generateWorkflows(rootDir: string): Promise<void> {
     'factiii-undeploy.yml',
     'factiii-cicd-staging.yml',
     'factiii-cicd-prod.yml',
+    'factiii-command.yml',
   ];
 
   // Only add dev-sync workflow in dev mode

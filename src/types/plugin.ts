@@ -30,6 +30,59 @@ export type Reachability =
   | { reachable: false; reason: string };
 
 /**
+ * Prod safety levels for plugin commands
+ */
+export type ProdSafetyLevel = 'safe' | 'caution' | 'destructive';
+
+/**
+ * Command categories for grouping in help
+ */
+export type CommandCategory = 'db' | 'ops' | 'backup';
+
+/**
+ * Command option definition
+ */
+export interface CommandOption {
+  flags: string;
+  description: string;
+  defaultValue?: string | boolean | string[];
+}
+
+/**
+ * Result of a plugin command execution
+ */
+export interface CommandResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+/**
+ * Plugin command definition
+ */
+export interface PluginCommand {
+  /** Command name (e.g., 'seed', 'migrate') */
+  name: string;
+  /** Human-readable description */
+  description: string;
+  /** Category for grouping */
+  category: CommandCategory;
+  /** Which stages this command supports (default: ['dev', 'staging', 'prod']) */
+  stages?: Stage[];
+  /** Safety level on prod - 'destructive' requires --force */
+  prodSafety: ProdSafetyLevel;
+  /** Command-specific options */
+  options?: CommandOption[];
+  /** Execute the command */
+  execute: (
+    stage: Stage,
+    options: Record<string, unknown>,
+    config: FactiiiConfig,
+    rootDir: string
+  ) => Promise<CommandResult>;
+}
+
+/**
  * A fix definition that can detect and resolve issues
  */
 export interface Fix {
@@ -215,6 +268,7 @@ export interface PluginInstance {
  */
 export interface PipelinePluginStatic extends PluginStatic {
   readonly category: 'pipeline';
+  readonly commands?: PluginCommand[];
   canReach(stage: Stage, config: FactiiiConfig): Reachability;
   requiresFullRepo?(environment: string): boolean;
   generateWorkflows?(rootDir: string): Promise<void>;

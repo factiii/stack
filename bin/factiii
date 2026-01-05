@@ -3,6 +3,9 @@
 const { program } = require('commander');
 const path = require('path');
 
+// Import plugin command registration
+const { registerPluginCommands } = require('../dist/cli/plugin-commands');
+
 // Import CLI commands from compiled TypeScript
 const { init } = require('../dist/cli/init');
 const { scan } = require('../dist/cli/scan');
@@ -178,5 +181,16 @@ program
   .action(async (options) => {
     await checkConfig(options);
   });
+
+// Register plugin commands (db, ops, backup)
+// Pipeline plugin provides these commands via static commands array
+try {
+  const FactiiiPipeline = require('../dist/plugins/pipelines/factiii').default;
+  if (FactiiiPipeline.commands && FactiiiPipeline.commands.length > 0) {
+    registerPluginCommands(program, FactiiiPipeline);
+  }
+} catch (e) {
+  // Plugin commands not available - continue without them
+}
 
 program.parse();
