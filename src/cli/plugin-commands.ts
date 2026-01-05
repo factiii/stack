@@ -84,9 +84,10 @@ export function registerPluginCommands(
   // Register 'db' subcommand group
   const dbCommands = byCategory.get('db');
   if (dbCommands && dbCommands.length > 0) {
+    const cmdNames = dbCommands.map(c => c.name).join(', ');
     const dbCmd = program
       .command('db')
-      .description('Database operations (seed, migrate, etc.)');
+      .description('Database operations (' + cmdNames + ')');
 
     for (const cmd of dbCommands) {
       registerCommand(dbCmd, cmd, pipelinePlugin);
@@ -96,9 +97,10 @@ export function registerPluginCommands(
   // Register 'ops' subcommand group
   const opsCommands = byCategory.get('ops');
   if (opsCommands && opsCommands.length > 0) {
+    const cmdNames = opsCommands.map(c => c.name).join(', ');
     const opsCmd = program
       .command('ops')
-      .description('Operations (logs, restart, shell, status)');
+      .description('Server operations (' + cmdNames + ')');
 
     for (const cmd of opsCommands) {
       registerCommand(opsCmd, cmd, pipelinePlugin);
@@ -108,9 +110,10 @@ export function registerPluginCommands(
   // Register 'backup' subcommand group
   const backupCommands = byCategory.get('backup');
   if (backupCommands && backupCommands.length > 0) {
+    const cmdNames = backupCommands.map(c => c.name).join(', ');
     const backupCmd = program
       .command('backup')
-      .description('Backup operations (create, restore, health)');
+      .description('Backup operations (' + cmdNames + ')');
 
     for (const cmd of backupCommands) {
       registerCommand(backupCmd, cmd, pipelinePlugin);
