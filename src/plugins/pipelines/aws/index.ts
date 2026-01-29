@@ -1,28 +1,32 @@
 /**
- * AWS Server Plugin
+ * AWS Pipeline Plugin
  *
- * Deploys containers to AWS infrastructure.
+ * Cloud infrastructure pipeline for deploying to AWS.
  * Uses a config-based architecture where different configs bundle AWS services:
  * - ec2: Basic EC2 instance
  * - free-tier: Complete free tier bundle (EC2 + RDS + S3 + ECR)
  * - standard: Production-ready setup
  * - enterprise: HA, multi-AZ, auto-scaling
  *
+ * This is a PIPELINE plugin, not a server plugin. It handles:
+ * - AWS-specific deployment orchestration
+ * - ECR image management
+ * - AWS service provisioning
+ *
+ * Server OS plugins (ubuntu, amazon-linux) handle the actual OS-level commands.
+ *
  * ============================================================
  * PLUGIN STRUCTURE STANDARD
  * ============================================================
  *
- * This plugin follows a standardized structure for clarity and maintainability:
- *
  * **scanfix/** - Scan/fix operations organized by concern
  *   - Each file exports an array of Fix[] objects
- *   - Files group related fixes together (docker, aws-cli, node, git, config)
+ *   - Files group related fixes together (aws-cli, config)
  *   - All fixes are combined in the main plugin class
  *
  * **Environment-specific files** - Operations for each environment
  *   - dev.ts - Dev environment operations (deployDev)
  *   - prod.ts - Production operations (deployProd, ensureServerReady)
- *   - Only create files if they have content (no blank files)
  *
  * **configs/** - AWS configuration types
  *   - types.ts - Standardized AWSConfigDef interface
@@ -32,27 +36,9 @@
  *
  * **index.ts** - Main plugin class
  *   - Static metadata (id, name, category, version)
- *   - shouldLoad() - Determines if plugin should load
- *   - configs registry - Available AWS config types
+ *   - compatibleServers - Which OS types this pipeline supports
+ *   - canReach() - Pipeline routing logic
  *   - Imports and combines all scanfix arrays
- *   - Imports and uses environment-specific methods
- *   - Maintains public API compatibility
- *
- * **When each environment file is used:**
- *   - dev.ts: When deploying to local dev environment
- *   - prod.ts: When deploying to production server or preparing production server
- *
- * **How scanfix files are organized:**
- *   - docker.ts: Docker installation/running (dev + prod)
- *   - aws-cli.ts: AWS CLI installation (dev)
- *   - node.ts: Node.js installation (prod)
- *   - git.ts: Git installation (prod)
- *   - config.ts: Configuration checks and validation (prod)
- *
- * **Config system:**
- *   - Configs are selected based on `config.aws.config` value in factiii.yml
- *   - Each config implements AWSConfigDef interface
- *   - Configs can have their own fixes that are merged with base plugin fixes
  * ============================================================
  */
 
@@ -62,6 +48,9 @@ import type {
   EnvironmentConfig,
   DeployResult,
   EnsureServerReadyOptions,
+  Stage,
+  Reachability,
+  ServerOS,
 } from '../../../types/index.js';
 
 // Import shared scanfix factories
@@ -90,15 +79,26 @@ import { sshExec } from '../../../utils/ssh-helper.js';
 
 type AWSConfigType = 'ec2' | 'free-tier' | 'standard' | 'enterprise';
 
-class AWSPlugin {
+class AWSPipeline {
   // ============================================================
   // STATIC METADATA
   // ============================================================
 
   static readonly id = 'aws';
-  static readonly name = 'AWS Server';
-  static readonly category: 'server' = 'server';
+  static readonly name = 'AWS Pipeline';
+  static readonly category: 'pipeline' = 'pipeline';
   static readonly version = '1.0.0';
+
+  /**
+   * Server OS types this pipeline is compatible with
+   * AWS typically runs Ubuntu or Amazon Linux on EC2
+   */
+  static readonly compatibleServers: ServerOS[] = ['ubuntu', 'amazon-linux'];
+
+  /**
+   * Default server OS for this pipeline
+   */
+  static readonly defaultServer: ServerOS = 'ubuntu';
 
   // Env vars this plugin requires
   static readonly requiredEnvVars: string[] = [];
@@ -119,7 +119,7 @@ class AWSPlugin {
 
   /**
    * Determine if this plugin should be loaded for this project
-   * Loads if config has AWS settings, prod host looks like AWS, or on init (no config)
+   * Loads if config has AWS settings, prod environment uses AWS, or on init
    */
   static async shouldLoad(_rootDir: string, config: FactiiiConfig): Promise<boolean> {
     // Dynamic import to avoid circular dependencies
@@ -128,8 +128,8 @@ class AWSPlugin {
     const environments = extractEnvironments(config);
 
     for (const env of Object.values(environments)) {
-      // Load if environment explicitly uses 'aws' server
-      if (env.server === 'aws') {
+      // Load if environment explicitly uses 'aws' pipeline
+      if (env.pipeline === 'aws') {
         // Verify it has real AWS config (not EXAMPLE values)
         if (env.access_key_id && !env.access_key_id.startsWith('EXAMPLE-')) {
           return true;
@@ -160,18 +160,62 @@ class AWSPlugin {
   static helpText: Record<string, string> = {
     SSH: `
    SSH private key for accessing the EC2 instance.
-   
+
    Option A: Auto-generate via AWS (recommended)
    - Factiii will create an EC2 Key Pair via AWS API
-   
+
    Option B: Use existing key
    ssh-keygen -t ed25519 -C "deploy-key" -f ~/.ssh/deploy_key`,
 
     AWS_SECRET_ACCESS_KEY: `
    AWS Secret Access Key
-   
-   Get from AWS Console: IAM → Users → Security credentials`,
+
+   Get from AWS Console: IAM -> Users -> Security credentials`,
   };
+
+  // ============================================================
+  // PIPELINE-SPECIFIC METHODS
+  // ============================================================
+
+  /**
+   * Check how this pipeline can reach a given stage
+   * This is the core routing logic for the pipeline
+   */
+  static canReach(stage: Stage, config: FactiiiConfig): Reachability {
+    switch (stage) {
+      case 'dev':
+        // Dev is always reachable locally
+        return { reachable: true, via: 'local' };
+
+      case 'secrets':
+        // Secrets require AWS credentials
+        if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+          return { reachable: false, reason: 'Missing AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)' };
+        }
+        return { reachable: true, via: 'api' };
+
+      case 'staging':
+      case 'prod':
+        // On server (in workflow): run locally
+        if (process.env.GITHUB_ACTIONS === 'true') {
+          return { reachable: true, via: 'local' };
+        }
+        // On dev machine: need to trigger workflow or SSH directly
+        return { reachable: true, via: 'workflow' };
+
+      default:
+        return { reachable: false, reason: `Unknown stage: ${stage}` };
+    }
+  }
+
+  /**
+   * Whether this pipeline requires full repo on server
+   * - staging: true (builds from source)
+   * - prod: false (pulls pre-built images from ECR)
+   */
+  static requiresFullRepo(environment: string): boolean {
+    return environment === 'staging' || environment.startsWith('staging');
+  }
 
   // ============================================================
   // FIXES - All issues this plugin can detect and resolve
@@ -184,7 +228,7 @@ class AWSPlugin {
     // Dev stage - shared fixes
     ...getDockerFixes('dev', 'aws'),
 
-    // Prod stage - shared fixes
+    // Prod stage - shared fixes (for ubuntu/amazon-linux servers)
     ...getDockerFixes('prod'),
     ...getNodeFixes('prod'),
     ...getGitFixes('prod'),
@@ -232,7 +276,33 @@ class AWSPlugin {
 
     // Load the appropriate AWS config based on factiii.yml
     const configName = (config?.aws?.config as AWSConfigType) ?? 'ec2';
-    this._awsConfig = AWSPlugin.configs[configName];
+    this._awsConfig = AWSPipeline.configs[configName];
+  }
+
+  /**
+   * Deploy to a stage - handles routing based on canReach()
+   */
+  async deployStage(stage: Stage, options: { branch?: string; commit?: string } = {}): Promise<DeployResult> {
+    const reach = AWSPipeline.canReach(stage, this._config);
+
+    if (!reach.reachable) {
+      return { success: false, error: reach.reason };
+    }
+
+    if (reach.via === 'workflow') {
+      // Would trigger GitHub Actions workflow
+      // For now, return message about workflow triggering
+      return { success: true, message: `Workflow trigger required for ${stage}` };
+    }
+
+    // via: 'local' - execute directly
+    if (stage === 'dev') {
+      return this.deploy(this._config, 'dev');
+    } else if (stage === 'prod') {
+      return this.deploy(this._config, 'prod');
+    }
+
+    return { success: false, error: `Unsupported stage: ${stage}` };
   }
 
   /**
@@ -286,7 +356,7 @@ class AWSPlugin {
 
       try {
         const repoName = config.name ?? 'app';
-        await AWSPlugin.sshExec(
+        await AWSPipeline.sshExec(
           envConfig,
           `
           cd ~/.factiii && docker compose stop ${repoName}-prod
@@ -305,4 +375,4 @@ class AWSPlugin {
   }
 }
 
-export default AWSPlugin;
+export default AWSPipeline;

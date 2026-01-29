@@ -340,15 +340,49 @@ This ensures:
 - Framework plugins check dependencies, configs
 - All checks run together, issues reported together
 
-### 2. SERVERS
-Infrastructure where applications run.
+### 2. SERVERS (OS Types)
+Operating system types that handle OS-specific commands and package management.
 
-**Examples:** Mac Mini, AWS EC2, Vercel, Ubuntu Server
+**Available OS Types:**
+- `mac` - macOS (Homebrew, launchctl)
+- `ubuntu` - Ubuntu Linux (apt, systemd)
+- `windows` - Windows Server (Chocolatey, Windows Services)
+- `amazon-linux` - Amazon Linux 2023 (dnf, systemd)
+- `alpine` - Alpine Linux (apk) - for containers
 
 **Responsibilities:**
-- Provision infrastructure
-- Deploy containers/applications
-- Manage server configuration
+- OS-specific package installation commands (Docker, Node.js, git)
+- OS-specific service management
+- Provide OS-specific scan/fix operations
+
+**Server plugins are NOT deployment targets.** They define how to interact with
+a specific operating system. Pipelines (like AWS, factiii) handle deployment
+orchestration and specify which OS types they support.
+
+**Required Static Properties for Server Plugins:**
+```typescript
+static readonly os: ServerOS = 'ubuntu';           // OS type
+static readonly packageManager: PackageManager = 'apt';  // Package manager
+static readonly serviceManager: ServiceManager = 'systemd'; // Service manager
+```
+
+**OS-Specific Installation Examples:**
+```typescript
+// Ubuntu
+static getDockerInstallCommand(): string {
+  return 'sudo apt-get update && sudo apt-get install -y docker.io';
+}
+
+// macOS
+static getDockerInstallCommand(): string {
+  return 'brew install --cask docker';
+}
+
+// Windows
+static getDockerInstallCommand(): string {
+  return 'choco install docker-desktop -y';
+}
+```
 
 ### 3. FRAMEWORKS
 Application frameworks and databases.
@@ -361,14 +395,33 @@ Application frameworks and databases.
 - Build and prepare applications
 
 ### 4. ADDONS
-Extensions to frameworks.
+Extensions to frameworks and infrastructure.
 
-**Examples:** Auth (Clerk, Auth.js), Payments (Stripe), Storage (S3)
+**Examples:** Auth (Clerk, Auth.js), Payments (Stripe), Storage (S3), Server Mode
 
 **Responsibilities:**
 - Configure integrations
 - Validate API keys
 - Setup SDK clients
+- Provide cross-cutting functionality
+
+**Server Mode Addon:**
+
+The `server-mode` addon configures machines as deployment servers:
+- Disables sleep/suspend
+- Enables SSH
+- Configures firewall rules
+- Provides OS-specific server hardening
+
+Enable in factiii.yml:
+```yaml
+staging:
+  domain: 192.168.1.100
+  server: mac
+  server_mode: true   # Enable server hardening (default: true)
+```
+
+Server-mode fixes are OS-aware and only run relevant fixes for the target OS.
 
 ## Plugin Structure
 
@@ -632,23 +685,37 @@ static fixes = [
     stage: 'dev',              // dev|secrets|staging|prod
     severity: 'critical',      // critical|warning|info
     description: 'Human-readable description',
-    
+
+    // Optional: Only run on specific OS types
+    os: 'ubuntu',              // mac|ubuntu|windows|amazon-linux|alpine
+    // Or multiple OS types:
+    // os: ['ubuntu', 'amazon-linux'],
+
     // Scan function - returns true if problem exists
     scan: async (config, rootDir) => {
       return !config.my_plugin?.api_key;
     },
-    
+
     // Fix function - returns true if fixed successfully
     fix: async (config, rootDir) => {
       // Auto-fix logic
       return true;
     },
-    
+
     // Manual fix instructions
     manualFix: 'Add api_key to factiii.yml'
   }
 ];
 ```
+
+**OS Filtering:**
+
+Fixes can optionally specify which OS types they apply to:
+- If `os` is not set, the fix runs on all OS types
+- If `os` is a string, the fix only runs on that OS
+- If `os` is an array, the fix runs on any of those OS types
+
+The pipeline filters fixes based on the target environment's `server` field.
 
 ### The Four Stages
 

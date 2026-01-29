@@ -65,9 +65,9 @@ export const secretsFixes: Fix[] = [
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
 
-      // Check if any environment uses AWS
+      // Check if any environment uses AWS pipeline
       const hasAwsEnv = Object.values(environments).some(env =>
-        env.server === 'aws' && env.access_key_id
+        env.pipeline === 'aws' && env.access_key_id
       );
       if (!hasAwsEnv) return false;
 

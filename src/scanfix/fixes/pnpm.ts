@@ -2,7 +2,7 @@
  * Shared pnpm Fixes
  *
  * Platform-aware pnpm installation checks.
- * Used by mac-mini and aws plugins.
+ * Used by mac, ubuntu, and aws plugins.
  */
 
 import * as fs from 'fs';

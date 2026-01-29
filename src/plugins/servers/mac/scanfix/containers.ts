@@ -1,5 +1,5 @@
 /**
- * Container management fixes for Mac Mini plugin
+ * Container management fixes for macOS plugin
  * Handles unmanaged container detection and cleanup
  */
 

@@ -1,5 +1,5 @@
 /**
- * Configuration-related fixes for Mac Mini plugin
+ * Configuration-related fixes for macOS plugin
  * Handles configuration checks and file validation
  */
 

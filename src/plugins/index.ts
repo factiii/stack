@@ -90,19 +90,44 @@ try {
   // Plugin not available
 }
 
-// Server plugins (new structure)
+// Server plugins (OS-based structure)
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const MacMiniPlugin = require('./servers/mac-mini/index').default as PluginClass;
-  registry.servers['mac-mini'] = MacMiniPlugin;
+  const MacPlugin = require('./servers/mac/index').default as PluginClass;
+  registry.servers['mac'] = MacPlugin;
 } catch {
   // Plugin not available
 }
 
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const AWSPlugin = require('./servers/aws/index').default as PluginClass;
-  registry.servers['aws'] = AWSPlugin;
+  const UbuntuPlugin = require('./servers/ubuntu/index').default as PluginClass;
+  registry.servers['ubuntu'] = UbuntuPlugin;
+} catch {
+  // Plugin not available
+}
+
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const WindowsPlugin = require('./servers/windows/index').default as PluginClass;
+  registry.servers['windows'] = WindowsPlugin;
+} catch {
+  // Plugin not available
+}
+
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const AmazonLinuxPlugin = require('./servers/amazon-linux/index').default as PluginClass;
+  registry.servers['amazon-linux'] = AmazonLinuxPlugin;
+} catch {
+  // Plugin not available
+}
+
+// AWS pipeline (moved from servers to pipelines)
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const AWSPipeline = require('./pipelines/aws/index').default as PluginClass;
+  registry.pipelines['aws'] = AWSPipeline;
 } catch {
   // Plugin not available
 }
@@ -112,6 +137,15 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const PrismaTrpcPlugin = require('./frameworks/prisma-trpc/index').default as PluginClass;
   registry.frameworks['prisma-trpc'] = PrismaTrpcPlugin;
+} catch {
+  // Plugin not available
+}
+
+// Addon plugins
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ServerModeAddon = require('./addons/server-mode/index').default as PluginClass;
+  registry.addons['server-mode'] = ServerModeAddon;
 } catch {
   // Plugin not available
 }

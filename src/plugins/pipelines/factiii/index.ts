@@ -224,32 +224,105 @@ class FactiiiPipeline {
   // ============================================================
 
   /**
-   * Find the directory containing Prisma schema
-   * Searches common monorepo locations
+   * Get the env file for a stage
+   * - dev: .env
+   * - staging: .env.staging
+   * - prod: .env.prod
    */
-  static findPrismaDir(rootDir: string): string | null {
-    const locations = [
-      '.',                    // root
-      'apps/server',          // monorepo
-      'packages/db',          // monorepo
-      'packages/database',    // monorepo
-      'server',               // simple
-      'backend',              // simple
-    ];
+  static getEnvFile(stage: Stage): string {
+    if (stage === 'dev') return '.env';
+    return '.env.' + stage;
+  }
 
-    for (const loc of locations) {
-      const schemaPath = path.join(rootDir, loc, 'prisma', 'schema.prisma');
-      if (fs.existsSync(schemaPath)) {
-        return path.join(rootDir, loc);
-      }
-      // Also check for prisma.config.ts
-      const configPath = path.join(rootDir, loc, 'prisma.config.ts');
-      if (fs.existsSync(configPath)) {
-        return path.join(rootDir, loc);
+  /**
+   * Load environment variables from a file
+   */
+  static loadEnvFile(rootDir: string, envFile: string): Record<string, string> {
+    const envPath = path.join(rootDir, envFile);
+    const env: Record<string, string> = {};
+
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          const eqIndex = trimmed.indexOf('=');
+          if (eqIndex > 0) {
+            const key = trimmed.substring(0, eqIndex);
+            const value = trimmed.substring(eqIndex + 1);
+            env[key] = value;
+          }
+        }
       }
     }
 
-    return null;
+    return env;
+  }
+
+  /**
+   * Find the directory containing Prisma (for db commands)
+   * Checks common monorepo locations
+   */
+  static findDbDir(rootDir: string): string {
+    const locations = [
+      '.',
+      'apps/server',
+      'packages/db',
+      'packages/database',
+      'server',
+      'backend',
+    ];
+
+    for (const loc of locations) {
+      const dir = path.join(rootDir, loc);
+      // Check for prisma.config.ts or prisma/schema.prisma
+      if (fs.existsSync(path.join(dir, 'prisma.config.ts')) ||
+          fs.existsSync(path.join(dir, 'prisma', 'schema.prisma'))) {
+        return dir;
+      }
+    }
+
+    // Default to root if nothing found
+    return rootDir;
+  }
+
+  /**
+   * Run a database command - uses docker exec for staging/prod
+   * @param command - The command to run (e.g., 'prisma migrate status' or 'pnpm db:seed')
+   * @param useNpx - Whether to prefix with npx (false for pnpm commands)
+   */
+  static runDbCommand(
+    command: string,
+    stage: Stage,
+    config: FactiiiConfig,
+    rootDir: string,
+    useNpx: boolean = true
+  ): void {
+    const prefix = useNpx ? 'npx ' : '';
+
+    if (stage === 'dev') {
+      // Dev: run directly on host
+      const dbDir = FactiiiPipeline.findDbDir(rootDir);
+      const envFile = FactiiiPipeline.getEnvFile(stage);
+      const envVars = FactiiiPipeline.loadEnvFile(rootDir, envFile);
+
+      console.log('  Directory: ' + dbDir);
+      console.log('  Env file: ' + rootDir + '/' + envFile);
+
+      execSync(prefix + command, {
+        cwd: dbDir,
+        stdio: 'inherit',
+        env: { ...process.env, ...envVars },
+      });
+    } else {
+      // Staging: run inside Docker container
+      const containerName = config.name + '-' + stage;
+      console.log('  Container: ' + containerName);
+
+      execSync('docker exec ' + containerName + ' ' + prefix + command, {
+        stdio: 'inherit',
+      });
+    }
   }
 
   static readonly commands: PluginCommand[] = [
@@ -258,17 +331,19 @@ class FactiiiPipeline {
     // ────────────────────────────────────────────────────────────
     {
       name: 'seed',
-      description: 'Seed the database with initial data',
+      description: 'Seed the database with initial data (dev/staging only)',
       category: 'db',
-      stages: ['dev', 'staging', 'prod'],
+      stages: ['dev', 'staging'], // No prod - destructive
       prodSafety: 'destructive',
-      execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
-        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
-        if (!prismaDir) {
-          return { success: false, error: 'Could not find Prisma schema directory' };
-        }
+      execute: async (stage, _options, config, rootDir): Promise<CommandResult> => {
         try {
-          execSync('npx prisma db seed', { cwd: prismaDir, stdio: 'inherit' });
+          if (stage === 'dev') {
+            // Dev: use pnpm
+            FactiiiPipeline.runDbCommand('pnpm db:seed', stage, config, rootDir, false);
+          } else {
+            // Staging: use npm run (more commonly available in Docker)
+            FactiiiPipeline.runDbCommand('npm run db:seed', stage, config, rootDir, false);
+          }
           return { success: true, message: 'Database seeded successfully' };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -281,13 +356,9 @@ class FactiiiPipeline {
       category: 'db',
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'caution',
-      execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
-        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
-        if (!prismaDir) {
-          return { success: false, error: 'Could not find Prisma schema directory' };
-        }
+      execute: async (stage, _options, config, rootDir): Promise<CommandResult> => {
         try {
-          execSync('npx prisma migrate deploy', { cwd: prismaDir, stdio: 'inherit' });
+          FactiiiPipeline.runDbCommand('prisma migrate deploy', stage, config, rootDir);
           return { success: true, message: 'Migrations applied successfully' };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -296,17 +367,13 @@ class FactiiiPipeline {
     },
     {
       name: 'reset',
-      description: 'Reset database and re-run all migrations (DATA LOSS!)',
+      description: 'Reset database and re-run all migrations (dev/staging only)',
       category: 'db',
-      stages: ['dev', 'staging', 'prod'],
+      stages: ['dev', 'staging'], // No prod - destructive
       prodSafety: 'destructive',
-      execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
-        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
-        if (!prismaDir) {
-          return { success: false, error: 'Could not find Prisma schema directory' };
-        }
+      execute: async (stage, _options, config, rootDir): Promise<CommandResult> => {
         try {
-          execSync('npx prisma migrate reset --force', { cwd: prismaDir, stdio: 'inherit' });
+          FactiiiPipeline.runDbCommand('prisma migrate reset --force', stage, config, rootDir);
           return { success: true, message: 'Database reset successfully' };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -319,13 +386,9 @@ class FactiiiPipeline {
       category: 'db',
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'safe',
-      execute: async (_stage, _options, _config, rootDir): Promise<CommandResult> => {
-        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
-        if (!prismaDir) {
-          return { success: false, error: 'Could not find Prisma schema directory' };
-        }
+      execute: async (stage, _options, config, rootDir): Promise<CommandResult> => {
         try {
-          execSync('npx prisma migrate status', { cwd: prismaDir, stdio: 'inherit' });
+          FactiiiPipeline.runDbCommand('prisma migrate status', stage, config, rootDir);
           return { success: true };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -437,13 +500,18 @@ class FactiiiPipeline {
       options: [
         { flags: '-o, --output <path>', description: 'Output file path' },
       ],
-      execute: async (stage, options, _config, _rootDir): Promise<CommandResult> => {
+      execute: async (stage, options, _config, rootDir): Promise<CommandResult> => {
+        const envFile = FactiiiPipeline.getEnvFile(stage);
+        const envVars = FactiiiPipeline.loadEnvFile(rootDir, envFile); // env file in root
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const outputPath = (options.output as string) ?? 'backup-' + stage + '-' + timestamp + '.sql';
 
-        const dbUrl = process.env.DATABASE_URL;
+        console.log('  Env file: ' + rootDir + '/' + envFile);
+
+        const dbUrl = envVars.DATABASE_URL || process.env.DATABASE_URL;
+
         if (!dbUrl) {
-          return { success: false, error: 'DATABASE_URL not set' };
+          return { success: false, error: 'DATABASE_URL not set in ' + envFile };
         }
 
         try {
@@ -463,15 +531,21 @@ class FactiiiPipeline {
       options: [
         { flags: '-i, --input <path>', description: 'Backup file to restore' },
       ],
-      execute: async (_stage, options, _config, _rootDir): Promise<CommandResult> => {
+      execute: async (stage, options, _config, rootDir): Promise<CommandResult> => {
         const inputPath = options.input as string;
         if (!inputPath) {
           return { success: false, error: 'Input file required (--input)' };
         }
 
-        const dbUrl = process.env.DATABASE_URL;
+        const envFile = FactiiiPipeline.getEnvFile(stage);
+        const envVars = FactiiiPipeline.loadEnvFile(rootDir, envFile); // env file in root
+
+        console.log('  Env file: ' + rootDir + '/' + envFile);
+
+        const dbUrl = envVars.DATABASE_URL || process.env.DATABASE_URL;
+
         if (!dbUrl) {
-          return { success: false, error: 'DATABASE_URL not set' };
+          return { success: false, error: 'DATABASE_URL not set in ' + envFile };
         }
 
         try {
@@ -488,37 +562,34 @@ class FactiiiPipeline {
       category: 'backup',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',
-      execute: async (stage, _options, config, rootDir): Promise<CommandResult> => {
+      execute: async (stage, _options, config, _rootDir): Promise<CommandResult> => {
+        const containerName = config.name + '-' + stage;
         const results: string[] = [];
+
+        console.log('  Container: ' + containerName);
 
         // Check container status
         try {
-          const serviceName = config.name + '-' + stage;
-          execSync('docker ps | grep ' + serviceName, { stdio: 'pipe' });
+          execSync('docker ps | grep ' + containerName, { stdio: 'pipe' });
           results.push('Container: Running');
         } catch {
           results.push('Container: NOT RUNNING');
         }
 
-        // Check database connectivity
-        const prismaDir = FactiiiPipeline.findPrismaDir(rootDir);
-        if (prismaDir) {
-          try {
-            execSync('npx prisma db execute --stdin <<< "SELECT 1"', {
-              cwd: prismaDir,
-              stdio: 'pipe',
-            });
-            results.push('Database: Connected');
-          } catch {
-            results.push('Database: NOT CONNECTED');
-          }
-        } else {
-          results.push('Database: Prisma not found');
+        // Check database connectivity (run inside container)
+        try {
+          execSync(
+            'docker exec ' + containerName + ' npx prisma db execute --stdin <<< "SELECT 1"',
+            { stdio: 'pipe' }
+          );
+          results.push('Database: Connected');
+        } catch {
+          results.push('Database: NOT CONNECTED');
         }
 
         console.log('\nHealth Check Results:');
         for (const r of results) {
-          const icon = r.includes('NOT') || r.includes('not found') ? 'X' : 'OK';
+          const icon = r.includes('NOT') ? 'X' : 'OK';
           console.log('  [' + icon + '] ' + r);
         }
 

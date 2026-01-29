@@ -37,16 +37,17 @@ Factiii Stack uses a **plugin-based architecture** where each plugin:
 ```yaml
 name: my-app
 
-environments:
-  staging:
-    domain: staging.myapp.com
-    host: 192.168.1.100
-  prod:
-    domain: myapp.com
-    host: 54.123.45.67
+# Environment configurations
+staging:
+  domain: staging.myapp.com
+  server: mac             # OS type: mac, ubuntu, windows, amazon-linux
+  server_mode: true       # Enable server hardening (default: true)
 
-aws:
-  config: free-tier  # or: ec2, standard, enterprise
+prod:
+  domain: myapp.com
+  server: ubuntu          # OS type for production
+  pipeline: aws           # Use AWS pipeline for deployment
+  config: free-tier       # AWS tier: ec2, free-tier, standard, enterprise
   access_key_id: AKIAXXXXXXXX
   region: us-east-1
 
@@ -55,7 +56,6 @@ prisma:
   version: null      # Optional override
 
 # Exclude Docker containers from unmanaged container cleanup
-# Add container names that should not be stopped during cleanup:
 container_exclusions:
   - factiii_postgres
   - legacy_container
@@ -181,13 +181,19 @@ See [STANDARDS.md](STANDARDS.md) for full documentation of the stage execution p
 
 **Pipelines**
 - `factiii` - GitHub Actions CI/CD with thin workflows
+- `aws` - AWS infrastructure (EC2, ECR, free-tier configs)
 
-**Servers**
-- `mac-mini` - Deploy to Mac Mini via SSH (staging)
-- `aws` - Deploy to AWS (production)
+**Servers (OS Types)**
+- `mac` - macOS (Homebrew, launchctl)
+- `ubuntu` - Ubuntu Linux (apt, systemd)
+- `windows` - Windows Server (Chocolatey) - template
+- `amazon-linux` - Amazon Linux 2023 (dnf, systemd)
 
 **Frameworks**
 - `prisma-trpc` - Prisma database + tRPC API
+
+**Addons**
+- `server-mode` - Configure machines as deployment servers (disable sleep, enable SSH, etc.)
 
 ### How Plugins Work
 

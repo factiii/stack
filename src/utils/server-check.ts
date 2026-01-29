@@ -285,14 +285,17 @@ export async function detectServerEnvironment(
     hasHomebrew: false,
     hasApt: false,
     hasYum: false,
+    hasDnf: false,
+    hasChoco: false,
+    hasApk: false,
   };
 
   // Check OS
   const osResult = sshCommand(sshKey, ssh_user, host, 'uname -s');
   if (osResult.success && osResult.output) {
     const os = osResult.output.toLowerCase();
-    if (os.includes('darwin')) env.os = 'macos';
-    else if (os.includes('linux')) env.os = 'linux';
+    if (os.includes('darwin')) env.os = 'mac';
+    else if (os.includes('linux')) env.os = 'ubuntu'; // Default Linux to ubuntu
   }
 
   // Check package managers
@@ -305,10 +308,14 @@ export async function detectServerEnvironment(
   const yumResult = sshCommand(sshKey, ssh_user, host, 'which yum');
   env.hasYum = yumResult.success;
 
+  const dnfResult = sshCommand(sshKey, ssh_user, host, 'which dnf');
+  env.hasDnf = dnfResult.success;
+
   // Determine primary package manager
   if (env.hasHomebrew) env.packageManager = 'brew';
   else if (env.hasApt) env.packageManager = 'apt';
-  else if (env.hasYum) env.packageManager = 'yum';
+  else if (env.hasDnf) env.packageManager = 'dnf';
+  else if (env.hasYum) env.packageManager = 'dnf'; // yum is symlinked to dnf on modern systems
 
   return env;
 }
@@ -414,7 +421,7 @@ export async function installServerDependencies(
     console.log('      Docker installation requires manual setup.');
     console.log(`      Please SSH to server and install Docker:`);
     console.log(`        ssh ${ssh_user}@${host}`);
-    if (serverEnv.os === 'macos') {
+    if (serverEnv.os === 'mac') {
       console.log('        brew install --cask docker');
     } else {
       console.log('        curl -fsSL https://get.docker.com | sh');

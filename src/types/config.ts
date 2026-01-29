@@ -5,23 +5,32 @@
  */
 
 /**
+ * Server OS types (duplicated here to avoid circular imports)
+ */
+export type ServerOSConfig = 'mac' | 'ubuntu' | 'windows' | 'amazon-linux' | 'alpine';
+
+/**
  * Environment configuration (staging, prod, etc.)
  *
  * Environments are top-level keys with all their config inline.
- * Each environment specifies which server plugin to use and can have
- * server-specific or plugin-specific configuration.
+ * Each environment specifies which server OS to use and can have
+ * pipeline-specific or plugin-specific configuration.
  */
 export interface EnvironmentConfig {
   // Required fields
-  server: string;  // Server plugin name (aws, mac-mini, etc.)
-  domain: string;  // Domain for nginx/SSL AND SSH connection
+  server: ServerOSConfig;  // Server OS type (mac, ubuntu, windows, etc.)
+  domain: string;          // Domain for nginx/SSL AND SSH connection
 
   // Optional base fields
   ssh_user?: string;
   env_file?: string;
 
-  // AWS-specific fields (when server: aws)
-  config?: 'ec2' | 'free-tier' | 'standard' | 'enterprise';
+  // Server mode addon - enables server hardening fixes (default: true for staging/prod)
+  server_mode?: boolean;
+
+  // Pipeline-specific fields (when using aws pipeline)
+  pipeline?: string;  // Pipeline plugin name (factiii, aws, etc.)
+  config?: 'ec2' | 'free-tier' | 'standard' | 'enterprise';  // AWS tier
   access_key_id?: string;
   region?: string;
 

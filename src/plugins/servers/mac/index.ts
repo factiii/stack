@@ -1,9 +1,8 @@
 /**
- * Mac Mini Server Plugin
+ * Mac Server Plugin
  *
- * Deploys containers to a Mac Mini server via SSH.
- * Typically used for staging environments (local network or Tailscale).
- * Supports dev stage for local Docker development.
+ * Handles macOS-specific package management and commands.
+ * Used for deploying to Mac servers or local Mac development.
  *
  * ============================================================
  * PLUGIN STRUCTURE STANDARD
@@ -22,7 +21,7 @@
  *   - Only create files if they have content (no blank files)
  *
  * **index.ts** - Main plugin class
- *   - Static metadata (id, name, category, version)
+ *   - Static metadata (id, name, category, version, os, packageManager, serviceManager)
  *   - shouldLoad() - Determines if plugin should load
  *   - Imports and combines all scanfix arrays
  *   - Imports and uses environment-specific methods
@@ -47,6 +46,9 @@ import type {
   EnvironmentConfig,
   DeployResult,
   EnsureServerReadyOptions,
+  ServerOS,
+  PackageManager,
+  ServiceManager,
 } from '../../../types/index.js';
 
 // Import shared scanfix factories
@@ -69,15 +71,22 @@ import { deployStaging, ensureServerReady as stagingEnsureServerReady } from './
 // Import SSH helper
 import { sshExec } from '../../../utils/ssh-helper.js';
 
-class MacMiniPlugin {
+class MacPlugin {
   // ============================================================
   // STATIC METADATA
   // ============================================================
 
-  static readonly id = 'mac-mini';
-  static readonly name = 'Mac Mini Server';
+  static readonly id = 'mac';
+  static readonly name = 'Mac Server';
   static readonly category: 'server' = 'server';
   static readonly version = '1.0.0';
+
+  /** The OS this server plugin handles */
+  static readonly os: ServerOS = 'mac';
+  /** Package manager for macOS */
+  static readonly packageManager: PackageManager = 'brew';
+  /** Service manager for macOS */
+  static readonly serviceManager: ServiceManager = 'launchctl';
 
   // Env vars this plugin requires
   static readonly requiredEnvVars: string[] = [];
@@ -95,7 +104,7 @@ class MacMiniPlugin {
 
   /**
    * Determine if this plugin should be loaded for this project
-   * Loads if config has staging host with local/private IP, or on init (no config)
+   * Loads if config has environment with server: 'mac'
    */
   static async shouldLoad(_rootDir: string, config: FactiiiConfig): Promise<boolean> {
     // Dynamic import to avoid circular dependencies
@@ -104,8 +113,8 @@ class MacMiniPlugin {
     const environments = extractEnvironments(config);
 
     for (const [name, env] of Object.entries(environments)) {
-      // Load if environment explicitly uses 'mac-mini' server
-      if (env.server === 'mac-mini') {
+      // Load if environment explicitly uses 'mac'
+      if (env.server === 'mac') {
         return true;
       }
 
@@ -127,13 +136,13 @@ class MacMiniPlugin {
   static helpText: Record<string, string> = {
     SSH: `
    SSH private key for accessing the server.
-   
+
    Step 1: Generate a new SSH key pair (if needed):
    ssh-keygen -t ed25519 -C "deploy-key" -f ~/.ssh/deploy_key
-   
+
    Step 2: Add PUBLIC key to server:
    ssh-copy-id -i ~/.ssh/deploy_key.pub ubuntu@YOUR_HOST
-   
+
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
    cat ~/.ssh/deploy_key`,
   };
@@ -142,22 +151,23 @@ class MacMiniPlugin {
   // FIXES - All issues this plugin can detect and resolve
   // ============================================================
   // Combined from scanfix/ folder files
+  // All fixes are OS-specific to Mac
   // ============================================================
 
   static readonly fixes = [
-    // Dev stage - shared fixes
-    ...getDockerFixes('dev'),
+    // Dev stage - shared fixes (with OS filter)
+    ...getDockerFixes('dev').map(fix => ({ ...fix, os: 'mac' as ServerOS })),
 
-    // Staging stage - shared fixes
-    ...getDockerFixes('staging'),
-    ...getNodeFixes('staging'),
-    ...getGitFixes('staging'),
-    ...getPnpmFixes('staging'),
-    createCertbotFix('staging', 'staging'),
+    // Staging stage - shared fixes (with OS filter)
+    ...getDockerFixes('staging').map(fix => ({ ...fix, os: 'mac' as ServerOS })),
+    ...getNodeFixes('staging').map(fix => ({ ...fix, os: 'mac' as ServerOS })),
+    ...getGitFixes('staging').map(fix => ({ ...fix, os: 'mac' as ServerOS })),
+    ...getPnpmFixes('staging').map(fix => ({ ...fix, os: 'mac' as ServerOS })),
+    { ...createCertbotFix('staging', 'staging'), os: 'mac' as ServerOS },
 
-    // Plugin-specific fixes
-    ...containerFixes,
-    ...configFixes,
+    // Plugin-specific fixes (with OS filter)
+    ...containerFixes.map(fix => ({ ...fix, os: 'mac' as ServerOS })),
+    ...configFixes.map(fix => ({ ...fix, os: 'mac' as ServerOS })),
   ];
 
   // ============================================================
@@ -165,7 +175,7 @@ class MacMiniPlugin {
   // ============================================================
 
   /**
-   * Auto-detect Mac Mini configuration
+   * Auto-detect macOS configuration
    */
   static async detectConfig(_rootDir: string): Promise<{ ssh_user: string }> {
     return {
@@ -240,7 +250,7 @@ class MacMiniPlugin {
 
       try {
         const repoName = config.name ?? 'app';
-        await MacMiniPlugin.sshExec(
+        await MacPlugin.sshExec(
           envConfig,
           `
           cd ~/.factiii && docker compose stop ${repoName}-staging
@@ -259,4 +269,4 @@ class MacMiniPlugin {
   }
 }
 
-export default MacMiniPlugin;
+export default MacPlugin;

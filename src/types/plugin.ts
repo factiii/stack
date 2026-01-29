@@ -13,6 +13,22 @@ import type { DeployOptions } from './cli.js';
 export type Stage = 'dev' | 'secrets' | 'staging' | 'prod';
 
 /**
+ * Server OS types
+ * Used to identify which operating system a server runs
+ */
+export type ServerOS = 'mac' | 'ubuntu' | 'windows' | 'amazon-linux' | 'alpine';
+
+/**
+ * Package managers by OS
+ */
+export type PackageManager = 'brew' | 'apt' | 'choco' | 'winget' | 'dnf' | 'apk';
+
+/**
+ * Service managers by OS
+ */
+export type ServiceManager = 'launchctl' | 'systemd' | 'windows-service';
+
+/**
  * Fix severity levels
  */
 export type Severity = 'critical' | 'warning' | 'info';
@@ -91,6 +107,8 @@ export interface Fix {
   severity: Severity;
   description: string;
   plugin?: string;
+  /** Optional: Only run this fix on specific OS types */
+  os?: ServerOS | ServerOS[];
   scan: (config: FactiiiConfig, rootDir: string) => Promise<boolean>;
   fix?: ((config: FactiiiConfig, rootDir: string) => Promise<boolean>) | null;
   manualFix: string;
@@ -152,11 +170,14 @@ export interface ServerSoftwareChecks {
  * Server environment detection result
  */
 export interface ServerEnvironment {
-  os: 'macos' | 'linux' | 'unknown';
-  packageManager: 'brew' | 'apt' | 'yum' | null;
+  os: ServerOS | 'unknown';
+  packageManager: PackageManager | null;
   hasHomebrew: boolean;
   hasApt: boolean;
   hasYum: boolean;
+  hasDnf: boolean;
+  hasChoco: boolean;
+  hasApk: boolean;
 }
 
 /**
@@ -293,9 +314,18 @@ export interface PipelinePluginInstance extends PluginInstance {
 
 /**
  * Server plugin static interface
+ *
+ * Server plugins represent OS types (mac, ubuntu, windows, etc.)
+ * and handle OS-specific package management and commands.
  */
 export interface ServerPluginStatic extends PluginStatic {
   readonly category: 'server';
+  /** The OS this server plugin handles */
+  readonly os: ServerOS;
+  /** Package manager for this OS */
+  readonly packageManager: PackageManager;
+  /** Service manager for this OS */
+  readonly serviceManager: ServiceManager;
   sshExec?(envConfig: { host: string; ssh_user?: string }, command: string): Promise<string>;
 }
 

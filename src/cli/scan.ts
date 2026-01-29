@@ -65,7 +65,8 @@ import yaml from 'js-yaml';
 
 import { loadRelevantPlugins } from '../plugins/index.js';
 import GitHubWorkflowMonitor from '../utils/github-workflow-monitor.js';
-import type { FactiiiConfig, Stage, Fix, Reachability, ScanOptions, ScanProblems } from '../types/index.js';
+import type { FactiiiConfig, Stage, Fix, Reachability, ScanOptions, ScanProblems, ServerOS } from '../types/index.js';
+import { extractEnvironments } from '../utils/config-helpers.js';
 
 interface PluginClass {
   id: string;
@@ -442,9 +443,32 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
     console.log('🔍 Scanning...\n');
   }
 
+  // Get target server OS for each stage (for OS filtering)
+  const environments = extractEnvironments(config);
+  const stageToOS: Record<string, ServerOS | undefined> = {};
+  for (const [name, env] of Object.entries(environments)) {
+    // Map environment names to stages
+    if (name.startsWith('staging') || name.startsWith('stage-')) {
+      stageToOS['staging'] = env.server as ServerOS | undefined;
+    } else if (name.startsWith('prod') || name === 'production') {
+      stageToOS['prod'] = env.server as ServerOS | undefined;
+    }
+  }
+
   for (const fix of allFixes) {
     // Skip if stage not in reachable stages
     if (!reachableStages.includes(fix.stage)) continue;
+
+    // OS filtering: Skip fixes that don't match the target OS
+    if (fix.os) {
+      const targetOS = stageToOS[fix.stage];
+      if (targetOS) {
+        const fixOSList = Array.isArray(fix.os) ? fix.os : [fix.os];
+        if (!fixOSList.includes(targetOS)) {
+          continue; // Skip this fix - OS doesn't match
+        }
+      }
+    }
 
     const startTime = performance.now();
     try {

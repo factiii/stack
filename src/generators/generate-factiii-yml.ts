@@ -37,16 +37,25 @@ function loadAllPlugins(): PluginWithSchema[] {
   // Load server plugins
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const MacMiniPlugin = require('../plugins/servers/mac-mini') as PluginWithSchema;
-    plugins.push(MacMiniPlugin);
+    const MacPlugin = require('../plugins/servers/mac') as PluginWithSchema;
+    plugins.push(MacPlugin);
   } catch {
     // Plugin not available
   }
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const AWSPlugin = require('../plugins/servers/aws') as PluginWithSchema;
-    plugins.push(AWSPlugin);
+    const UbuntuPlugin = require('../plugins/servers/ubuntu') as PluginWithSchema;
+    plugins.push(UbuntuPlugin);
+  } catch {
+    // Plugin not available
+  }
+
+  // Load pipeline plugins (AWS is now a pipeline, not a server)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const AWSPipeline = require('../plugins/pipelines/aws') as PluginWithSchema;
+    plugins.push(AWSPipeline);
   } catch {
     // Plugin not available
   }
@@ -89,13 +98,14 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
     // ENVIRONMENTS (top-level keys)
     // ============================================================
     staging: {
-      server: 'mac-mini',  // Server plugin to use
+      server: 'mac',  // Server OS type (mac, ubuntu, windows, amazon-linux)
       domain: 'EXAMPLE-staging.yourdomain.com',  // Used for nginx AND SSH
       env_file: '.env.staging',
     },
 
     prod: {
-      server: 'aws',  // Server plugin to use
+      server: 'ubuntu',  // Server OS type
+      pipeline: 'aws',   // Use AWS pipeline for deployment
       domain: 'EXAMPLE-yourdomain.com',  // Used for nginx AND SSH
 
       // AWS-specific config (when server: aws)
@@ -135,13 +145,14 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
 #
 # Example - Additional staging environment:
 # staging2:
-#   server: mac-mini
+#   server: mac
 #   domain: staging2.yourdomain.com
 #   env_file: .env.staging2
 #
 # Example - Additional prod environment:
 # prod2:
-#   server: aws
+#   server: ubuntu
+#   pipeline: aws
 #   domain: app2.yourdomain.com
 #   config: free-tier
 #   access_key_id: EXAMPLE-AKIAXXXXXXXX

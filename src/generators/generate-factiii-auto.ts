@@ -62,16 +62,25 @@ function loadAllPlugins(): PluginWithDetect[] {
   // Load server plugins
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const MacMiniPlugin = require('../plugins/servers/mac-mini') as PluginWithDetect;
-    plugins.push(MacMiniPlugin);
+    const MacPlugin = require('../plugins/servers/mac') as PluginWithDetect;
+    plugins.push(MacPlugin);
   } catch {
     // Plugin not available
   }
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const AWSPlugin = require('../plugins/servers/aws') as PluginWithDetect;
-    plugins.push(AWSPlugin);
+    const UbuntuPlugin = require('../plugins/servers/ubuntu') as PluginWithDetect;
+    plugins.push(UbuntuPlugin);
+  } catch {
+    // Plugin not available
+  }
+
+  // Load pipeline plugins (AWS is now a pipeline, not a server)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const AWSPipeline = require('../plugins/pipelines/aws') as PluginWithDetect;
+    plugins.push(AWSPipeline);
   } catch {
     // Plugin not available
   }

@@ -1,8 +1,13 @@
 /**
  * Server Plugin Interface
  *
- * Base class for all server plugins (mac-mini, aws, etc.)
- * Server plugins handle deployment to specific server types.
+ * Base class for all server plugins (mac, ubuntu, windows, etc.)
+ * Server plugins represent OS types and handle OS-specific commands,
+ * package management, and service management.
+ *
+ * Server plugins are NOT deployment targets - they define how to interact
+ * with a specific operating system. Pipelines (like AWS, factiii) handle
+ * the deployment orchestration and specify which OS types they support.
  */
 
 import type {
@@ -11,6 +16,9 @@ import type {
   Fix,
   DeployResult,
   EnsureServerReadyOptions,
+  ServerOS,
+  PackageManager,
+  ServiceManager,
 } from '../../types/index.js';
 
 /**
@@ -25,6 +33,13 @@ export abstract class ServerPlugin {
   static readonly name: string = 'Server Interface';
   static readonly category: 'server' = 'server';
   static readonly version: string = '1.0.0';
+
+  /** The OS this server plugin handles */
+  static readonly os: ServerOS;
+  /** Package manager for this OS (brew, apt, choco, dnf, apk) */
+  static readonly packageManager: PackageManager;
+  /** Service manager for this OS (launchctl, systemd, windows-service) */
+  static readonly serviceManager: ServiceManager;
 
   static readonly fixes: Fix[] = [];
   static readonly requiredEnvVars: string[] = [];

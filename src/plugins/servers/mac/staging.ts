@@ -1,5 +1,5 @@
 /**
- * Staging environment operations for Mac Mini plugin
+ * Staging environment operations for macOS plugin
  * Handles staging deployment, server preparation, and staging-specific helpers
  */
 
@@ -404,9 +404,9 @@ export async function ensureServerReady(
   environment: string,
   options: EnsureServerReadyOptions = {}
 ): Promise<DeployResult> {
-  // Mac Mini only handles staging-type environments (staging, staging2, etc.)
+  // macOS server only handles staging-type environments (staging, staging2, etc.)
   if (!environment.startsWith('staging') && !environment.startsWith('stage-')) {
-    return { success: true, message: 'Mac Mini only handles staging environments' };
+    return { success: true, message: 'macOS server only handles staging environments' };
   }
 
   // Get environment config (supports both v1.x and v2.0.0+ formats)

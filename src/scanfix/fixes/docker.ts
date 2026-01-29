@@ -2,7 +2,7 @@
  * Shared Docker Fixes
  *
  * Platform-aware Docker installation and running status checks.
- * Used by mac-mini and aws plugins.
+ * Used by mac, ubuntu, and aws plugins.
  */
 
 import { execSync } from 'child_process';

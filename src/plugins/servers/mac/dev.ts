@@ -1,5 +1,5 @@
 /**
- * Dev environment operations for Mac Mini plugin
+ * Dev environment operations for macOS plugin
  * Handles local development deployment
  */
 
@@ -11,7 +11,7 @@ import type { DeployResult } from '../../../types/index.js';
  * Deploy to local dev environment
  */
 export async function deployDev(): Promise<DeployResult> {
-  console.log('   🐳 Starting local dev containers...');
+  console.log('   Starting local dev containers...');
 
   try {
     // Check for docker-compose file
@@ -35,4 +35,3 @@ export async function deployDev(): Promise<DeployResult> {
     };
   }
 }
-

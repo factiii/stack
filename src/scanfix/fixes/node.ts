@@ -2,7 +2,7 @@
  * Shared Node.js Fixes
  *
  * Platform-aware Node.js installation checks.
- * Used by mac-mini and aws plugins.
+ * Used by mac, ubuntu, and aws plugins.
  */
 
 import { execSync } from 'child_process';
