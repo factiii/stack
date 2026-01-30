@@ -20,33 +20,37 @@ export async function init(options: InitOptions = {}): Promise<void> {
   const factiiiAutoYmlPath = path.join(rootDir, 'factiiiAuto.yml');
 
   // Check if files exist and prompt if not using --force
-  let shouldOverwriteYml = options.force ?? false;
-  let shouldOverwriteAuto = options.force ?? false;
+  let shouldCreateYml = options.force ?? false;
+  let shouldCreateAuto = options.force ?? false;
 
-  if (fs.existsSync(factiiiYmlPath) && !options.force) {
-    shouldOverwriteYml = await confirm('factiii.yml already exists. Overwrite it?', false);
-    if (!shouldOverwriteYml) {
+  if (!fs.existsSync(factiiiYmlPath)) {
+    shouldCreateYml = true;  // File doesn't exist, create it
+  } else if (!options.force) {
+    shouldCreateYml = await confirm('factiii.yml already exists. Overwrite it?', false);
+    if (!shouldCreateYml) {
       console.log('⏭️  Skipping factiii.yml');
     }
   }
 
-  if (fs.existsSync(factiiiAutoYmlPath) && !options.force) {
-    shouldOverwriteAuto = await confirm('factiiiAuto.yml already exists. Overwrite it?', false);
-    if (!shouldOverwriteAuto) {
+  if (!fs.existsSync(factiiiAutoYmlPath)) {
+    shouldCreateAuto = true;  // File doesn't exist, create it
+  } else if (!options.force) {
+    shouldCreateAuto = await confirm('factiiiAuto.yml already exists. Overwrite it?', false);
+    if (!shouldCreateAuto) {
       console.log('⏭️  Skipping factiiiAuto.yml');
     }
   }
 
   // Generate factiii.yml
-  if (shouldOverwriteYml) {
+  if (shouldCreateYml) {
     const created = generateFactiiiYml(rootDir, { force: true });
     if (created) {
       // Generate factiiiAuto.yml (always update if yml was created/updated)
-      await generateFactiiiAuto(rootDir, { force: shouldOverwriteAuto });
+      await generateFactiiiAuto(rootDir, { force: shouldCreateAuto });
     }
   } else {
-    // factiii.yml not overwritten, but check if we should update factiiiAuto.yml
-    if (shouldOverwriteAuto) {
+    // factiii.yml not created, but check if we should update factiiiAuto.yml
+    if (shouldCreateAuto) {
       await generateFactiiiAuto(rootDir, { force: true });
     } else if (fs.existsSync(factiiiYmlPath)) {
       // factiii.yml exists and wasn't overwritten, but auto might need updating

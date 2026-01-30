@@ -90,10 +90,6 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
     ssl_email: 'EXAMPLE-admin@yourdomain.com',
     pipeline: 'factiii',  // Pipeline plugin (e.g., factiii for GitHub Actions)
 
-    // Optional config fields
-    prisma_schema: null, // Optional: override auto-detected schema path
-    prisma_version: null, // Optional: override auto-detected version
-
     // ============================================================
     // ENVIRONMENTS (top-level keys)
     // ============================================================
