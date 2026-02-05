@@ -76,32 +76,30 @@ jobs:
           echo "staging_host=$STAGING_HOST" >> $GITHUB_OUTPUT
           echo "staging_ssh_user=$STAGING_SSH_USER" >> $GITHUB_OUTPUT
 
-      - name: Setup SSH
+      - name: Setup Node.js
+        if: steps.check_env.outputs.has_env == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Load SSH keys from Ansible Vault
         if: steps.check_env.outputs.has_env == 'true'
         env:
-          SSH_KEY: ${{ inputs.environment == 'staging' && secrets.STAGING_SSH || secrets.PROD_SSH }}
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
         run: |
-          if [ -z "$SSH_KEY" ]; then
-            echo "❌ Missing ${{ inputs.environment == 'staging' && 'STAGING_SSH' || 'PROD_SSH' }} secret"
+          if [ -z "$ANSIBLE_VAULT_PASSWORD" ]; then
+            echo "❌ Missing ANSIBLE_VAULT_PASSWORD secret (vault password)"
             exit 1
           fi
           
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-
-      - name: Setup staging SSH (for prod builds)
-        if: steps.check_env.outputs.has_env == 'true' && inputs.environment == 'prod'
-        env:
-          STAGING_SSH_KEY: ${{ secrets.STAGING_SSH }}
-        run: |
-          if [ -z "$STAGING_SSH_KEY" ]; then
-            echo "❌ Missing STAGING_SSH secret (needed to build prod image)"
-            exit 1
-          fi
+          npx factiii secrets write-ssh-keys
           
-          echo "$STAGING_SSH_KEY" > ~/.ssh/staging_deploy_key
-          chmod 600 ~/.ssh/staging_deploy_key
+          # Create deploy_key symlink for current environment
+          if [ "${{ inputs.environment }}" == "staging" ]; then
+            ln -sf ~/.ssh/staging_deploy_key ~/.ssh/deploy_key
+          else
+            ln -sf ~/.ssh/prod_deploy_key ~/.ssh/deploy_key
+          fi
 
       - name: Build production image on staging (prod only)
         if: steps.check_env.outputs.has_env == 'true' && inputs.environment == 'prod'
@@ -190,7 +188,7 @@ jobs:
              fi"
           
           DEPLOY_EXIT_CODE=$?
-          rm -f ~/.ssh/deploy_key ~/.ssh/staging_deploy_key
+          rm -f ~/.ssh/deploy_key ~/.ssh/staging_deploy_key ~/.ssh/prod_deploy_key
           
           if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
             echo "✅ Deployment complete!"

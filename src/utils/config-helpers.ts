@@ -29,6 +29,7 @@ export const RESERVED_CONFIG_KEYS = [
   'prisma_version',
   'container_exclusions',
   'trusted_plugins',
+  'ansible',  // Ansible Vault configuration (not an environment)
 ] as const;
 
 /**

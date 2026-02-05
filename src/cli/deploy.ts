@@ -85,20 +85,8 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   // Dependencies: extractEnvironments, getStageFromEnvironment
   // ============================================================
 
-  // Validate environment exists in config
-  const environments = extractEnvironments(config);
-
-  if (!environments[environment]) {
-    const available = Object.keys(environments).join(', ');
-    console.log(`❌ Environment '${environment}' not found in config.`);
-    console.log(`   Available environments: ${available || 'none'}`);
-    return {
-      success: false,
-      error: `Environment '${environment}' not found. Available: ${available}`,
-    };
-  }
-
   // Map environment name to stage (staging2 -> staging, prod2 -> prod, etc.)
+  // Do this FIRST because 'dev' and 'secrets' don't require environment configs
   let stage: Stage;
   try {
     stage = getStageFromEnvironment(environment);
@@ -106,6 +94,23 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     const errorMessage = e instanceof Error ? e.message : String(e);
     console.log(`❌ ${errorMessage}`);
     return { success: false, error: errorMessage };
+  }
+
+  // Special stages (dev, secrets) don't require environment configuration
+  // They run locally and don't need server configs
+  if (stage !== 'dev' && stage !== 'secrets') {
+    // Validate environment exists in config (only for staging/prod)
+    const environments = extractEnvironments(config);
+
+    if (!environments[environment]) {
+      const available = Object.keys(environments).join(', ');
+      console.log(`❌ Environment '${environment}' not found in config.`);
+      console.log(`   Available environments: ${available || 'none'}`);
+      return {
+        success: false,
+        error: `Environment '${environment}' not found. Available: ${available}`,
+      };
+    }
   }
 
   console.log(`📋 Environment: ${environment} (${stage} stage)\n`);

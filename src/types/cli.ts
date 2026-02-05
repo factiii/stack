@@ -90,7 +90,7 @@ export interface UndeployOptions extends BaseOptions {
 /**
  * Options for the secrets command
  */
-export interface SecretsOptions {
+export interface SecretsOptions extends BaseOptions {
   value?: string;
   deploy?: boolean;
   token?: string;

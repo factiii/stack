@@ -157,7 +157,7 @@ The pipeline plugin decides how to reach each stage:
 | Stage | How it's reached |
 |-------|------------------|
 | dev | Always runs locally |
-| secrets | Runs locally (needs GITHUB_TOKEN) |
+| secrets | Runs locally (needs Ansible Vault configured) |
 | staging | Via workflow → SSH → runs with `--staging` |
 | prod | Via workflow → SSH → runs with `--prod` |
 
@@ -269,6 +269,60 @@ GitHub Actions workflows are intentionally minimal - they just SSH into servers 
 **CRITICAL: Workflows MUST specify the stage flag (`--staging` or `--prod`) when running commands on servers.**
 
 All deployment logic runs on the server in testable JavaScript, not in workflow bash scripts.
+
+## Secrets Management
+
+Factiii uses **Ansible Vault** to store and manage deployment secrets (SSH keys, API keys, etc.).
+
+### Configuration
+
+Add Ansible Vault configuration to `factiii.yml`:
+
+```yaml
+# Ansible Vault configuration (for secrets)
+ansible:
+  vault_path: group_vars/all/vault.yml  # Path to vault file
+  vault_password_file: ~/.vault_pass    # Optional: path to password file
+```
+
+### Vault Password
+
+Provide the vault password via one of:
+- **Password file:** Set `ansible.vault_password_file` in `factiii.yml` (e.g. `~/.vault_pass`)
+- **Environment variable:** `ANSIBLE_VAULT_PASSWORD` or `ANSIBLE_VAULT_PASSWORD_FILE`
+
+**Security:** Never commit the vault password or decrypted vault file to git.
+
+### Managing Secrets
+
+```bash
+# List all secrets
+npx factiii secrets list
+
+# Set a secret (interactive prompt)
+npx factiii secrets set STAGING_SSH
+
+# Set a secret (non-interactive)
+npx factiii secrets set STAGING_SSH --value "your-key-here"
+
+# Check if secrets exist
+npx factiii secrets check
+```
+
+### Required Secrets
+
+- **STAGING_SSH** - SSH private key for staging server
+- **PROD_SSH** - SSH private key for production server
+- **AWS_SECRET_ACCESS_KEY** - AWS secret key (if using AWS pipeline)
+
+### CI/CD Integration
+
+In GitHub Actions workflows, provide the vault password as a GitHub secret:
+
+1. Add `ANSIBLE_VAULT_PASSWORD` to your repository secrets
+2. Workflows automatically load SSH keys from Ansible Vault using this password
+
+The workflow step `npx factiii secrets write-ssh-keys` extracts secrets from the vault and writes SSH keys to `~/.ssh/` for deployment steps.
 
 ## Environment Variables
 

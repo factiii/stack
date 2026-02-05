@@ -62,6 +62,12 @@ export interface FactiiiConfig {
   trusted_plugins?: string[];
   container_exclusions?: string[];
 
+  // Ansible Vault configuration (for secrets)
+  ansible?: {
+    vault_path: string;
+    vault_password_file?: string;
+  };
+
   // Dynamic environment keys
   // Any top-level key NOT in the reserved list above is an environment
   // Example: staging, staging2, prod, prod2, qa, etc.

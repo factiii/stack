@@ -8,6 +8,7 @@ export * from './ssh-helper.js';
 export * from './config-schema.js';
 export * from './env-validator.js';
 export * from './dns-validator.js';
+export * from './ansible-vault-secrets.js';
 // Re-export version-check without conflicting compareVersions
 export {
   getFactiiiVersion,
