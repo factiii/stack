@@ -141,43 +141,36 @@ class FactiiiPipeline {
    * This ensures the command only runs that stage locally.
    * ============================================================
    */
-  static canReach(stage: Stage, _config: FactiiiConfig): Reachability {
+  static canReach(stage: Stage, config: FactiiiConfig): Reachability {
     switch (stage) {
       case 'dev':
         // Dev is always reachable locally
         return { reachable: true, via: 'local' };
 
       case 'secrets':
-        // Need GITHUB_TOKEN to check/set GitHub secrets
-        if (!process.env.GITHUB_TOKEN) {
+        // Need Ansible Vault configuration
+        if (!config.ansible?.vault_path) {
           return {
             reachable: false,
-            reason: 'Missing GITHUB_TOKEN environment variable',
+            reason: 'ansible.vault_path not configured in factiii.yml',
           };
         }
 
-        // Workflows must be committed for remote operations
-        try {
-          const workflowsDir = path.join(process.cwd(), '.github', 'workflows');
-          if (fs.existsSync(workflowsDir)) {
-            const status = execSync('git status --porcelain .github/workflows/', {
-              cwd: process.cwd(),
-              encoding: 'utf8',
-              stdio: ['pipe', 'pipe', 'ignore'],
-            });
+        // Check if vault password is available (file or env)
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const os = require('os');
+        const vaultPasswordFile = config.ansible.vault_password_file?.replace(/^~/, os.homedir());
+        const hasPasswordFile = vaultPasswordFile && fs.existsSync(vaultPasswordFile);
+        const hasPasswordEnv = !!process.env.ANSIBLE_VAULT_PASSWORD || !!process.env.ANSIBLE_VAULT_PASSWORD_FILE;
 
-            if (status.trim().length > 0) {
-              return {
-                reachable: false,
-                reason: 'GitHub workflows not committed (required for remote operations)',
-              };
-            }
-          }
-        } catch {
-          // Not a git repo - allow secrets stage to proceed
+        if (!hasPasswordFile && !hasPasswordEnv) {
+          return {
+            reachable: false,
+            reason: 'Vault password required. Set ansible.vault_password_file in factiii.yml, or ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_PASSWORD_FILE env.',
+          };
         }
 
-        return { reachable: true, via: 'github-api' };
+        return { reachable: true, via: 'local' };
 
       case 'staging':
       case 'prod':

@@ -90,6 +90,12 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
     ssl_email: 'EXAMPLE-admin@yourdomain.com',
     pipeline: 'factiii',  // Pipeline plugin (e.g., factiii for GitHub Actions)
 
+    // Ansible Vault configuration (for secrets)
+    ansible: {
+      vault_path: 'group_vars/all/vault.yml',  // Path to Ansible Vault file
+      vault_password_file: '~/.vault_pass',    // Optional: path to vault password file
+    },
+
     // ============================================================
     // ENVIRONMENTS (top-level keys)
     // ============================================================
