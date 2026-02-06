@@ -46,7 +46,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error(`⚠️  Error parsing factiii.yml: ${errorMessage}`);
+    console.error(`[!] Error parsing factiii.yml: ${errorMessage}`);
     return {} as FactiiiConfig;
   }
 }
@@ -69,8 +69,8 @@ async function runLocalFixes(
   const config = loadConfig(rootDir);
 
   // First run scan to get problems (only for reachable stages)
-  const problems = await scan({ 
-    ...options, 
+  const problems = await scan({
+    ...options,
     silent: true,
     stages: reachableStages,
   });
@@ -99,43 +99,43 @@ async function runLocalFixes(
           }
 
           if (success) {
-            console.log(`   ✅ Fixed: ${problem.description}`);
+            console.log(`  [OK] Fixed: ${problem.description}`);
             result.fixed++;
-            result.fixes.push({ 
-              id: problem.id, 
-              stage, 
+            result.fixes.push({
+              id: problem.id,
+              stage,
               status: 'fixed',
               description: problem.description,
             });
           } else {
-            console.log(`   ❌ Failed to fix: ${problem.description}`);
+            console.log(`  [ERROR] Failed to fix: ${problem.description}`);
             result.failed++;
-            result.fixes.push({ 
-              id: problem.id, 
-              stage, 
+            result.fixes.push({
+              id: problem.id,
+              stage,
               status: 'failed',
               description: problem.description,
             });
           }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          console.log(`   ❌ Error fixing ${problem.id}: ${errorMessage}`);
+          console.log(`  [ERROR] Error fixing ${problem.id}: ${errorMessage}`);
           result.failed++;
-          result.fixes.push({ 
-            id: problem.id, 
-            stage, 
-            status: 'failed', 
+          result.fixes.push({
+            id: problem.id,
+            stage,
+            status: 'failed',
             description: problem.description,
             error: errorMessage,
           });
         }
       } else {
-        console.log(`   📝 Manual fix required: ${problem.description}`);
+        console.log(`  [man] Manual fix required: ${problem.description}`);
         console.log(`      → ${problem.manualFix}`);
         result.manual++;
-        result.fixes.push({ 
-          id: problem.id, 
-          stage, 
+        result.fixes.push({
+          id: problem.id,
+          stage,
           status: 'manual',
           description: problem.description,
           manualFix: problem.manualFix,
@@ -151,7 +151,7 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   const rootDir = options.rootDir ?? process.cwd();
   const config = loadConfig(rootDir);
 
-  console.log('🔧 Running auto-fixes...\n');
+  console.log('Running auto-fixes...\n');
 
   // Determine which stages to fix
   let stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
@@ -195,29 +195,29 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
 
   // Trigger workflows for stages reachable via workflow
   if (workflowStages.length > 0) {
-    console.log('\n🔄 Triggering remote fixes via GitHub Actions...\n');
-    
+    console.log('\nTriggering remote fixes via GitHub Actions...\n');
+
     try {
       const monitor = new GitHubWorkflowMonitor();
-      
+
       for (const stage of workflowStages) {
         const workflowFile = 'factiii-fix.yml';
         console.log(`   Triggering ${stage} fix...`);
-        
+
         try {
           // Use triggerAndWatch to wait for workflow completion
           const workflowResult = await monitor.triggerAndWatch(workflowFile, stage);
-          
+
           if (workflowResult.success) {
-            console.log(`   ✅ ${stage} fix completed`);
-            
+            console.log(`  [OK] ${stage} fix completed`);
+
             // Parse workflow output to extract fix counts
             // The workflow output contains: "Fixed: X, Manual: Y, Failed: Z"
             // We need to extract these and aggregate them
             // For now, we'll just note that the workflow completed
             // TODO: Parse workflow logs to extract actual counts
           } else {
-            console.log(`   ❌ ${stage} fix failed: ${workflowResult.error}`);
+            console.log(`  [ERROR] ${stage} fix failed: ${workflowResult.error}`);
             result.failed++;
             result.fixes.push({
               id: `${stage}-workflow`,
@@ -228,7 +228,7 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          console.log(`   ⚠️  Failed to trigger ${stage} fix: ${errorMessage}`);
+          console.log(`  [!] Failed to trigger ${stage} fix: ${errorMessage}`);
           result.failed++;
           result.fixes.push({
             id: `${stage}-workflow`,
@@ -241,7 +241,7 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
     } catch (error) {
       // GitHub CLI not available - show helpful message
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.log(`\n⚠️  ${errorMessage}`);
+      console.log(`\n[!] ${errorMessage}`);
       console.log('   Remote fixes require GitHub CLI. Install with: brew install gh');
     }
   }
@@ -263,18 +263,18 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
     const stageFixes = result.fixes.filter((f) => f.stage === stage);
     if (stageFixes.length > 0) {
       console.log(`${stage.toUpperCase()}:`);
-      
+
       // Show each fix with its status and details
       for (const fix of stageFixes) {
         if (fix.status === 'fixed') {
-          console.log(`   ✅ Fixed: ${fix.description || fix.id}`);
+          console.log(`  [OK] Fixed: ${fix.description || fix.id}`);
         } else if (fix.status === 'manual') {
-          console.log(`   📝 Manual: ${fix.description || fix.id}`);
+          console.log(`  [man] Manual: ${fix.description || fix.id}`);
           if (fix.manualFix) {
-            console.log(`      → ${fix.manualFix}`);
+            console.log(`    -> ${fix.manualFix}`);
           }
         } else if (fix.status === 'failed') {
-          console.log(`   ❌ Failed: ${fix.description || fix.id}`);
+          console.log(`  [ERROR] Failed: ${fix.description || fix.id}`);
           if (fix.error) {
             console.log(`      Error: ${fix.error}`);
           }

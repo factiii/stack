@@ -366,7 +366,7 @@ export async function installServerDependencies(
 
   // Install Node.js if needed
   if (results.node.needed) {
-    console.log(`      📦 Installing Node.js using ${serverEnv.packageManager}...`);
+    console.log(`      Installing Node.js using ${serverEnv.packageManager}...`);
 
     let installCmd: string;
     if (serverEnv.packageManager === 'brew') {
@@ -385,15 +385,15 @@ export async function installServerDependencies(
     results.node.error = nodeResult.error ?? null;
 
     if (nodeResult.success) {
-      console.log('      ✅ Node.js installed successfully');
+      console.log('      [OK] Node.js installed successfully');
     } else {
-      console.log(`      ❌ Failed to install Node.js: ${nodeResult.error}`);
+      console.log(`      [ERROR] Failed to install Node.js: ${nodeResult.error}`);
     }
   }
 
   // Install git if needed
   if (results.git.needed) {
-    console.log(`      📦 Installing git using ${serverEnv.packageManager}...`);
+    console.log(`      Installing git using ${serverEnv.packageManager}...`);
 
     let installCmd: string;
     if (serverEnv.packageManager === 'brew') {
@@ -409,15 +409,15 @@ export async function installServerDependencies(
     results.git.error = gitResult.error ?? null;
 
     if (gitResult.success) {
-      console.log('      ✅ git installed successfully');
+      console.log('      [OK] git installed successfully');
     } else {
-      console.log(`      ❌ Failed to install git: ${gitResult.error}`);
+      console.log(`      [ERROR] Failed to install git: ${gitResult.error}`);
     }
   }
 
   // Install Docker if needed (more complex, provide instructions)
   if (results.docker.needed) {
-    console.log('      ⚠️  Docker not found');
+    console.log('      [!] Docker not found');
     console.log('      Docker installation requires manual setup.');
     console.log(`      Please SSH to server and install Docker:`);
     console.log(`        ssh ${ssh_user}@${host}`);
@@ -433,15 +433,15 @@ export async function installServerDependencies(
   if (software.node || results.node.installed) {
     const pnpmResult = sshCommand(sshKey, ssh_user, host, 'which pnpm');
     if (!pnpmResult.success) {
-      console.log('      📦 Installing pnpm...');
+      console.log('      Installing pnpm...');
       const installPnpm = sshCommand(sshKey, ssh_user, host, 'npm install -g pnpm@9');
       results.pnpm.needed = true;
       results.pnpm.installed = installPnpm.success;
 
       if (installPnpm.success) {
-        console.log('      ✅ pnpm installed successfully');
+        console.log('      [OK] pnpm installed successfully');
       } else {
-        console.log(`      ❌ Failed to install pnpm: ${installPnpm.error}`);
+        console.log(`      [ERROR] Failed to install pnpm: ${installPnpm.error}`);
       }
     }
   }

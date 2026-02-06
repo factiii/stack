@@ -71,7 +71,7 @@ export function scanRepos(): RepoInfo[] {
 
   if (!fs.existsSync(factiiiDir)) {
     if (require.main === module) {
-      console.error('❌ ~/.factiii directory not found');
+      console.error('[ERROR] ~/.factiii directory not found');
       process.exit(1);
     }
     return [];
@@ -117,7 +117,7 @@ export function loadConfigs(repos: RepoInfo[]): Record<string, FactiiiConfig> {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`⚠️  Failed to load ${repo.name}/factiii.yml: ${errorMessage}`);
+      console.error(`[!] Failed to load ${repo.name}/factiii.yml: ${errorMessage}`);
     }
   }
 
@@ -265,7 +265,7 @@ export function generateNginx(allConfigs: Record<string, FactiiiConfig>): number
   }
 
   if (routes.length === 0) {
-    console.log('   ⚠️  No domains configured, skipping nginx.conf generation');
+    console.log('  [!] No domains configured, skipping nginx.conf generation');
     return 0;
   }
 
@@ -373,29 +373,29 @@ http {
  * Main execution
  */
 function main(): void {
-  console.log('🔍 Scanning ~/.factiii for repos...');
+  console.log('Scanning ~/.factiii for repos...');
 
   const repos = scanRepos();
   console.log(`   Found ${repos.length} repo(s)`);
 
   if (repos.length === 0) {
-    console.log('⚠️  No repos found in ~/.factiii');
+    console.log('[!] No repos found in ~/.factiii');
     process.exit(0);
   }
 
-  console.log('\n📋 Loading configs...');
+  console.log('\nLoading configs...');
   const allConfigs = loadConfigs(repos);
   console.log(`   Loaded ${Object.keys(allConfigs).length} config(s)`);
 
-  console.log('\n🔨 Generating docker-compose.yml...');
+  console.log('\nGenerating docker-compose.yml...');
   const serviceCount = generateDockerCompose(allConfigs);
-  console.log(`   ✅ Generated ${serviceCount} service(s)`);
+  console.log(`  [OK] Generated ${serviceCount} service(s)`);
 
-  console.log('\n🔨 Generating nginx.conf...');
+  console.log('\nGenerating nginx.conf...');
   const domainCount = generateNginx(allConfigs);
-  console.log(`   ✅ Generated ${domainCount} route(s)`);
+  console.log(`  [OK] Generated ${domainCount} route(s)`);
 
-  console.log('\n✅ Configuration generation complete!');
+  console.log('\n[OK] Configuration generation complete!');
   console.log(`   docker-compose.yml: ~/.factiii/docker-compose.yml`);
   console.log(`   nginx.conf: ~/.factiii/nginx.conf`);
 }

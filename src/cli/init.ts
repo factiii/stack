@@ -14,7 +14,7 @@ import type { InitOptions } from '../types/index.js';
 export async function init(options: InitOptions = {}): Promise<void> {
   const rootDir = options.rootDir ?? process.cwd();
 
-  console.log('🚀 Initializing Factiii Stack...\n');
+  console.log('Initializing Factiii Stack...\n');
 
   const factiiiYmlPath = path.join(rootDir, 'factiii.yml');
   const factiiiAutoYmlPath = path.join(rootDir, 'factiiiAuto.yml');
@@ -28,7 +28,7 @@ export async function init(options: InitOptions = {}): Promise<void> {
   } else if (!options.force) {
     shouldCreateYml = await confirm('factiii.yml already exists. Overwrite it?', false);
     if (!shouldCreateYml) {
-      console.log('⏭️  Skipping factiii.yml');
+      console.log('Skipping factiii.yml');
     }
   }
 
@@ -37,7 +37,7 @@ export async function init(options: InitOptions = {}): Promise<void> {
   } else if (!options.force) {
     shouldCreateAuto = await confirm('factiiiAuto.yml already exists. Overwrite it?', false);
     if (!shouldCreateAuto) {
-      console.log('⏭️  Skipping factiiiAuto.yml');
+      console.log('Skipping factiiiAuto.yml');
     }
   }
 
@@ -57,7 +57,7 @@ export async function init(options: InitOptions = {}): Promise<void> {
       // (factiiiAuto.yml is auto-detected, so update if content changed)
       await generateFactiiiAuto(rootDir, { force: false });
     } else {
-      console.log('\n⏭️  No configuration files to create.');
+      console.log('\nNo configuration files to create.');
     }
   }
 }

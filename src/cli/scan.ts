@@ -84,7 +84,7 @@ async function loadPlugins(rootDir: string): Promise<PluginClass[]> {
 
   // If no config exists, tell user to run init
   if (!config || Object.keys(config).length === 0) {
-    console.error('\n❌ No factiii.yml found.');
+    console.error('\n[ERROR] No factiii.yml found.');
     console.error('   Run: npx factiii init\n');
     process.exit(1);
   }
@@ -106,7 +106,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error(`⚠️  Error parsing factiii.yml: ${errorMessage}`);
+    console.error(`[!] Error parsing factiii.yml: ${errorMessage}`);
     return {} as FactiiiConfig;
   }
 }
@@ -196,7 +196,7 @@ function getStageStatus(
   // Stage is not reachable
   if (reach && !reach.reachable) {
     return {
-      icon: '❌',
+      icon: '[X]',
       label: 'Cannot reach',
       detail: reach.reason,
     };
@@ -205,7 +205,7 @@ function getStageStatus(
   // Stage is reachable via workflow (checked when workflow runs)
   if (reach && reach.reachable && reach.via === 'workflow') {
     return {
-      icon: '🔄',
+      icon: '[~]',
       label: 'Via workflow',
       detail: 'Checked when workflow runs',
     };
@@ -216,13 +216,13 @@ function getStageStatus(
 
   if (problemCount === 0) {
     return {
-      icon: '✅',
+      icon: '[OK]',
       label: 'Ready',
       detail: via,
     };
   } else {
     return {
-      icon: '❌',
+      icon: '[X]',
       label: `${problemCount} issue${problemCount > 1 ? 's' : ''}`,
       detail: via,
     };
@@ -256,9 +256,7 @@ function displayProblems(
   }
 
   // Header
-  console.log('\n' + '═'.repeat(60));
-  console.log('PIPELINE STATUS');
-  console.log('═'.repeat(60) + '\n');
+  console.log('\nPIPELINE STATUS\n');
 
   // Stage status overview
   for (const stage of stages) {
@@ -293,11 +291,11 @@ function displayProblems(
     for (const { stage, reason } of unreachableStages) {
       // Determine which stage this blocks access FROM
       const fromStage = stage === 'secrets' ? 'dev' : stage === 'staging' || stage === 'prod' ? 'secrets' : 'dev';
-      console.log(`❌ ${fromStage.toUpperCase()} → ${stage.toUpperCase()}: ${reason}`);
+      console.log(`[ERROR] ${fromStage.toUpperCase()} -> ${stage.toUpperCase()}: ${reason}`);
 
       // Provide hint for common blockers
       if (reason.includes('GITHUB_TOKEN')) {
-        console.log('   💡 Run: export GITHUB_TOKEN=your_token');
+        console.log('  Hint: Run: export GITHUB_TOKEN=your_token');
       }
     }
   }
@@ -322,9 +320,9 @@ function displayProblems(
       if (stageProblems.length > 0) {
         console.log(`${stage.toUpperCase()}:`);
         for (const problem of stageProblems) {
-          const icon = problem.fix ? '🔧' : '📝';
+          const icon = problem.fix ? '[fix]' : '[man]';
           const autoFix = problem.fix ? '(auto-fixable)' : '(manual)';
-          console.log(`   ${icon} ${problem.description} ${autoFix}`);
+          console.log(`  ${icon} ${problem.description} ${autoFix}`);
         }
         console.log('');
       }
@@ -334,12 +332,12 @@ function displayProblems(
   // Summary
   console.log('─'.repeat(60));
   if (totalProblems === 0 && unreachableStages.length === 0) {
-    console.log('✅ All checks passed!\n');
+    console.log('[OK] All checks passed!\n');
   } else if (totalProblems === 0 && unreachableStages.length > 0) {
-    console.log('⚠️  Some stages cannot be reached. Fix blockers above.\n');
+    console.log('[!] Some stages cannot be reached. Fix blockers above.\n');
   } else {
     console.log(`Found ${totalProblems} issue${totalProblems > 1 ? 's' : ''}.`);
-    console.log('💡 Run: npx factiii fix\n');
+    console.log('Hint: Run: npx factiii fix\n');
   }
 }
 
@@ -366,12 +364,12 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
       }).trim();
 
       if (!options.silent) {
-        console.log(`📍 Scanning commit: ${options.commit.substring(0, 7)}`);
+        console.log(`Scanning commit: ${options.commit.substring(0, 7)}`);
       }
 
       if (currentCommit !== options.commit) {
         console.warn(
-          `⚠️  Warning: Expected commit ${options.commit.substring(0, 7)} but found ${currentCommit.substring(0, 7)}`
+          `[!] Warning: Expected commit ${options.commit.substring(0, 7)} but found ${currentCommit.substring(0, 7)}`
         );
       }
     } catch {
@@ -440,7 +438,7 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   };
 
   if (!options.silent) {
-    console.log('🔍 Scanning...\n');
+    console.log('Scanning...\n');
   }
 
   // Get target server OS for each stage (for OS filtering)
@@ -488,7 +486,7 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
       // Scan failed - treat as problem
       if (!options.silent) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        console.log(`   ⚠️  Error scanning ${fix.id}: ${errorMessage}`);
+        console.log(`  [!] Error scanning ${fix.id}: ${errorMessage}`);
       }
     }
   }
@@ -503,29 +501,29 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   }
 
   if (workflowStages.length > 0 && !options.silent) {
-    console.log('\n🔄 Running remote scans via GitHub Actions...\n');
+    console.log('\nRunning remote scans via GitHub Actions...\n');
 
     try {
       const monitor = new GitHubWorkflowMonitor();
 
       for (const stage of workflowStages) {
         const workflowFile = 'factiii-scan.yml';
-        console.log(`   Triggering ${stage} scan...`);
+        console.log(`  Triggering ${stage} scan...`);
 
         try {
           const result = await monitor.triggerAndWatch(workflowFile, stage);
           if (!result.success) {
-            console.log(`   ⚠️  ${stage} scan failed`);
+            console.log(`  [!] ${stage} scan failed`);
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          console.log(`   ⚠️  Failed to run ${stage} scan: ${errorMessage}`);
+          console.log(`  [!] Failed to run ${stage} scan: ${errorMessage}`);
         }
       }
     } catch (error) {
       // GitHub CLI not available - show helpful message
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.log(`\n⚠️  ${errorMessage}`);
+      console.log(`\n[!] ${errorMessage}`);
       console.log('   Remote scans will run automatically on next deployment');
     }
   }

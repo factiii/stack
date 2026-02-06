@@ -146,7 +146,7 @@ export function getSecretMetadata(secretName: string): SecretMetadata {
  */
 export function formatSecretHelp(secretName: string): string {
   const metadata = getSecretMetadata(secretName);
-  return `\n🔑 ${secretName}\n\n   ${metadata.description}${metadata.helpText}`;
+  return `\n${secretName}\n\n   ${metadata.description}${metadata.helpText}`;
 }
 
 /**
@@ -256,9 +256,9 @@ export async function promptForSecret(
         value = validation.defaultValue;
         console.log(`   Using default: ${value}`);
       }
-      console.log('   ✅ Valid input\n');
+      console.log('   [OK] Valid input\n');
     } else {
-      console.error(`   ❌ ${validation.error}`);
+      console.error(`   [ERROR] ${validation.error}`);
       if (attempts < maxAttempts) {
         console.log(`   Please try again (${attempts}/${maxAttempts})...\n`);
       } else {
@@ -319,7 +319,7 @@ export async function multiSelect(
 
   // Display choices with numbers
   choices.forEach((choice, index) => {
-    const status = choice.checked ? '❌ missing' : '✅ exists';
+    const status = choice.checked ? '[!] missing' : '[OK] exists';
     console.log(`   ${index + 1}. ${choice.name} (${status})`);
   });
 
@@ -349,4 +349,46 @@ export async function multiSelect(
 
   return selected;
 }
+
+/**
+ * Prompt for an environment secret (simpler than SSH keys)
+ * @param name - Name of the environment variable
+ * @param stage - Stage (staging or prod)
+ * @returns Secret value
+ */
+export async function promptForEnvSecret(
+  name: string,
+  stage: 'staging' | 'prod'
+): Promise<string> {
+  console.log(`\nSetting ${name} for ${stage}`);
+  console.log(`   Enter the value for this environment variable.`);
+  console.log(`   (This will be stored in Ansible Vault and deployed to the server)\n`);
+
+  let value = '';
+  let isValid = false;
+  let attempts = 0;
+  const maxAttempts = 3;
+
+  while (!isValid && attempts < maxAttempts) {
+    attempts++;
+
+    value = await promptSingleLine('   > ');
+
+    if (value && value.trim().length > 0) {
+      isValid = true;
+      console.log('   [OK] Value set\n');
+    } else {
+      console.error('   [ERROR] Value cannot be empty');
+      if (attempts < maxAttempts) {
+        console.log(`   Please try again (${attempts}/${maxAttempts})...\n`);
+      } else {
+        console.error('   Maximum attempts reached. Exiting.\n');
+        process.exit(1);
+      }
+    }
+  }
+
+  return value;
+}
+
 

@@ -185,7 +185,7 @@ export function displayVersionWarning(rootDir: string): boolean {
 
   if (!status.compatible) {
     console.log('');
-    console.log('⚠️  VERSION INCOMPATIBILITY');
+    console.log('[!] VERSION INCOMPATIBILITY');
     console.log(`   ${status.message}`);
     console.log('');
     return true;
@@ -193,10 +193,10 @@ export function displayVersionWarning(rootDir: string): boolean {
 
   if (status.needsUpgrade) {
     console.log('');
-    console.log('ℹ️  Version Update Available');
+    console.log('Version Update Available');
     console.log(`   ${status.message}`);
     if (status.isBreaking) {
-      console.log('   ⚠️  This is a major version change - check CHANGELOG.md');
+      console.log('  [!] This is a major version change - check CHANGELOG.md');
     }
     console.log('');
     return true;

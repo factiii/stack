@@ -93,52 +93,52 @@ export function formatDeploymentReport(data: ReportData): string {
   const separator = '━'.repeat(60);
 
   // Header
-  lines.push(`🚀 DEPLOYMENT READINESS REPORT - ${repoName}`);
+  lines.push(`DEPLOYMENT READINESS REPORT - ${repoName}`);
   lines.push(separator);
   lines.push('');
 
   // Local Configuration
   if (localChecks) {
-    lines.push('✅ LOCAL CONFIGURATION');
+    lines.push('LOCAL CONFIGURATION');
     if (localChecks.coreYml) {
-      lines.push(`   ✅ factiii.yml valid (${repoName})`);
+      lines.push(`  [OK] factiii.yml valid (${repoName})`);
     }
     if (localChecks.dockerfile) {
-      lines.push('   ✅ Dockerfile found');
+      lines.push('  [OK] Dockerfile found');
     }
     if (localChecks.git) {
       lines.push(
-        `   ✅ Git configured${localChecks.branch ? ` (${localChecks.branch} branch)` : ''}`
+        `  [OK] Git configured${localChecks.branch ? ` (${localChecks.branch} branch)` : ''}`
       );
     }
     if (localChecks.workflows) {
-      lines.push('   ✅ Workflows exist (factiii-deploy.yml, factiii-undeploy.yml)');
+      lines.push('  [OK] Workflows exist (factiii-deploy.yml, factiii-undeploy.yml)');
     }
     if (localChecks.scripts) {
-      lines.push('   ✅ Required scripts present');
+      lines.push('  [OK] Required scripts present');
     }
     lines.push('');
   }
 
   // GitHub Secrets
   if (secretsCheck) {
-    lines.push('🔑 GITHUB SECRETS');
+    lines.push('GITHUB SECRETS');
 
     if (secretsCheck.error) {
-      lines.push(`   ❌ ${secretsCheck.error}`);
+      lines.push(`  [ERROR] ${secretsCheck.error}`);
       lines.push('   Cannot verify secrets via API');
     } else {
       // Show present secrets
       if (secretsCheck.present && secretsCheck.present.length > 0) {
         for (const secret of secretsCheck.present) {
-          lines.push(`   ✅ ${secret} exists`);
+          lines.push(`  [OK] ${secret} exists`);
         }
       }
 
       // Show missing secrets
       if (secretsCheck.missing && secretsCheck.missing.length > 0) {
         for (const secret of secretsCheck.missing) {
-          lines.push(`   ⚠️  ${secret} not found`);
+          lines.push(`  [!] ${secret} not found`);
         }
       }
     }
@@ -148,37 +148,37 @@ export function formatDeploymentReport(data: ReportData): string {
   // Server Checks
   if (serverChecks && serverChecks.length > 0) {
     for (const server of serverChecks) {
-      const envIcon = server.environment === 'staging' ? '📡' : '🌐';
+      const envLabel = server.environment === 'staging' ? 'STAGING' : 'PRODUCTION';
       const envName = server.environment.toUpperCase();
 
-      lines.push(`${envIcon} ${envName} SERVER (${server.user}@${server.host})`);
+      lines.push(`${envLabel} SERVER (${server.user}@${server.host})`);
 
       if (server.error) {
-        lines.push(`   ❌ ${server.error}`);
+        lines.push(`  [ERROR] ${server.error}`);
       } else if (!server.connected) {
-        lines.push('   ❌ SSH connection failed');
+        lines.push('  [ERROR] SSH connection failed');
       } else {
-        lines.push('   ✅ SSH connection successful');
+        lines.push('  [OK] SSH connection successful');
 
         if (server.infrastructureExists) {
-          lines.push('   ✅ Infrastructure directory exists');
+          lines.push('  [OK] Infrastructure directory exists');
         } else {
-          lines.push('   ⚠️  Infrastructure directory not found');
+          lines.push('  [!] Infrastructure directory not found');
         }
 
         // Show currently deployed repos
         if (server.allDeployedRepos && server.allDeployedRepos.length > 0) {
           lines.push('');
-          lines.push(`   📦 Currently Deployed Repos (${server.allDeployedRepos.length}):`);
+          lines.push(`  Currently Deployed Repos (${server.allDeployedRepos.length}):`);
           for (const repo of server.allDeployedRepos) {
             const portInfo = repo.port ? `:${repo.port}` : '';
-            lines.push(`      • ${repo.name} (${repo.domain}${portInfo}) - running`);
+            lines.push(`    - ${repo.name} (${repo.domain}${portInfo}) - running`);
           }
         }
 
         // Show current repo status
         lines.push('');
-        lines.push(`   📋 THIS REPO (${repoName}):`);
+        lines.push(`  THIS REPO (${repoName}):`);
 
         if (server.currentRepo && server.currentRepo.deployed) {
           const env = server.currentRepo.config?.environments?.[server.environment];
@@ -193,7 +193,7 @@ export function formatDeploymentReport(data: ReportData): string {
             ) {
               lines.push(`      Changes detected:`);
               for (const change of server.currentRepo.comparison.changes) {
-                lines.push(`         🔄 ${change.field}: ${change.old} → ${change.new}`);
+                lines.push(`       -> ${change.field}: ${change.old} -> ${change.new}`);
               }
             } else {
               lines.push(`      Status: No changes detected`);
@@ -205,7 +205,7 @@ export function formatDeploymentReport(data: ReportData): string {
         }
 
         lines.push('');
-        lines.push('   ⚠️  Note: Deploy will regenerate configs and restart ALL services');
+        lines.push('  Note: Deploy will regenerate configs and restart ALL services');
       }
 
       lines.push('');
@@ -219,13 +219,13 @@ export function formatDeploymentReport(data: ReportData): string {
     const { ready, warnings, errors } = summary;
 
     if (ready && warnings === 0 && errors === 0) {
-      lines.push('✅ READY TO DEPLOY');
+      lines.push('[OK] READY TO DEPLOY');
     } else if (errors > 0) {
       lines.push(
-        `❌ NOT READY (${errors} error${errors > 1 ? 's' : ''}, ${warnings} warning${warnings > 1 ? 's' : ''})`
+        `[ERROR] NOT READY (${errors} error${errors > 1 ? 's' : ''}, ${warnings} warning${warnings > 1 ? 's' : ''})`
       );
     } else if (warnings > 0) {
-      lines.push(`⚠️  READY TO DEPLOY (${warnings} warning${warnings > 1 ? 's' : ''})`);
+      lines.push(`[!] READY TO DEPLOY (${warnings} warning${warnings > 1 ? 's' : ''})`);
     }
   }
 
@@ -233,7 +233,7 @@ export function formatDeploymentReport(data: ReportData): string {
 
   // Next Steps
   if (summary && summary.nextSteps && summary.nextSteps.length > 0) {
-    lines.push('💡 Next Steps:');
+    lines.push('Next Steps:');
     for (let i = 0; i < summary.nextSteps.length; i++) {
       lines.push(`   ${i + 1}. ${summary.nextSteps[i]}`);
     }

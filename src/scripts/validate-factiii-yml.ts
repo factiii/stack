@@ -14,22 +14,22 @@ interface FactiiiConfig {
 
 try {
   if (!fs.existsSync('factiii.yml')) {
-    console.log('❌ factiii.yml not found');
+    console.log('[ERROR] factiii.yml not found');
     process.exit(1);
   }
 
-  console.log('✅ factiii.yml exists');
+  console.log('[OK] factiii.yml exists');
 
   const config = yaml.load(fs.readFileSync('factiii.yml', 'utf8')) as FactiiiConfig | null;
   if (!config?.name) {
-    console.log('❌ factiii.yml missing required field: name');
+    console.log('[ERROR] factiii.yml missing required field: name');
     process.exit(1);
   }
   if (!config?.environments) {
-    console.log('❌ factiii.yml missing required field: environments');
+    console.log('[ERROR] factiii.yml missing required field: environments');
     process.exit(1);
   }
-  console.log('✅ factiii.yml is valid');
+  console.log('[OK] factiii.yml is valid');
 
   const githubOutput = process.env.GITHUB_OUTPUT;
   if (githubOutput) {
@@ -37,7 +37,7 @@ try {
   }
 } catch (e) {
   const errorMessage = e instanceof Error ? e.message : String(e);
-  console.log('❌ factiii.yml has syntax errors:', errorMessage);
+  console.log('[ERROR] factiii.yml has syntax errors:', errorMessage);
   process.exit(1);
 }
 

@@ -132,6 +132,48 @@ npx factiii deploy --prod     # Deploy to production server
 
 **Note:** Requires `factiii.yml` to exist. Run `npx factiii init` first.
 
+### Secrets Management
+
+Manage secrets via Ansible Vault and deploy them directly to servers:
+
+```bash
+# List all secrets (SSH keys + environment variables)
+npx factiii secrets list
+
+# Set SSH keys (required for deployment)
+npx factiii secrets set STAGING_SSH
+npx factiii secrets set PROD_SSH
+
+# Set environment variables for each stage
+npx factiii secrets set-env DATABASE_URL --staging
+npx factiii secrets set-env JWT_SECRET --staging
+npx factiii secrets set-env DATABASE_URL --prod
+npx factiii secrets set-env JWT_SECRET --prod
+
+# List environment variables
+npx factiii secrets list-env --staging
+npx factiii secrets list-env --prod
+
+# Deploy secrets to servers via SSH
+npx factiii secrets deploy --staging  # Deploy to staging server
+npx factiii secrets deploy --prod     # Deploy to production server
+npx factiii secrets deploy --all      # Deploy to all servers
+
+# Options
+npx factiii secrets deploy --staging --restart   # Restart container after deploy
+npx factiii secrets deploy --staging --dry-run   # Show what would be deployed
+```
+
+**How it works:**
+1. Secrets are stored locally in Ansible Vault (encrypted)
+2. When you run `secrets deploy`, Factiii:
+   - Reads the SSH key from the vault
+   - Connects to the server via SSH
+   - Writes a `.env.{stage}` file with your environment variables
+3. Your application reads the `.env.{stage}` file on startup
+
+**Note:** Requires `factiii.yml` with Ansible Vault configured. Run `npx factiii init` first.
+
 ## Stage Execution
 
 Factiii commands work with four stages: `dev`, `secrets`, `staging`, `prod`.

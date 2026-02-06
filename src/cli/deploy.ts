@@ -31,7 +31,7 @@ import { extractEnvironments, getStageFromEnvironment } from '../utils/config-he
 interface PipelinePluginClass {
   id: string;
   category: 'pipeline';
-  new (config: FactiiiConfig): PipelinePluginInstance;
+  new(config: FactiiiConfig): PipelinePluginInstance;
 }
 
 /**
@@ -55,7 +55,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error(`⚠️  Error parsing factiii.yml: ${errorMessage}`);
+    console.error(`[!] Error parsing factiii.yml: ${errorMessage}`);
     return {} as FactiiiConfig;
   }
 }
@@ -73,9 +73,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   const rootDir = options.rootDir ?? process.cwd();
   const config = loadConfig(rootDir);
 
-  console.log('════════════════════════════════════════════════════════════');
-  console.log('🚀 FACTIII DEPLOY');
-  console.log('════════════════════════════════════════════════════════════\n');
+  console.log('FACTIII DEPLOY\n');
 
   // ============================================================
   // CRITICAL: Environment Validation
@@ -92,7 +90,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     stage = getStageFromEnvironment(environment);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.log(`❌ ${errorMessage}`);
+    console.log(`[ERROR] ${errorMessage}`);
     return { success: false, error: errorMessage };
   }
 
@@ -104,7 +102,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
 
     if (!environments[environment]) {
       const available = Object.keys(environments).join(', ');
-      console.log(`❌ Environment '${environment}' not found in config.`);
+      console.log(`[ERROR] Environment '${environment}' not found in config.`);
       console.log(`   Available environments: ${available || 'none'}`);
       return {
         success: false,
@@ -113,9 +111,9 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     }
   }
 
-  console.log(`📋 Environment: ${environment} (${stage} stage)\n`);
+  console.log(`Environment: ${environment} (${stage} stage)\n`);
 
-  console.log('📋 Stage 1: Running pre-deploy checks...\n');
+  console.log('Stage 1: Running pre-deploy checks...\n');
 
   // First run scan to check for blocking issues
   const problems = await scan({ ...options, silent: true });
@@ -126,7 +124,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     .filter(fix => fix && fix.severity === 'critical');
 
   if (criticalProblems.length > 0) {
-    console.log('❌ Critical issues found that must be fixed before deployment:\n');
+    console.log('[ERROR] Critical issues found that must be fixed before deployment:\n');
 
     // Group by stage for clearer output
     const problemsByStage: Record<string, typeof criticalProblems> = {
@@ -152,9 +150,9 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
 
       console.log(`${stageName.toUpperCase()}:`);
       for (const problem of stageProblems) {
-        console.log(`   ❌ ${problem.description}`);
+        console.log(`  [ERROR] ${problem.description}`);
         if (problem.manualFix) {
-          console.log(`      💡 ${problem.manualFix}`);
+          console.log(`    Hint: ${problem.manualFix}`);
         }
       }
       console.log('');
@@ -163,12 +161,10 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     console.log('Please fix the issues above and try again.\n');
     return { success: false, error: 'Critical pre-deploy checks failed' };
   } else {
-    console.log('✅ All pre-deploy checks passed!\n');
+    console.log('[OK] All pre-deploy checks passed!\n');
   }
 
-  console.log('════════════════════════════════════════════════════════════');
-  console.log(`🚀 DEPLOYING ${environment.toUpperCase()}`);
-  console.log('════════════════════════════════════════════════════════════\n');
+  console.log(`DEPLOYING ${environment.toUpperCase()}\n`);
 
   // Load plugins and find pipeline plugin
   const plugins = await loadRelevantPlugins(rootDir, config);
@@ -186,18 +182,18 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     const result = await pipeline.deployStage(stage, { ...options, rootDir, environment });
 
     if (result.success) {
-      console.log(`\n✅ Deployment to ${environment} complete!`);
+      console.log(`\n[OK] Deployment to ${environment} complete!`);
       if (result.message) {
-        console.log(`   ${result.message}`);
+        console.log(`  ${result.message}`);
       }
     } else {
-      console.log(`\n❌ Deployment failed: ${result.error}`);
+      console.log(`\n[ERROR] Deployment failed: ${result.error}`);
     }
 
     return result;
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.log(`\n❌ Deployment error: ${errorMessage}`);
+    console.log(`\n[ERROR] Deployment error: ${errorMessage}`);
     return { success: false, error: errorMessage };
   }
 }
