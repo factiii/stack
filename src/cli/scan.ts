@@ -65,6 +65,7 @@ import yaml from 'js-yaml';
 
 import { loadRelevantPlugins } from '../plugins/index.js';
 import GitHubWorkflowMonitor from '../utils/github-workflow-monitor.js';
+import { sshRemoteFactiiiCommand } from '../utils/ssh-helper.js';
 import type { FactiiiConfig, Stage, Fix, Reachability, ScanOptions, ScanProblems, ServerOS } from '../types/index.js';
 import { extractEnvironments } from '../utils/config-helpers.js';
 
@@ -202,7 +203,16 @@ function getStageStatus(
     };
   }
 
-  // Stage is reachable via workflow (checked when workflow runs)
+  // Stage is reachable via SSH (direct connection)
+  if (reach && reach.reachable && reach.via === 'ssh') {
+    return {
+      icon: '🔗',
+      label: 'Via SSH',
+      detail: 'Direct SSH connection',
+    };
+  }
+
+  // Stage is reachable via workflow (fallback when no SSH key)
   if (reach && reach.reachable && reach.via === 'workflow') {
     return {
       icon: '[~]',
@@ -247,9 +257,9 @@ function displayProblems(
   for (const stage of stages) {
     if (reachability[stage]) {
       const stageProblems = problems[stage] ?? [];
-      // Only count problems for stages that were actually scanned (not via workflow)
+      // Only count problems for stages that were actually scanned locally (not via SSH or workflow)
       const reach = reachability[stage];
-      if (reach?.reachable && reach.via !== 'workflow') {
+      if (reach?.reachable && reach.via !== 'workflow' && reach.via !== 'ssh') {
         totalProblems += stageProblems.length;
       }
     }
@@ -294,8 +304,10 @@ function displayProblems(
       console.log(`[ERROR] ${fromStage.toUpperCase()} -> ${stage.toUpperCase()}: ${reason}`);
 
       // Provide hint for common blockers
-      if (reason.includes('GITHUB_TOKEN')) {
-        console.log('  Hint: Run: export GITHUB_TOKEN=your_token');
+      if (reason.includes('SSH key')) {
+        console.log('   💡 Run: npx factiii secrets write-ssh-keys');
+      } else if (reason.includes('GITHUB_TOKEN')) {
+        console.log('   💡 Run: export GITHUB_TOKEN=your_token');
       }
     }
   }
@@ -312,8 +324,8 @@ function displayProblems(
 
       const stageProblems = problems[stage] ?? [];
 
-      // Skip stages reached via workflow or not reachable
-      if (!reach.reachable || reach.via === 'workflow') {
+      // Skip stages reached remotely (via SSH or workflow) or not reachable
+      if (!reach.reachable || reach.via === 'workflow' || reach.via === 'ssh') {
         continue;
       }
 
@@ -491,15 +503,36 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
     }
   }
 
-  // Trigger workflows for stages reachable via workflow
+  // Handle remote stages (via SSH or workflow)
+  const sshStages: Stage[] = [];
   const workflowStages: Stage[] = [];
   for (const stage of stages) {
     const reach = reachability[stage];
-    if (reach?.reachable && reach.via === 'workflow') {
+    if (reach?.reachable && reach.via === 'ssh') {
+      sshStages.push(stage);
+    } else if (reach?.reachable && reach.via === 'workflow') {
       workflowStages.push(stage);
     }
   }
 
+  // Direct SSH scans (primary path)
+  if (sshStages.length > 0 && !options.silent) {
+    console.log('\n🔗 Running remote scans via direct SSH...\n');
+
+    for (const stage of sshStages) {
+      try {
+        const result = sshRemoteFactiiiCommand(stage, config, 'scan --' + stage);
+        if (!result.success) {
+          console.log(`   ⚠️  ${stage} scan failed: ${result.stderr}`);
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.log(`   ⚠️  Failed to run ${stage} scan via SSH: ${errorMessage}`);
+      }
+    }
+  }
+
+  // Fallback: workflow-based scans (only when SSH keys not available)
   if (workflowStages.length > 0 && !options.silent) {
     console.log('\nRunning remote scans via GitHub Actions...\n');
 

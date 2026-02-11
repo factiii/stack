@@ -1,0 +1,60 @@
+name: EXAMPLE-your-repo-name
+config_version: 0.1.0
+github_repo: EXAMPLE-username/repo-name
+ssl_email: EXAMPLE-admin@yourdomain.com
+pipeline: factiii
+ansible:
+  vault_path: group_vars/all/vault.yml
+  vault_password_file: ~/.vault_pass
+staging:
+  server: mac
+  domain: EXAMPLE-staging.yourdomain.com
+  env_file: .env.staging
+prod:
+  server: ubuntu
+  pipeline: aws
+  domain: EXAMPLE-yourdomain.com
+  config: free-tier
+  access_key_id: EXAMPLE-AKIAXXXXXXXX
+  region: us-east-1
+  plugins:
+    ecr:
+      ecr_registry: EXAMPLE-123456789012.dkr.ecr.us-east-1.amazonaws.com
+      ecr_repository: EXAMPLE-repo-name
+
+# ============================================================
+# ADDITIONAL ENVIRONMENTS
+# ============================================================
+# You can add as many environments as needed (staging2, prod2, qa, demo, etc.)
+# Each environment must specify a 'server' plugin and can have server-specific configs.
+#
+# Example - Additional staging environment:
+# staging2:
+#   server: mac
+#   domain: staging2.yourdomain.com
+#   env_file: .env.staging2
+#
+# Example - Additional prod environment:
+# prod2:
+#   server: ubuntu
+#   pipeline: aws
+#   domain: app2.yourdomain.com
+#   config: free-tier
+#   access_key_id: EXAMPLE-AKIAXXXXXXXX
+#   region: us-west-2
+
+# ============================================================
+# ENVIRONMENT OPTIONS
+# ============================================================
+# All environments support these optional fields:
+#   ssh_user: ubuntu  # Override SSH user (defaults to factiiiAuto.yml ssh_user)
+#   env_file: .env.{environment}  # Override env file name
+
+# ============================================================
+# CONTAINER EXCLUSIONS
+# ============================================================
+# Exclude Docker containers from unmanaged container cleanup
+# Uncomment and add container names to keep them running:
+# container_exclusions:
+#   - factiii_postgres
+#   - legacy_container

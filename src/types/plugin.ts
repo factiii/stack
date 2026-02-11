@@ -36,7 +36,7 @@ export type Severity = 'critical' | 'warning' | 'info';
 /**
  * How a stage can be reached
  */
-export type ReachVia = 'local' | 'workflow' | 'api' | 'github-api';
+export type ReachVia = 'local' | 'ssh' | 'workflow' | 'api' | 'github-api';
 
 /**
  * Reachability check result - discriminated union for type safety

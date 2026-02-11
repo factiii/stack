@@ -24,6 +24,7 @@ import yaml from 'js-yaml';
 import { scan } from './scan.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import GitHubWorkflowMonitor from '../utils/github-workflow-monitor.js';
+import { sshRemoteFactiiiCommand } from '../utils/ssh-helper.js';
 import type { FactiiiConfig, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
 
 interface PluginClass {
@@ -166,9 +167,10 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   const pipelinePlugin = getPipelinePlugin(plugins as unknown as PluginClass[]);
 
   // Check reachability for each stage
-  // Pipeline plugin decides how each stage is reached (local, workflow, or not reachable)
+  // Pipeline plugin decides how each stage is reached (local, ssh, workflow, or not reachable)
   const reachability: Record<string, Reachability> = {};
   const reachableStages: Stage[] = [];
+  const sshStages: Stage[] = [];
   const workflowStages: Stage[] = [];
 
   for (const stage of stages) {
@@ -177,7 +179,9 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
 
       // Separate stages by how they're reached
       if (reachability[stage]?.reachable) {
-        if (reachability[stage]!.via === 'workflow') {
+        if (reachability[stage]!.via === 'ssh') {
+          sshStages.push(stage);
+        } else if (reachability[stage]!.via === 'workflow') {
           workflowStages.push(stage);
         } else {
           reachableStages.push(stage);
@@ -193,20 +197,58 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   // Run local fixes for directly reachable stages
   const result = await runLocalFixes(options, reachableStages);
 
-  // Trigger workflows for stages reachable via workflow
+  // Direct SSH fixes (primary path for staging/prod)
+  if (sshStages.length > 0) {
+    console.log('\n🔗 Running remote fixes via direct SSH...\n');
+
+    for (const stage of sshStages) {
+      console.log(`   Running ${stage} fix via SSH...`);
+
+      try {
+        const sshResult = sshRemoteFactiiiCommand(stage, config, 'fix --' + stage);
+
+        if (sshResult.success) {
+          console.log(`   ✅ ${stage} fix completed via SSH`);
+        } else {
+          console.log(`   ❌ ${stage} fix failed: ${sshResult.stderr}`);
+          result.failed++;
+          result.fixes.push({
+            id: stage + '-ssh',
+            stage: stage as Stage,
+            status: 'failed',
+            error: sshResult.stderr || 'SSH fix failed',
+          });
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.log(`   ⚠️  Failed to run ${stage} fix via SSH: ${errorMessage}`);
+        result.failed++;
+        result.fixes.push({
+          id: stage + '-ssh',
+          stage: stage as Stage,
+          status: 'failed',
+          error: errorMessage,
+        });
+      }
+    }
+  }
+
+  // Fallback: workflow-based fixes (only when SSH keys not available)
   if (workflowStages.length > 0) {
     console.log('\nTriggering remote fixes via GitHub Actions...\n');
 
     try {
       const monitor = new GitHubWorkflowMonitor();
 
+
       for (const stage of workflowStages) {
         const workflowFile = 'factiii-fix.yml';
         console.log(`   Triggering ${stage} fix...`);
 
+
         try {
-          // Use triggerAndWatch to wait for workflow completion
           const workflowResult = await monitor.triggerAndWatch(workflowFile, stage);
+
 
           if (workflowResult.success) {
             console.log(`  [OK] ${stage} fix completed`);

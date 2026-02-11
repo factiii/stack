@@ -1,0 +1,34 @@
+---
+# Ansible Inventory: Staging Environment
+#
+# This inventory defines the staging server(s) used for:
+# - Pre-production testing
+# - Docker container deployments
+# - Integration testing
+#
+# TODO: Replace all CHANGEME values with actual configuration
+
+all:
+  hosts:
+    staging-server:
+      # Connection settings
+      ansible_host: "CHANGEME_STAGING_IP_OR_HOSTNAME"  # e.g., staging.example.com
+      ansible_port: 22
+      ansible_user: "CHANGEME_STAGING_USER"             # e.g., root or deploy
+      ansible_ssh_private_key_file: "~/.ssh/staging_deploy_key"
+
+      # SSH connection tuning
+      ansible_ssh_common_args: >-
+        -o StrictHostKeyChecking=no
+        -o ConnectTimeout=10
+        -o ServerAliveInterval=60
+        -o ServerAliveCountMax=5
+
+      # Environment vars
+      ansible_python_interpreter: /usr/bin/python3
+
+      # Custom vars for Factiii Stack
+      factiii_env: "staging"
+      factiii_repo_path: "CHANGEME_REPO_PATH"           # e.g., /root/.factiii/my-app
+      node_version: "20"
+      docker_compose_path: "CHANGEME_COMPOSE_PATH"      # e.g., /root/.factiii/my-app/docker-compose.yml

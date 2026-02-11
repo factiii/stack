@@ -1,0 +1,73 @@
+---
+# =============================================================================
+# fix.yml - Run Factiii fix on remote environments
+# =============================================================================
+#
+# Replaces: factiii-fix.yml GitHub workflow
+#
+# Usage:
+#   ansible-playbook ansible/playbooks/fix.yml -i ansible/inventory/staging.yml
+#   ansible-playbook ansible/playbooks/fix.yml -i ansible/inventory/production.yml
+#   ansible-playbook ansible/playbooks/fix.yml -i ansible/inventory/mac.yml
+#
+# What it does:
+#   1. Verifies SSH connectivity
+#   2. Ensures Node.js is available on the remote host
+#   3. Runs `npx factiii fix --{environment}` on the remote server
+#   4. Returns fix results
+#
+# Note: Fix operations may take longer than scans. Ansible SSH keepalive
+# settings in the inventory files handle long-running connections.
+# =============================================================================
+
+- name: Run Factiii fix on remote server
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Verify connectivity
+      ansible.builtin.ping:
+
+    - name: Check Node.js is installed
+      ansible.builtin.command: node --version
+      register: node_version
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if Node.js not available
+      ansible.builtin.fail:
+        msg: >
+          Node.js is not installed on the remote server.
+          Run the scan playbook first (it bootstraps Node.js),
+          or install manually: curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
+      when: node_version.rc != 0
+
+    - name: Verify repo directory exists
+      ansible.builtin.stat:
+        path: "{{ factiii_repo_path }}"
+      register: repo_dir
+
+    - name: Fail if repo directory missing
+      ansible.builtin.fail:
+        msg: "Repository not found at {{ factiii_repo_path }}. Clone the repo first."
+      when: not repo_dir.stat.exists
+
+    - name: Run Factiii fix
+      ansible.builtin.command:
+        cmd: "npx factiii fix --{{ factiii_env }}"
+        chdir: "{{ factiii_repo_path }}"
+      register: fix_result
+      changed_when: false
+      failed_when: false
+      # Fix operations can be long-running; async allows timeout control
+      async: 600
+      poll: 15
+
+    - name: Display fix results
+      ansible.builtin.debug:
+        msg: "{{ fix_result.stdout_lines }}"
+
+    - name: Fail if fix had errors
+      ansible.builtin.fail:
+        msg: "Fix failed with exit code {{ fix_result.rc }}"
+      when: fix_result.rc != 0

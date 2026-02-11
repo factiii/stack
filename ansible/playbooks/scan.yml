@@ -1,0 +1,75 @@
+---
+# =============================================================================
+# scan.yml - Run Factiii scan on remote environments
+# =============================================================================
+#
+# Replaces: factiii-scan.yml GitHub workflow
+#
+# Usage:
+#   ansible-playbook ansible/playbooks/scan.yml -i ansible/inventory/staging.yml
+#   ansible-playbook ansible/playbooks/scan.yml -i ansible/inventory/production.yml
+#   ansible-playbook ansible/playbooks/scan.yml -i ansible/inventory/mac.yml
+#
+# What it does:
+#   1. Verifies SSH connectivity
+#   2. Ensures Node.js is available on the remote host
+#   3. Runs `npx factiii scan --{environment}` on the remote server
+#   4. Returns scan results
+# =============================================================================
+
+- name: Run Factiii scan on remote server
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Verify connectivity
+      ansible.builtin.ping:
+
+    - name: Check Node.js is installed
+      ansible.builtin.command: node --version
+      register: node_version
+      changed_when: false
+      failed_when: false
+
+    - name: Bootstrap Node.js if missing
+      when: node_version.rc != 0
+      block:
+        - name: Install Node.js (Debian/Ubuntu)
+          ansible.builtin.shell: |
+            curl -fsSL https://deb.nodesource.com/setup_{{ node_version | default('20') }}.x | bash -
+            apt-get install -y nodejs
+          when: ansible_os_family == "Debian"
+          become: true
+
+        - name: Install Node.js (macOS via Homebrew)
+          community.general.homebrew:
+            name: node
+            state: present
+          when: ansible_os_family == "Darwin"
+
+    - name: Verify repo directory exists
+      ansible.builtin.stat:
+        path: "{{ factiii_repo_path }}"
+      register: repo_dir
+
+    - name: Fail if repo directory missing
+      ansible.builtin.fail:
+        msg: "Repository not found at {{ factiii_repo_path }}. Clone the repo first."
+      when: not repo_dir.stat.exists
+
+    - name: Run Factiii scan
+      ansible.builtin.command:
+        cmd: "npx factiii scan --{{ factiii_env }}"
+        chdir: "{{ factiii_repo_path }}"
+      register: scan_result
+      changed_when: false
+      failed_when: false
+
+    - name: Display scan results
+      ansible.builtin.debug:
+        msg: "{{ scan_result.stdout_lines }}"
+
+    - name: Fail if scan had errors
+      ansible.builtin.fail:
+        msg: "Scan failed with exit code {{ scan_result.rc }}"
+      when: scan_result.rc != 0

@@ -3,13 +3,166 @@
  *
  * Shared SSH execution logic for pipeline and server plugins.
  * Provides a consistent way to execute commands on remote servers.
+ *
+ * Supports two SSH key strategies:
+ * 1. Environment-specific deploy keys (~/.ssh/staging_deploy_key, ~/.ssh/prod_deploy_key)
+ * 2. Generic SSH keys (~/.ssh/id_ed25519, ~/.ssh/id_rsa) as fallback
  */
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 
-import type { EnvironmentConfig } from '../types/index.js';
+import type { EnvironmentConfig, FactiiiConfig, Stage } from '../types/index.js';
+import { extractEnvironments, getStageFromEnvironment } from './config-helpers.js';
+
+/**
+ * Map of stage names to their environment-specific SSH key filenames.
+ * These keys are extracted from Ansible Vault by `npx factiii secrets write-ssh-keys`.
+ */
+const STAGE_KEY_MAP: Record<string, string[]> = {
+  staging: ['staging_deploy_key'],
+  prod: ['prod_deploy_key'],
+  mac: ['mac_deploy_key'],
+};
+
+/**
+ * Find the SSH key path for a given stage.
+ * Checks environment-specific deploy keys first, then falls back to generic keys.
+ *
+ * @param stage - The deployment stage (staging, prod, mac)
+ * @returns Absolute path to SSH key, or null if none found
+ */
+export function findSshKeyForStage(stage: string): string | null {
+  const sshDir = path.join(os.homedir(), '.ssh');
+
+  // 1. Check environment-specific deploy keys
+  const stageKeys = STAGE_KEY_MAP[stage] ?? [];
+  for (const keyName of stageKeys) {
+    const keyPath = path.join(sshDir, keyName);
+    if (fs.existsSync(keyPath)) {
+      return keyPath;
+    }
+  }
+
+  // 2. Fallback to generic SSH keys
+  const genericKeys = ['id_ed25519', 'id_rsa'];
+  for (const keyName of genericKeys) {
+    const keyPath = path.join(sshDir, keyName);
+    if (fs.existsSync(keyPath)) {
+      return keyPath;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Get the EnvironmentConfig for a given stage from factiii.yml config.
+ * Returns the first environment matching the stage.
+ *
+ * @param stage - The deployment stage (staging, prod)
+ * @param config - Parsed factiii.yml config
+ * @returns EnvironmentConfig with domain and ssh_user, or null
+ */
+export function getEnvConfigForStage(
+  stage: Stage,
+  config: FactiiiConfig
+): EnvironmentConfig | null {
+  const environments = extractEnvironments(config);
+
+  for (const [envName, envConfig] of Object.entries(environments)) {
+    try {
+      if (getStageFromEnvironment(envName) === stage) {
+        return envConfig;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Execute a Factiii CLI command on a remote server via direct SSH.
+ * Used by scan.ts, fix.ts, and deployStage() when canReach returns via: 'ssh'.
+ *
+ * @param stage - Target stage (staging, prod)
+ * @param config - Parsed factiii.yml config
+ * @param command - The factiii CLI command to run (e.g., 'scan --staging', 'fix --prod')
+ * @returns Object with success, stdout, and stderr
+ */
+export function sshRemoteFactiiiCommand(
+  stage: Stage,
+  config: FactiiiConfig,
+  command: string
+): { success: boolean; stdout: string; stderr: string } {
+  const envConfig = getEnvConfigForStage(stage, config);
+  if (!envConfig) {
+    return {
+      success: false,
+      stdout: '',
+      stderr: 'No environment config found for stage: ' + stage,
+    };
+  }
+
+  const host = envConfig.domain;
+  const user = envConfig.ssh_user ?? 'root';
+  const keyPath = findSshKeyForStage(stage);
+
+  if (!keyPath) {
+    return {
+      success: false,
+      stdout: '',
+      stderr: 'No SSH key found for stage: ' + stage + '. Run: npx factiii secrets write-ssh-keys',
+    };
+  }
+
+  if (!host) {
+    return {
+      success: false,
+      stdout: '',
+      stderr: 'No domain configured for stage: ' + stage + '. Check factiii.yml environments.',
+    };
+  }
+
+  // Build the remote command
+  // Run inside the factiii repo directory on the server
+  const repoName = config.name || 'app';
+  const repoPath = '/root/.factiii/' + repoName;
+  const remoteCommand = 'cd ' + repoPath + ' && npx factiii ' + command;
+
+  console.log('   SSH: ' + user + '@' + host + ' → npx factiii ' + command);
+
+  const result = spawnSync('ssh', [
+    '-i', keyPath,
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'ConnectTimeout=10',
+    '-o', 'ServerAliveInterval=60',
+    '-o', 'ServerAliveCountMax=5',
+    user + '@' + host,
+    remoteCommand,
+  ], {
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: 600000, // 10 minute timeout for long-running operations
+  });
+
+  // Print output in real-time style
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+
+  return {
+    success: result.status === 0,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+  };
+}
 
 /**
  * Execute a command on a remote server via SSH
@@ -24,11 +177,10 @@ export async function sshExec(
   // ============================================================
   // CRITICAL: Detect if we're already on the server
   // ============================================================
-  // When GITHUB_ACTIONS=true, we're executing on the server itself
-  // (workflow SSHs to server and runs the command there)
-  // In this case, run commands locally instead of trying to SSH
+  // When GITHUB_ACTIONS=true or FACTIII_ON_SERVER=true, we're executing
+  // on the server itself. Run commands locally instead of trying to SSH.
   // ============================================================
-  if (process.env.GITHUB_ACTIONS === 'true') {
+  if (process.env.GITHUB_ACTIONS === 'true' || process.env.FACTIII_ON_SERVER === 'true') {
     // We're already on the server - run command locally
     const result = execSync(command, { encoding: 'utf8', stdio: 'pipe' });
     return result.trim();
@@ -38,8 +190,11 @@ export async function sshExec(
   const host = envConfig.domain;
   const user = envConfig.ssh_user ?? 'ubuntu';
 
-  // Try to find SSH key
+  // Try environment-specific deploy keys first, then generic keys
   const keyPaths = [
+    path.join(os.homedir(), '.ssh', 'staging_deploy_key'),
+    path.join(os.homedir(), '.ssh', 'prod_deploy_key'),
+    path.join(os.homedir(), '.ssh', 'mac_deploy_key'),
     path.join(os.homedir(), '.ssh', 'id_ed25519'),
     path.join(os.homedir(), '.ssh', 'id_rsa'),
   ];
@@ -53,14 +208,21 @@ export async function sshExec(
   }
 
   if (!keyPath) {
-    throw new Error('No SSH key found');
+    throw new Error(
+      'No SSH key found. Add a deploy key to ~/.ssh/ or run: npx factiii secrets write-ssh-keys'
+    );
   }
 
   const result = execSync(
-    `ssh -i ${keyPath} -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${user}@${host} "${command.replace(/"/g, '\\"')}"`,
+    'ssh -i ' + keyPath +
+    ' -o StrictHostKeyChecking=no' +
+    ' -o ConnectTimeout=10' +
+    ' -o ServerAliveInterval=60' +
+    ' -o ServerAliveCountMax=5' +
+    ' ' + user + '@' + host +
+    ' "' + command.replace(/"/g, '\\"') + '"',
     { encoding: 'utf8', stdio: 'pipe' }
   );
 
   return result.trim();
 }
-
