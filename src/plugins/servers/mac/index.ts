@@ -63,6 +63,7 @@ import {
 // Import plugin-specific scanfix arrays
 import { containerFixes } from './scanfix/containers.js';
 import { configFixes } from './scanfix/config.js';
+import { systemFixes } from './scanfix/system.js';
 
 // Import environment-specific operations
 import { deployDev } from './dev.js';
@@ -114,7 +115,7 @@ class MacPlugin {
 
     for (const [name, env] of Object.entries(environments)) {
       // Load if environment explicitly uses 'mac'
-      if (env.server === 'mac') {
+      if (env.server === 'mac' || (env.server as string) === 'mac-mini') {
         return true;
       }
 
@@ -168,6 +169,7 @@ class MacPlugin {
     // Plugin-specific fixes (with OS filter)
     ...containerFixes.map(fix => ({ ...fix, os: 'mac' as ServerOS })),
     ...configFixes.map(fix => ({ ...fix, os: 'mac' as ServerOS })),
+    ...systemFixes.map(fix => ({ ...fix, os: 'mac' as ServerOS })),
   ];
 
   // ============================================================

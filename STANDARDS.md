@@ -87,6 +87,13 @@ static canReach(stage: Stage, config: FactiiiConfig): Reachability {
 
 ## Stage Execution Pattern
 
+**Environment Variables That Affect Routing:**
+
+| Variable | Purpose |
+|----------|---------|
+| `GITHUB_ACTIONS` | Set in GitHub Actions. `canReach()` returns `'local'` for all stages. |
+| `FACTIII_ON_SERVER` | Set when running on server (non-GitHub). `canReach()` returns `'local'`. |
+
 **CRITICAL: This pattern has been broken 500+ times. Read carefully.**
 
 ### How Commands Work

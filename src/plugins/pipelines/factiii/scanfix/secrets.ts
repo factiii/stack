@@ -3,6 +3,8 @@
  * Handles Ansible Vault secrets validation for secrets stage
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
@@ -145,6 +147,61 @@ export const secretsFixes: Fix[] = [
     },
     manualFix:
       'Set AWS_SECRET_ACCESS_KEY secret: npx factiii secrets set AWS_SECRET_ACCESS_KEY',
+  },
+  {
+    id: 'missing-vault-password-file',
+    stage: 'secrets',
+    severity: 'critical',
+    description: 'Vault password file not found (required to decrypt secrets)',
+    scan: async (config: FactiiiConfig): Promise<boolean> => {
+      if (!config.ansible?.vault_path) return false; // Will be caught by missing-ansible-config
+      if (!config.ansible.vault_password_file) return false; // Not using password file
+
+      const passwordFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
+      return !fs.existsSync(passwordFile);
+    },
+    fix: null,
+    manualFix:
+      'Create the vault password file specified in factiii.yml ansible.vault_password_file\n' +
+      '  Example: echo "your-vault-password" > ~/.vault_pass && chmod 600 ~/.vault_pass',
+  },
+  {
+    id: 'missing-ssh-key-staging',
+    stage: 'secrets',
+    severity: 'critical',
+    description: 'SSH key file ~/.ssh/staging_deploy_key not found (required for staging access)',
+    scan: async (config: FactiiiConfig): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
+      // Only check if staging environment is defined
+      if (!environments.staging) return false;
+
+      const keyPath = path.join(os.homedir(), '.ssh', 'staging_deploy_key');
+      return !fs.existsSync(keyPath);
+    },
+    fix: null,
+    manualFix:
+      'Extract SSH keys from vault: npx factiii secrets write-ssh-keys',
+  },
+  {
+    id: 'missing-ssh-key-prod',
+    stage: 'secrets',
+    severity: 'critical',
+    description: 'SSH key file ~/.ssh/prod_deploy_key not found (required for prod access)',
+    scan: async (config: FactiiiConfig): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+
+      // Only check if prod environment is defined
+      if (!environments.prod) return false;
+
+      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+      return !fs.existsSync(keyPath);
+    },
+    fix: null,
+    manualFix:
+      'Extract SSH keys from vault: npx factiii secrets write-ssh-keys',
   },
 ];
 

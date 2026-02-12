@@ -2,7 +2,7 @@
  * Fix Command
  *
  * Runs auto-fixes for detected problems.
- * For remote stages (staging/prod), triggers workflows to fix on the server.
+ * For remote stages (staging/prod), delegates to pipeline plugin.
  * For local stages (dev/secrets), runs fixes directly.
  *
  * ============================================================
@@ -12,7 +12,7 @@
  *
  * Key points:
  * - This file asks pipeline plugin canReach(stage) for each stage
- * - Pipeline decides if stage runs locally or via workflow
+ * - Pipeline decides if stage runs locally or via workflow/SSH
  * - When running on server, pipeline workflow specifies --staging/--prod
  * ============================================================
  */
@@ -23,14 +23,25 @@ import yaml from 'js-yaml';
 
 import { scan } from './scan.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
-import GitHubWorkflowMonitor from '../utils/github-workflow-monitor.js';
-import { sshRemoteFactiiiCommand } from '../utils/ssh-helper.js';
 import type { FactiiiConfig, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
 
 interface PluginClass {
   id: string;
   category: string;
   canReach?: (stage: Stage, config: FactiiiConfig) => Reachability;
+}
+
+/**
+ * Pipeline plugin class interface (mirrors deploy.ts pattern)
+ */
+interface PipelinePluginClass {
+  id: string;
+  category: 'pipeline';
+  new(config: FactiiiConfig): PipelinePluginInstance;
+}
+
+interface PipelinePluginInstance {
+  fixStage(stage: Stage, options: Record<string, unknown>): Promise<{ handled: boolean }>;
 }
 
 /**
@@ -47,7 +58,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error(`[!] Error parsing factiii.yml: ${errorMessage}`);
+    console.error('[!] Error parsing factiii.yml: ' + errorMessage);
     return {} as FactiiiConfig;
   }
 }
@@ -96,11 +107,11 @@ async function runLocalFixes(
 
           // Log timing for slow fixes (> 500ms)
           if (duration > 500) {
-            console.log(`   [${duration.toFixed(0)}ms] ${problem.id}`);
+            console.log('   [' + duration.toFixed(0) + 'ms] ' + problem.id);
           }
 
           if (success) {
-            console.log(`  [OK] Fixed: ${problem.description}`);
+            console.log('  [OK] Fixed: ' + problem.description);
             result.fixed++;
             result.fixes.push({
               id: problem.id,
@@ -109,7 +120,7 @@ async function runLocalFixes(
               description: problem.description,
             });
           } else {
-            console.log(`  [ERROR] Failed to fix: ${problem.description}`);
+            console.log('  [ERROR] Failed to fix: ' + problem.description);
             result.failed++;
             result.fixes.push({
               id: problem.id,
@@ -120,7 +131,7 @@ async function runLocalFixes(
           }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          console.log(`  [ERROR] Error fixing ${problem.id}: ${errorMessage}`);
+          console.log('  [ERROR] Error fixing ' + problem.id + ': ' + errorMessage);
           result.failed++;
           result.fixes.push({
             id: problem.id,
@@ -131,8 +142,8 @@ async function runLocalFixes(
           });
         }
       } else {
-        console.log(`  [man] Manual fix required: ${problem.description}`);
-        console.log(`      → ${problem.manualFix}`);
+        console.log('  [man] Manual fix required: ' + problem.description);
+        console.log('      -> ' + problem.manualFix);
         result.manual++;
         result.fixes.push({
           id: problem.id,
@@ -167,124 +178,40 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   const pipelinePlugin = getPipelinePlugin(plugins as unknown as PluginClass[]);
 
   // Check reachability for each stage
-  // Pipeline plugin decides how each stage is reached (local, ssh, workflow, or not reachable)
+  // Separate local vs remote — pipeline plugin handles remote
   const reachability: Record<string, Reachability> = {};
-  const reachableStages: Stage[] = [];
-  const sshStages: Stage[] = [];
-  const workflowStages: Stage[] = [];
+  const localStages: Stage[] = [];
+  const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
     if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
       reachability[stage] = pipelinePlugin.canReach(stage, config);
 
-      // Separate stages by how they're reached
       if (reachability[stage]?.reachable) {
-        if (reachability[stage]!.via === 'ssh') {
-          sshStages.push(stage);
-        } else if (reachability[stage]!.via === 'workflow') {
-          workflowStages.push(stage);
+        if (reachability[stage]!.via === 'local') {
+          localStages.push(stage);
         } else {
-          reachableStages.push(stage);
+          remoteStages.push(stage);
         }
       }
     } else {
       // No pipeline plugin or no canReach method - assume all reachable locally
       reachability[stage] = { reachable: true, via: 'local' };
-      reachableStages.push(stage);
+      localStages.push(stage);
     }
   }
 
   // Run local fixes for directly reachable stages
-  const result = await runLocalFixes(options, reachableStages);
+  const result = await runLocalFixes(options, localStages);
 
-  // Direct SSH fixes (primary path for staging/prod)
-  if (sshStages.length > 0) {
-    console.log('\n🔗 Running remote fixes via direct SSH...\n');
-
-    for (const stage of sshStages) {
-      console.log(`   Running ${stage} fix via SSH...`);
-
-      try {
-        const sshResult = sshRemoteFactiiiCommand(stage, config, 'fix --' + stage);
-
-        if (sshResult.success) {
-          console.log(`   ✅ ${stage} fix completed via SSH`);
-        } else {
-          console.log(`   ❌ ${stage} fix failed: ${sshResult.stderr}`);
-          result.failed++;
-          result.fixes.push({
-            id: stage + '-ssh',
-            stage: stage as Stage,
-            status: 'failed',
-            error: sshResult.stderr || 'SSH fix failed',
-          });
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        console.log(`   ⚠️  Failed to run ${stage} fix via SSH: ${errorMessage}`);
-        result.failed++;
-        result.fixes.push({
-          id: stage + '-ssh',
-          stage: stage as Stage,
-          status: 'failed',
-          error: errorMessage,
-        });
+  // Remote stages: delegate to pipeline plugin
+  if (remoteStages.length > 0) {
+    const PipelineClass = pipelinePlugin as unknown as PipelinePluginClass;
+    if (PipelineClass) {
+      const pipeline = new PipelineClass(config);
+      for (const stage of remoteStages) {
+        await pipeline.fixStage(stage, {});
       }
-    }
-  }
-
-  // Fallback: workflow-based fixes (only when SSH keys not available)
-  if (workflowStages.length > 0) {
-    console.log('\nTriggering remote fixes via GitHub Actions...\n');
-
-    try {
-      const monitor = new GitHubWorkflowMonitor();
-
-
-      for (const stage of workflowStages) {
-        const workflowFile = 'factiii-fix.yml';
-        console.log(`   Triggering ${stage} fix...`);
-
-
-        try {
-          const workflowResult = await monitor.triggerAndWatch(workflowFile, stage);
-
-
-          if (workflowResult.success) {
-            console.log(`  [OK] ${stage} fix completed`);
-
-            // Parse workflow output to extract fix counts
-            // The workflow output contains: "Fixed: X, Manual: Y, Failed: Z"
-            // We need to extract these and aggregate them
-            // For now, we'll just note that the workflow completed
-            // TODO: Parse workflow logs to extract actual counts
-          } else {
-            console.log(`  [ERROR] ${stage} fix failed: ${workflowResult.error}`);
-            result.failed++;
-            result.fixes.push({
-              id: `${stage}-workflow`,
-              stage: stage as Stage,
-              status: 'failed',
-              error: workflowResult.error,
-            });
-          }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          console.log(`  [!] Failed to trigger ${stage} fix: ${errorMessage}`);
-          result.failed++;
-          result.fixes.push({
-            id: `${stage}-workflow`,
-            stage: stage as Stage,
-            status: 'failed',
-            error: errorMessage,
-          });
-        }
-      }
-    } catch (error) {
-      // GitHub CLI not available - show helpful message
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.log(`\n[!] ${errorMessage}`);
-      console.log('   Remote fixes require GitHub CLI. Install with: brew install gh');
     }
   }
 
@@ -296,29 +223,29 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   // DO NOT REMOVE THIS DETAILED OUTPUT - IT HAS BEEN DELETED 500+ TIMES
   // ============================================================
   console.log('');
-  console.log('─'.repeat(60));
+  console.log('-'.repeat(60));
   console.log('RESULTS BY STAGE');
-  console.log('─'.repeat(60) + '\n');
+  console.log('-'.repeat(60) + '\n');
 
   const allStages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
   for (const stage of allStages) {
     const stageFixes = result.fixes.filter((f) => f.stage === stage);
     if (stageFixes.length > 0) {
-      console.log(`${stage.toUpperCase()}:`);
+      console.log(stage.toUpperCase() + ':');
 
       // Show each fix with its status and details
       for (const fix of stageFixes) {
         if (fix.status === 'fixed') {
-          console.log(`  [OK] Fixed: ${fix.description || fix.id}`);
+          console.log('  [OK] Fixed: ' + (fix.description || fix.id));
         } else if (fix.status === 'manual') {
-          console.log(`  [man] Manual: ${fix.description || fix.id}`);
+          console.log('  [man] Manual: ' + (fix.description || fix.id));
           if (fix.manualFix) {
-            console.log(`    -> ${fix.manualFix}`);
+            console.log('    -> ' + fix.manualFix);
           }
         } else if (fix.status === 'failed') {
-          console.log(`  [ERROR] Failed: ${fix.description || fix.id}`);
+          console.log('  [ERROR] Failed: ' + (fix.description || fix.id));
           if (fix.error) {
-            console.log(`      Error: ${fix.error}`);
+            console.log('      Error: ' + fix.error);
           }
         }
       }
@@ -326,8 +253,8 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
     }
   }
 
-  console.log('─'.repeat(60));
-  console.log(`TOTAL: Fixed: ${result.fixed}, Manual: ${result.manual}, Failed: ${result.failed}`);
+  console.log('-'.repeat(60));
+  console.log('TOTAL: Fixed: ' + result.fixed + ', Manual: ' + result.manual + ', Failed: ' + result.failed);
 
   // Exit with error if any fixes failed
   if (result.failed > 0) {
@@ -338,4 +265,3 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
 }
 
 export default fix;
-

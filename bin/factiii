@@ -81,6 +81,7 @@ program
   .option('-b, --branch <branch>', 'Branch to deploy from (defaults to current branch)')
   .option('--commit <hash>', 'Commit hash to deploy (passed by workflow)')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
+  .option('--secrets', 'Deploy secrets from Ansible Vault before deploying')
   .action(async (options) => {
     // Determine which environment to deploy
     let environment = options.environment;
@@ -89,8 +90,13 @@ program
     if (options.prod) environment = 'prod';
 
     if (!environment) {
-      console.log('❌ Please specify an environment: --dev, --staging, or --prod');
+      console.log('Please specify an environment: --dev, --staging, or --prod');
       process.exit(1);
+    }
+
+    // Map --secrets CLI flag to deploySecrets option
+    if (options.secrets) {
+      options.deploySecrets = true;
     }
 
     const result = await deploy(environment, options);

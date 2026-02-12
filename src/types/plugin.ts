@@ -310,6 +310,22 @@ export interface PipelinePluginInstance extends PluginInstance {
    * - Not reachable: Return error with reason
    */
   deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult>;
+
+  /**
+   * Scan a stage - handles routing based on canReach()
+   *
+   * Returns { handled: true } if pipeline ran scan remotely (via SSH or workflow).
+   * Returns { handled: false } if caller should run scan locally.
+   */
+  scanStage(stage: Stage, options: Record<string, unknown>): Promise<{ handled: boolean }>;
+
+  /**
+   * Fix a stage - handles routing based on canReach()
+   *
+   * Returns { handled: true } if pipeline ran fix remotely (via SSH or workflow).
+   * Returns { handled: false } if caller should run fix locally.
+   */
+  fixStage(stage: Stage, options: Record<string, unknown>): Promise<{ handled: boolean }>;
 }
 
 /**

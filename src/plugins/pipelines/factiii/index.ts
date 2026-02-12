@@ -202,8 +202,8 @@ class FactiiiPipeline {
         // No SSH key and no GITHUB_TOKEN
         return {
           reachable: false,
-          reason: 'No SSH key found for ' + stage + '. Run: npx factiii secrets write-ssh-keys\n' +
-            '   Or set GITHUB_TOKEN to fall back to GitHub Actions workflows.',
+          reason: 'No SSH key found at ~/.ssh/' + stage + '_deploy_key. Run: npx factiii secrets write-ssh-keys\n' +
+            '   Fallback: set GITHUB_TOKEN for GitHub Actions workflows.',
         };
 
       default:
@@ -757,6 +757,88 @@ class FactiiiPipeline {
 
     // via: 'local' - we can run directly (dev stage, or on-server in workflow)
     return this.runLocalDeploy(stage, options);
+  }
+
+  /**
+   * Scan a stage - handles routing based on canReach()
+   *
+   * Returns { handled: true } if pipeline ran scan remotely.
+   * Returns { handled: false } if caller should run scan locally.
+   */
+  async scanStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean }> {
+    const reach = FactiiiPipeline.canReach(stage, this._config);
+
+    if (!reach.reachable) {
+      console.log('\n[X] Cannot reach ' + stage + ': ' + reach.reason);
+      return { handled: true };
+    }
+
+    if (reach.via === 'ssh') {
+      console.log('   Scanning ' + stage + ' via direct SSH...');
+      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
+      if (!sshResult.success) {
+        console.log('   [!] ' + stage + ' scan failed: ' + sshResult.stderr);
+      }
+      return { handled: true };
+    }
+
+    if (reach.via === 'workflow') {
+      try {
+        const monitor = new GitHubWorkflowMonitor();
+        console.log('   Triggering ' + stage + ' scan via workflow...');
+        const result = await monitor.triggerAndWatch('factiii-scan.yml', stage);
+        if (!result.success) {
+          console.log('   [!] ' + stage + ' scan failed');
+        }
+      } catch {
+        console.log('   [!] Could not trigger workflow for ' + stage + ' scan');
+      }
+      return { handled: true };
+    }
+
+    // via: 'local' - caller should run locally
+    return { handled: false };
+  }
+
+  /**
+   * Fix a stage - handles routing based on canReach()
+   *
+   * Returns { handled: true } if pipeline ran fix remotely.
+   * Returns { handled: false } if caller should run fix locally.
+   */
+  async fixStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean }> {
+    const reach = FactiiiPipeline.canReach(stage, this._config);
+
+    if (!reach.reachable) {
+      console.log('\n[X] Cannot reach ' + stage + ': ' + reach.reason);
+      return { handled: true };
+    }
+
+    if (reach.via === 'ssh') {
+      console.log('   Fixing ' + stage + ' via direct SSH...');
+      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
+      if (!sshResult.success) {
+        console.log('   [!] ' + stage + ' fix failed: ' + sshResult.stderr);
+      }
+      return { handled: true };
+    }
+
+    if (reach.via === 'workflow') {
+      try {
+        const monitor = new GitHubWorkflowMonitor();
+        console.log('   Triggering ' + stage + ' fix via workflow...');
+        const result = await monitor.triggerAndWatch('factiii-fix.yml', stage);
+        if (!result.success) {
+          console.log('   [!] ' + stage + ' fix failed');
+        }
+      } catch {
+        console.log('   [!] Could not trigger workflow for ' + stage + ' fix');
+      }
+      return { handled: true };
+    }
+
+    // via: 'local' - caller should run locally
+    return { handled: false };
   }
 
   /**

@@ -21,6 +21,7 @@ import * as path from 'path';
 import yaml from 'js-yaml';
 
 import { scan } from './scan.js';
+import { deploySecrets } from './deploy-secrets.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import type { FactiiiConfig, DeployOptions, DeployResult, Stage } from '../types/index.js';
 import { extractEnvironments, getStageFromEnvironment } from '../utils/config-helpers.js';
@@ -112,6 +113,17 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   }
 
   console.log(`Environment: ${environment} (${stage} stage)\n`);
+
+  // Deploy secrets if --secrets flag is passed
+  if (options.deploySecrets && (stage === 'staging' || stage === 'prod')) {
+    console.log('Stage 0: Deploying secrets...\n');
+    const secretsResult = await deploySecrets(stage, { rootDir });
+    if (!secretsResult.success) {
+      console.log('[ERROR] Secrets deployment failed: ' + (secretsResult.error ?? 'Unknown error'));
+      return { success: false, error: 'Secrets deployment failed: ' + (secretsResult.error ?? 'Unknown error') };
+    }
+    console.log('[OK] Secrets deployed\n');
+  }
 
   console.log('Stage 1: Running pre-deploy checks...\n');
 

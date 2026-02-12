@@ -43,6 +43,7 @@ export interface DeployOptions extends ScanOptions {
   environment?: string;
   branch?: string;
   token?: string;
+  deploySecrets?: boolean;
 }
 
 /**
