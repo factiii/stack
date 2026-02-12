@@ -121,7 +121,7 @@ export function sshRemoteFactiiiCommand(
   // Run inside the factiii repo directory on the server
   // $HOME is expanded by the remote shell, supporting non-root users
   const repoName = config.name || 'app';
-  const remoteCommand = 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH" && cd $HOME/.factiii/' + repoName + ' && npx factiii ' + command;
+  const remoteCommand = 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH" && export FACTIII_ON_SERVER=true && cd $HOME/.factiii/' + repoName + ' && npx factiii ' + command;
 
   console.log('   SSH: ' + user + '@' + host + ' → npx factiii ' + command);
 
