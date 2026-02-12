@@ -1,0 +1,123 @@
+---
+# =============================================================================
+# deploy.yml - Deploy application to remote environments
+# =============================================================================
+#
+# Replaces: factiii-deploy.yml GitHub workflow
+#
+# Usage:
+#   # Deploy to staging
+#   ansible-playbook ansible/playbooks/deploy.yml -i ansible/inventory/staging.yml
+#
+#   # Deploy to production (builds on staging first, then deploys to prod)
+#   ansible-playbook ansible/playbooks/deploy.yml -i ansible/inventory/production.yml
+#
+#   # Deploy to Mac
+#   ansible-playbook ansible/playbooks/deploy.yml -i ansible/inventory/mac.yml
+#
+# What it does:
+#   1. Extracts SSH keys from Ansible Vault (if needed)
+#   2. Verifies connectivity to the target server
+#   3. For production: runs build on staging server first
+#   4. Runs `npx factiii deploy --{environment}` on the target server
+#   5. Reports deployment status
+#
+# Variables (set in inventory or passed via -e):
+#   factiii_env:       Target environment (dev, staging, prod)
+#   factiii_repo_path: Path to the repo on the remote server
+#   build_on_staging:  Set to true for prod deploys that build on staging first
+# =============================================================================
+
+- name: Build on staging (production deploys only)
+  hosts: all
+  gather_facts: false
+  # This play only runs when deploying to production and build_on_staging is true
+  when: factiii_env == "prod" and (build_on_staging | default(false) | bool)
+
+  vars:
+    # TODO: Configure staging connection details for cross-server builds
+    staging_host: "CHANGEME_STAGING_HOST"
+    staging_user: "CHANGEME_STAGING_USER"
+    staging_key: "~/.ssh/staging_deploy_key"
+    staging_repo_path: "CHANGEME_STAGING_REPO_PATH"
+
+  tasks:
+    - name: Build image on staging server
+      ansible.builtin.command:
+        cmd: >
+          ssh -i {{ staging_key }}
+          -o StrictHostKeyChecking=no
+          -o ConnectTimeout=10
+          {{ staging_user }}@{{ staging_host }}
+          "cd {{ staging_repo_path }} && npx factiii deploy --staging --build-only"
+      delegate_to: localhost
+      register: staging_build
+      changed_when: false
+
+    - name: Display staging build output
+      ansible.builtin.debug:
+        msg: "{{ staging_build.stdout_lines }}"
+
+- name: Deploy to target environment
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Verify connectivity
+      ansible.builtin.ping:
+
+    - name: Check Node.js is installed
+      ansible.builtin.command: node --version
+      register: node_version
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if Node.js not available
+      ansible.builtin.fail:
+        msg: >
+          Node.js is not installed. Run the scan playbook first to bootstrap,
+          or install manually.
+      when: node_version.rc != 0
+
+    - name: Verify repo directory exists
+      ansible.builtin.stat:
+        path: "{{ factiii_repo_path }}"
+      register: repo_dir
+
+    - name: Fail if repo directory missing
+      ansible.builtin.fail:
+        msg: "Repository not found at {{ factiii_repo_path }}."
+      when: not repo_dir.stat.exists
+
+    - name: Pull latest code
+      ansible.builtin.command:
+        cmd: git pull origin {{ 'main' if factiii_env == 'staging' else 'prod' }}
+        chdir: "{{ factiii_repo_path }}"
+      register: git_pull
+      changed_when: "'Already up to date' not in git_pull.stdout"
+
+    - name: Run Factiii deploy
+      ansible.builtin.command:
+        cmd: "npx factiii deploy --{{ factiii_env }}"
+        chdir: "{{ factiii_repo_path }}"
+      register: deploy_result
+      changed_when: false
+      failed_when: false
+      # Deployments can take a while (Docker builds, etc.)
+      async: 900
+      poll: 15
+
+    - name: Display deploy results
+      ansible.builtin.debug:
+        msg: "{{ deploy_result.stdout_lines }}"
+
+    - name: Report deployment status
+      ansible.builtin.debug:
+        msg: >
+          Deployment to {{ factiii_env }} {{ 'SUCCEEDED' if deploy_result.rc == 0 else 'FAILED' }}
+          (exit code: {{ deploy_result.rc }})
+
+    - name: Fail if deploy had errors
+      ansible.builtin.fail:
+        msg: "Deployment failed with exit code {{ deploy_result.rc }}"
+      when: deploy_result.rc != 0

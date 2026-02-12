@@ -64,7 +64,6 @@ import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
 import { loadRelevantPlugins } from '../plugins/index.js';
-import GitHubWorkflowMonitor from '../utils/github-workflow-monitor.js';
 import type { FactiiiConfig, Stage, Fix, Reachability, ScanOptions, ScanProblems, ServerOS } from '../types/index.js';
 import { extractEnvironments } from '../utils/config-helpers.js';
 
@@ -77,6 +76,19 @@ interface PluginClass {
 }
 
 /**
+ * Pipeline plugin class interface (mirrors deploy.ts pattern)
+ */
+interface PipelinePluginClass {
+  id: string;
+  category: 'pipeline';
+  new(config: FactiiiConfig): PipelinePluginInstance;
+}
+
+interface PipelinePluginInstance {
+  scanStage(stage: Stage, options: Record<string, unknown>): Promise<{ handled: boolean }>;
+}
+
+/**
  * Load relevant plugins based on config
  */
 async function loadPlugins(rootDir: string): Promise<PluginClass[]> {
@@ -84,7 +96,7 @@ async function loadPlugins(rootDir: string): Promise<PluginClass[]> {
 
   // If no config exists, tell user to run init
   if (!config || Object.keys(config).length === 0) {
-    console.error('\n❌ No factiii.yml found.');
+    console.error('\n[ERROR] No factiii.yml found.');
     console.error('   Run: npx factiii init\n');
     process.exit(1);
   }
@@ -106,7 +118,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error(`⚠️  Error parsing factiii.yml: ${errorMessage}`);
+    console.error('[!] Error parsing factiii.yml: ' + errorMessage);
     return {} as FactiiiConfig;
   }
 }
@@ -124,27 +136,27 @@ function generateEnvVarFixes(
   for (const varName of plugin.requiredEnvVars ?? []) {
     // Check .env.example has the var
     fixes.push({
-      id: `missing-env-example-${varName.toLowerCase()}`,
+      id: 'missing-env-example-' + varName.toLowerCase(),
       stage: 'dev',
       severity: 'critical',
-      description: `${varName} not found in .env.example`,
+      description: varName + ' not found in .env.example',
       plugin: plugin.id,
       scan: async (): Promise<boolean> => {
         const envPath = path.join(rootDir, '.env.example');
         if (!fs.existsSync(envPath)) return true;
         const content = fs.readFileSync(envPath, 'utf8');
-        return !content.includes(`${varName}=`);
+        return !content.includes(varName + '=');
       },
       fix: null,
-      manualFix: `Add ${varName}=your_value to .env.example`,
+      manualFix: 'Add ' + varName + '=your_value to .env.example',
     });
 
     // Check .env.staging has the var (only if staging environment is defined)
     fixes.push({
-      id: `missing-env-staging-${varName.toLowerCase()}`,
+      id: 'missing-env-staging-' + varName.toLowerCase(),
       stage: 'staging',
       severity: 'critical',
-      description: `${varName} not found in .env.staging`,
+      description: varName + ' not found in .env.staging',
       plugin: plugin.id,
       scan: async (config: FactiiiConfig): Promise<boolean> => {
         // Only check if staging environment is defined in config
@@ -154,18 +166,18 @@ function generateEnvVarFixes(
         const envPath = path.join(rootDir, '.env.staging');
         if (!fs.existsSync(envPath)) return true;
         const content = fs.readFileSync(envPath, 'utf8');
-        return !content.includes(`${varName}=`);
+        return !content.includes(varName + '=');
       },
       fix: null,
-      manualFix: `Add ${varName}=staging_value to .env.staging`,
+      manualFix: 'Add ' + varName + '=staging_value to .env.staging',
     });
 
     // Check .env.prod has the var (only if prod environment is defined)
     fixes.push({
-      id: `missing-env-prod-${varName.toLowerCase()}`,
+      id: 'missing-env-prod-' + varName.toLowerCase(),
       stage: 'prod',
       severity: 'critical',
-      description: `${varName} not found in .env.prod`,
+      description: varName + ' not found in .env.prod',
       plugin: plugin.id,
       scan: async (config: FactiiiConfig): Promise<boolean> => {
         // Only check if prod environment is defined in config
@@ -175,10 +187,10 @@ function generateEnvVarFixes(
         const envPath = path.join(rootDir, '.env.prod');
         if (!fs.existsSync(envPath)) return true;
         const content = fs.readFileSync(envPath, 'utf8');
-        return !content.includes(`${varName}=`);
+        return !content.includes(varName + '=');
       },
       fix: null,
-      manualFix: `Add ${varName}=production_value to .env.prod`,
+      manualFix: 'Add ' + varName + '=production_value to .env.prod',
     });
   }
 
@@ -196,35 +208,33 @@ function getStageStatus(
   // Stage is not reachable
   if (reach && !reach.reachable) {
     return {
-      icon: '❌',
+      icon: '[X]',
       label: 'Cannot reach',
       detail: reach.reason,
     };
   }
 
-  // Stage is reachable via workflow (checked when workflow runs)
-  if (reach && reach.reachable && reach.via === 'workflow') {
+  // Stage is reachable remotely (pipeline handles it)
+  if (reach && reach.reachable && reach.via !== 'local') {
     return {
-      icon: '🔄',
-      label: 'Via workflow',
-      detail: 'Checked when workflow runs',
+      icon: '[~]',
+      label: 'Via ' + reach.via,
+      detail: 'Handled by pipeline plugin',
     };
   }
 
-  // Stage is directly reachable
-  const via = reach?.reachable && reach.via ? reach.via : 'local';
-
+  // Stage is directly reachable (local)
   if (problemCount === 0) {
     return {
-      icon: '✅',
+      icon: '[OK]',
       label: 'Ready',
-      detail: via,
+      detail: 'local',
     };
   } else {
     return {
-      icon: '❌',
-      label: `${problemCount} issue${problemCount > 1 ? 's' : ''}`,
-      detail: via,
+      icon: '[X]',
+      label: problemCount + ' issue' + (problemCount > 1 ? 's' : ''),
+      detail: 'local',
     };
   }
 }
@@ -243,22 +253,19 @@ function displayProblems(
   let totalProblems = 0;
   const unreachableStages: { stage: Stage; reason: string }[] = [];
 
-  // Count total problems
+  // Count total problems (only for locally-scanned stages)
   for (const stage of stages) {
     if (reachability[stage]) {
       const stageProblems = problems[stage] ?? [];
-      // Only count problems for stages that were actually scanned (not via workflow)
       const reach = reachability[stage];
-      if (reach?.reachable && reach.via !== 'workflow') {
+      if (reach?.reachable && reach.via === 'local') {
         totalProblems += stageProblems.length;
       }
     }
   }
 
   // Header
-  console.log('\n' + '═'.repeat(60));
-  console.log('PIPELINE STATUS');
-  console.log('═'.repeat(60) + '\n');
+  console.log('\nPIPELINE STATUS\n');
 
   // Stage status overview
   for (const stage of stages) {
@@ -269,11 +276,11 @@ function displayProblems(
     const status = getStageStatus(stage, reach, problemCount);
 
     // Format: [STAGE]     icon Status (detail)
-    const stageLabel = `[${stage.toUpperCase()}]`.padEnd(10);
-    const statusLine = `${stageLabel} ${status.icon} ${status.label}`;
+    const stageLabel = ('[' + stage.toUpperCase() + ']').padEnd(10);
+    const statusLine = stageLabel + ' ' + status.icon + ' ' + status.label;
 
     if (status.detail && status.label !== 'Cannot reach') {
-      console.log(`${statusLine} (${status.detail})`);
+      console.log(statusLine + ' (' + status.detail + ')');
     } else {
       console.log(statusLine);
     }
@@ -286,27 +293,34 @@ function displayProblems(
 
   // Blockers section (only if there are unreachable stages)
   if (unreachableStages.length > 0) {
-    console.log('\n' + '─'.repeat(60));
+    console.log('\n' + '-'.repeat(60));
     console.log('BLOCKERS');
-    console.log('─'.repeat(60) + '\n');
+    console.log('-'.repeat(60) + '\n');
 
     for (const { stage, reason } of unreachableStages) {
-      // Determine which stage this blocks access FROM
-      const fromStage = stage === 'secrets' ? 'dev' : stage === 'staging' || stage === 'prod' ? 'secrets' : 'dev';
-      console.log(`❌ ${fromStage.toUpperCase()} → ${stage.toUpperCase()}: ${reason}`);
+      console.log('[ERROR] ' + stage.toUpperCase() + ' unreachable: ' + reason);
 
-      // Provide hint for common blockers
-      if (reason.includes('GITHUB_TOKEN')) {
-        console.log('   💡 Run: export GITHUB_TOKEN=your_token');
+      // Provide smart hints based on the actual reason
+      if (reason.includes('vault_path')) {
+        console.log('   Hint: Add ansible config to factiii.yml:');
+        console.log('         ansible:');
+        console.log('           vault_path: group_vars/all/vault.yml');
+        console.log('           vault_password_file: ~/.vault_pass');
+      } else if (reason.includes('Vault password')) {
+        console.log('   Hint: Create vault password file or set ANSIBLE_VAULT_PASSWORD env var');
+      } else if (reason.includes('SSH key')) {
+        console.log('   Hint: Run: npx factiii secrets write-ssh-keys');
+      } else if (reason.includes('GITHUB_TOKEN')) {
+        console.log('   Hint: Run: export GITHUB_TOKEN=your_token');
       }
     }
   }
 
   // Issues section (only if there are problems)
   if (totalProblems > 0) {
-    console.log('\n' + '─'.repeat(60));
+    console.log('\n' + '-'.repeat(60));
     console.log('ISSUES BY STAGE');
-    console.log('─'.repeat(60) + '\n');
+    console.log('-'.repeat(60) + '\n');
 
     for (const stage of stages) {
       const reach = reachability[stage];
@@ -314,17 +328,17 @@ function displayProblems(
 
       const stageProblems = problems[stage] ?? [];
 
-      // Skip stages reached via workflow or not reachable
-      if (!reach.reachable || reach.via === 'workflow') {
+      // Skip stages not scanned locally
+      if (!reach.reachable || reach.via !== 'local') {
         continue;
       }
 
       if (stageProblems.length > 0) {
-        console.log(`${stage.toUpperCase()}:`);
+        console.log(stage.toUpperCase() + ':');
         for (const problem of stageProblems) {
-          const icon = problem.fix ? '🔧' : '📝';
+          const icon = problem.fix ? '[fix]' : '[man]';
           const autoFix = problem.fix ? '(auto-fixable)' : '(manual)';
-          console.log(`   ${icon} ${problem.description} ${autoFix}`);
+          console.log('  ' + icon + ' ' + problem.description + ' ' + autoFix);
         }
         console.log('');
       }
@@ -332,14 +346,14 @@ function displayProblems(
   }
 
   // Summary
-  console.log('─'.repeat(60));
+  console.log('-'.repeat(60));
   if (totalProblems === 0 && unreachableStages.length === 0) {
-    console.log('✅ All checks passed!\n');
+    console.log('[OK] All checks passed!\n');
   } else if (totalProblems === 0 && unreachableStages.length > 0) {
-    console.log('⚠️  Some stages cannot be reached. Fix blockers above.\n');
+    console.log('[!] Some stages cannot be reached. Fix blockers above.\n');
   } else {
-    console.log(`Found ${totalProblems} issue${totalProblems > 1 ? 's' : ''}.`);
-    console.log('💡 Run: npx factiii fix\n');
+    console.log('Found ' + totalProblems + ' issue' + (totalProblems > 1 ? 's' : '') + '.');
+    console.log('Hint: Run: npx factiii fix\n');
   }
 }
 
@@ -366,12 +380,12 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
       }).trim();
 
       if (!options.silent) {
-        console.log(`📍 Scanning commit: ${options.commit.substring(0, 7)}`);
+        console.log('Scanning commit: ' + options.commit.substring(0, 7));
       }
 
       if (currentCommit !== options.commit) {
         console.warn(
-          `⚠️  Warning: Expected commit ${options.commit.substring(0, 7)} but found ${currentCommit.substring(0, 7)}`
+          '[!] Warning: Expected commit ' + options.commit.substring(0, 7) + ' but found ' + currentCommit.substring(0, 7)
         );
       }
     } catch {
@@ -394,27 +408,26 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   const pipelinePlugin = getPipelinePlugin(plugins);
 
   // Check reachability for each stage
-  // Pipeline plugin decides how each stage is reached (local, workflow, or not reachable)
+  // Separate local vs remote stages — pipeline plugin handles remote
   const reachability: Record<string, Reachability> = {};
-  const reachableStages: Stage[] = [];
+  const localStages: Stage[] = [];
+  const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
     if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
       reachability[stage] = pipelinePlugin.canReach(stage, config);
 
-      // Only run stages that are reachable locally (not via workflow)
-      // Stages reachable via 'workflow' will be triggered later
-      if (
-        reachability[stage]?.reachable &&
-        'via' in reachability[stage]! &&
-        reachability[stage]!.via !== 'workflow'
-      ) {
-        reachableStages.push(stage);
+      if (reachability[stage]?.reachable) {
+        if (reachability[stage]!.via === 'local') {
+          localStages.push(stage);
+        } else {
+          remoteStages.push(stage);
+        }
       }
     } else {
       // No pipeline plugin or no canReach method - assume all reachable locally
       reachability[stage] = { reachable: true, via: 'local' };
-      reachableStages.push(stage);
+      localStages.push(stage);
     }
   }
 
@@ -440,7 +453,7 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   };
 
   if (!options.silent) {
-    console.log('🔍 Scanning...\n');
+    console.log('Scanning...\n');
   }
 
   // Get target server OS for each stage (for OS filtering)
@@ -456,8 +469,8 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   }
 
   for (const fix of allFixes) {
-    // Skip if stage not in reachable stages
-    if (!reachableStages.includes(fix.stage)) continue;
+    // Skip if stage not in local stages
+    if (!localStages.includes(fix.stage)) continue;
 
     // OS filtering: Skip fixes that don't match the target OS
     if (fix.os) {
@@ -478,7 +491,7 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
 
       // Log timing for slow checks (> 500ms)
       if (duration > 500 && !options.silent) {
-        console.log(`   [${duration.toFixed(0)}ms] ${fix.id}`);
+        console.log('   [' + duration.toFixed(0) + 'ms] ' + fix.id);
       }
 
       if (hasProblem) {
@@ -488,45 +501,19 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
       // Scan failed - treat as problem
       if (!options.silent) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        console.log(`   ⚠️  Error scanning ${fix.id}: ${errorMessage}`);
+        console.log('  [!] Error scanning ' + fix.id + ': ' + errorMessage);
       }
     }
   }
 
-  // Trigger workflows for stages reachable via workflow
-  const workflowStages: Stage[] = [];
-  for (const stage of stages) {
-    const reach = reachability[stage];
-    if (reach?.reachable && reach.via === 'workflow') {
-      workflowStages.push(stage);
-    }
-  }
-
-  if (workflowStages.length > 0 && !options.silent) {
-    console.log('\n🔄 Running remote scans via GitHub Actions...\n');
-
-    try {
-      const monitor = new GitHubWorkflowMonitor();
-
-      for (const stage of workflowStages) {
-        const workflowFile = 'factiii-scan.yml';
-        console.log(`   Triggering ${stage} scan...`);
-
-        try {
-          const result = await monitor.triggerAndWatch(workflowFile, stage);
-          if (!result.success) {
-            console.log(`   ⚠️  ${stage} scan failed`);
-          }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          console.log(`   ⚠️  Failed to run ${stage} scan: ${errorMessage}`);
-        }
+  // Remote stages: delegate to pipeline plugin
+  if (remoteStages.length > 0 && !options.silent) {
+    const PipelineClass = pipelinePlugin as unknown as PipelinePluginClass;
+    if (PipelineClass) {
+      const pipeline = new PipelineClass(config);
+      for (const stage of remoteStages) {
+        await pipeline.scanStage(stage, {});
       }
-    } catch (error) {
-      // GitHub CLI not available - show helpful message
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.log(`\n⚠️  ${errorMessage}`);
-      console.log('   Remote scans will run automatically on next deployment');
     }
   }
 
@@ -538,4 +525,3 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
 }
 
 export default scan;
-

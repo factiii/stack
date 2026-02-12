@@ -8,7 +8,7 @@ import { scan } from './scan.js';
 import type { CheckConfigOptions, Stage } from '../types/index.js';
 
 export async function checkConfig(options: CheckConfigOptions = {}): Promise<boolean> {
-  console.log('⚠️  The check-config command is deprecated. Use: npx factiii scan\n');
+  console.log('[!] The check-config command is deprecated. Use: npx factiii scan\n');
 
   const environment = options.environment ?? 'staging';
   const stages: Stage[] = [environment as Stage];

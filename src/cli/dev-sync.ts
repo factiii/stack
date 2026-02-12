@@ -60,18 +60,18 @@ function getDevSyncConfigPath(): string {
  */
 function loadDevSyncConfig(): DevSyncConfig {
   const configPath = getDevSyncConfigPath();
-  
+
   if (!fs.existsSync(configPath)) {
     return { sshKeys: {} };
   }
-  
+
   try {
     const content = fs.readFileSync(configPath, 'utf8');
     const config = JSON.parse(content) as DevSyncConfig;
     return config || { sshKeys: {} };
   } catch (error) {
     // If config file is corrupted, return empty config
-    console.warn(`⚠️  Could not read dev-sync config: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`[!] Could not read dev-sync config: ${error instanceof Error ? error.message : String(error)}`);
     return { sshKeys: {} };
   }
 }
@@ -82,16 +82,16 @@ function loadDevSyncConfig(): DevSyncConfig {
 function saveDevSyncConfig(config: DevSyncConfig): void {
   const configPath = getDevSyncConfigPath();
   const factiiiDir = path.dirname(configPath);
-  
+
   // Create ~/.factiii directory if it doesn't exist
   if (!fs.existsSync(factiiiDir)) {
     fs.mkdirSync(factiiiDir, { mode: 0o700 });
   }
-  
+
   try {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
   } catch (error) {
-    console.warn(`⚠️  Could not save dev-sync config: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`[!] Could not save dev-sync config: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -102,7 +102,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
   const configPath = path.join(rootDir, 'factiii.yml');
 
   if (!fs.existsSync(configPath)) {
-    console.error('❌ factiii.yml not found in current directory');
+    console.error('[ERROR] factiii.yml not found in current directory');
     console.error('   Make sure you are running this from your app repository');
     process.exit(1);
   }
@@ -111,7 +111,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error(`❌ Error parsing factiii.yml: ${errorMessage}`);
+    console.error(`[ERROR] Error parsing factiii.yml: ${errorMessage}`);
     process.exit(1);
   }
 }
@@ -121,20 +121,20 @@ function loadConfig(rootDir: string): FactiiiConfig {
  */
 function findInfrastructurePath(rootDir: string): string {
   const packageJsonPath = path.join(rootDir, 'package.json');
-  
+
   if (!fs.existsSync(packageJsonPath)) {
-    console.error('❌ package.json not found');
+    console.error('[ERROR] package.json not found');
     process.exit(1);
   }
 
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-  
+
   // Check devDependencies for link: dependency
   const devDeps = packageJson.devDependencies || {};
   const factiiiStack = devDeps['@factiii/stack'];
-  
+
   if (!factiiiStack || !factiiiStack.startsWith('link:')) {
-    console.error('❌ No link: dependency found for @factiii/stack in package.json');
+    console.error('[ERROR] No link: dependency found for @factiii/stack in package.json');
     console.error('   Expected: "@factiii/stack": "link:/path/to/infrastructure"');
     console.error('   This command requires a local link to the infrastructure package');
     process.exit(1);
@@ -143,9 +143,9 @@ function findInfrastructurePath(rootDir: string): string {
   // Extract path from link:
   const infraPath = factiiiStack.replace('link:', '');
   const resolvedPath = path.resolve(rootDir, infraPath);
-  
+
   if (!fs.existsSync(resolvedPath)) {
-    console.error(`❌ Infrastructure path not found: ${resolvedPath}`);
+    console.error(`[ERROR] Infrastructure path not found: ${resolvedPath}`);
     process.exit(1);
   }
 
@@ -167,7 +167,7 @@ function getTargetEnvironments(config: FactiiiConfig, options: DevSyncOptions): 
     if (stagingEnv) {
       environments.push(stagingEnv);
     } else {
-      console.warn('⚠️  Staging environment not configured in factiii.yml');
+      console.warn('[!] Staging environment not configured in factiii.yml');
     }
   }
 
@@ -177,7 +177,7 @@ function getTargetEnvironments(config: FactiiiConfig, options: DevSyncOptions): 
     if (prodEnv) {
       environments.push(prodEnv);
     } else {
-      console.warn('⚠️  Production environment not configured in factiii.yml');
+      console.warn('[!] Production environment not configured in factiii.yml');
     }
   }
 
@@ -188,7 +188,7 @@ function getTargetEnvironments(config: FactiiiConfig, options: DevSyncOptions): 
   }
 
   if (environments.length === 0) {
-    console.error('❌ No environments configured in factiii.yml');
+    console.error('[ERROR] No environments configured in factiii.yml');
     console.error('   Add staging and/or prod environments to factiii.yml');
     process.exit(1);
   }
@@ -227,21 +227,21 @@ function incrementDevVersion(infraPath: string): string {
  * Build infrastructure locally
  */
 async function buildInfrastructure(infraPath: string): Promise<void> {
-  console.log('📦 Building infrastructure locally...');
-  
+  console.log('Building infrastructure locally...');
+
   try {
-    const { stdout, stderr } = await exec('npm run build', { 
+    const { stdout, stderr } = await exec('npm run build', {
       cwd: infraPath,
       env: { ...process.env, NODE_ENV: 'production' }
     });
-    
+
     if (stderr && !stderr.includes('npm WARN')) {
       console.log(stderr);
     }
-    
-    console.log('✅ Built successfully\n');
+
+    console.log('[OK] Built successfully\n');
   } catch (error) {
-    console.error('❌ Build failed:');
+    console.error('[ERROR] Build failed:');
     if (error instanceof Error && 'stdout' in error) {
       console.error((error as any).stdout);
       console.error((error as any).stderr);
@@ -256,23 +256,23 @@ async function buildInfrastructure(infraPath: string): Promise<void> {
 async function createTarball(infraPath: string): Promise<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factiii-dev-sync-'));
   const tarPath = path.join(tmpDir, 'infrastructure.tar.gz');
-  
-  console.log('📦 Creating artifact...');
-  
+
+  console.log('Creating artifact...');
+
   try {
     // Create tar excluding node_modules and .git
     await exec(
       `tar -czf "${tarPath}" --exclude='node_modules' --exclude='.git' --exclude='*.log' -C "${infraPath}" .`,
       { maxBuffer: 50 * 1024 * 1024 } // 50MB buffer
     );
-    
+
     const stats = fs.statSync(tarPath);
     const sizeMB = (stats.size / 1024 / 1024).toFixed(2);
-    console.log(`✅ Artifact created (${sizeMB} MB)\n`);
-    
+    console.log(`[OK] Artifact created (${sizeMB} MB)\n`);
+
     return tarPath;
   } catch (error) {
-    console.error('❌ Failed to create tarball:');
+    console.error('[ERROR] Failed to create tarball:');
     console.error(error);
     process.exit(1);
   }
@@ -285,7 +285,7 @@ async function getOrPromptSSHKey(environment: string): Promise<string> {
   // Check environment variable first
   const envVar = environment === 'staging' ? 'STAGING_SSH' : 'PROD_SSH';
   const sshKeyFromEnv = process.env[envVar];
-  
+
   if (sshKeyFromEnv) {
     // Check if it's a file path
     if (fs.existsSync(sshKeyFromEnv)) {
@@ -300,44 +300,44 @@ async function getOrPromptSSHKey(environment: string): Promise<string> {
       return keyPath;
     }
   }
-  
+
   // Check saved config file
   const config = loadDevSyncConfig();
   const configKey = environment === 'staging' ? 'stagingPath' : 'prodPath';
   const savedPath = config.sshKeys[configKey];
-  
+
   if (savedPath && fs.existsSync(savedPath)) {
     const resolvedPath = path.resolve(savedPath);
-    console.log(`✅ Using saved SSH key path: ${resolvedPath}\n`);
+    console.log(`[OK] Using saved SSH key path: ${resolvedPath}\n`);
     return resolvedPath;
   }
-  
+
   // If saved path doesn't exist, remove it from config
   if (savedPath && !fs.existsSync(savedPath)) {
     const updatedConfig = { ...config };
     delete updatedConfig.sshKeys[configKey];
     saveDevSyncConfig(updatedConfig);
   }
-  
+
   // Prompt user for SSH key
-  console.log(`\n🔑 SSH key not found in ${envVar} environment variable`);
+  console.log(`\nSSH key not found in ${envVar} environment variable`);
   console.log('   Please provide your SSH private key for this environment');
   console.log('   You can paste the key content or provide a file path');
   console.log('   Note: File paths will be remembered for next time (key content will not be saved)\n');
-  
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
   });
-  
+
   return new Promise((resolve, reject) => {
     rl.question('SSH key (paste content or file path): ', async (answer) => {
       rl.close();
-      
+
       let keyPath: string;
       const trimmed = answer.trim();
       let isFilePath = false;
-      
+
       // Check if it's a file path
       if (fs.existsSync(trimmed)) {
         keyPath = path.resolve(trimmed);
@@ -350,23 +350,23 @@ async function getOrPromptSSHKey(environment: string): Promise<string> {
         fs.chmodSync(keyPath, 0o600);
         isFilePath = false;
       }
-      
+
       // Verify it's a valid key file
       if (!fs.existsSync(keyPath)) {
-        console.error('❌ SSH key file not found');
+        console.error('[ERROR] SSH key file not found');
         process.exit(1);
       }
-      
+
       // Save file path to config for next time (only if it's a file path, not key content)
       if (isFilePath) {
         const updatedConfig = loadDevSyncConfig();
         updatedConfig.sshKeys[configKey] = keyPath;
         saveDevSyncConfig(updatedConfig);
-        console.log('✅ SSH key path saved for next time\n');
+        console.log('[OK] SSH key path saved for next time\n');
       } else {
-        console.log('✅ Using SSH key (not saved - use file path to remember)\n');
+        console.log('[OK] Using SSH key (not saved - use file path to remember)\n');
       }
-      
+
       resolve(keyPath);
     });
   });
@@ -386,15 +386,15 @@ async function syncToServer(
   const envConfig = allEnvs[environment];
 
   if (!envConfig?.domain) {
-    console.error(`❌ ${environment} domain not configured in factiii.yml`);
+    console.error(`[ERROR] ${environment} domain not configured in factiii.yml`);
     process.exit(1);
   }
 
   const host = envConfig.domain;
   const user = envConfig.ssh_user || 'ubuntu';
-  
-  console.log(`📤 Syncing to ${environment} (${user}@${host})...`);
-  
+
+  console.log(`Syncing to ${environment} (${user}@${host})...`);
+
   try {
     // SCP tarball to server
     console.log('   Uploading tarball...');
@@ -402,7 +402,7 @@ async function syncToServer(
       `scp -i "${sshKeyPath}" -o StrictHostKeyChecking=no "${tarPath}" "${user}@${host}:/tmp/infrastructure.tar.gz"`,
       { maxBuffer: 50 * 1024 * 1024 }
     );
-    
+
     // SSH to server and extract
     console.log('   Extracting on server...');
     await exec(
@@ -411,7 +411,7 @@ async function syncToServer(
          cd ~/.factiii/infrastructure && \
          tar -xzf /tmp/infrastructure.tar.gz && \
          rm /tmp/infrastructure.tar.gz && \
-         echo '📦 Installing infrastructure dependencies...' && \
+         echo 'Installing infrastructure dependencies...' && \
          export PATH=\"/opt/homebrew/bin:/usr/local/bin:\$PATH\" && \
          if [ -f 'pnpm-lock.yaml' ]; then \
            command -v pnpm >/dev/null 2>&1 || npm install -g pnpm && \
@@ -419,12 +419,12 @@ async function syncToServer(
          else \
            npm install; \
          fi && \
-         echo '✅ Infrastructure synced successfully'"`
+         echo '[OK] Infrastructure synced successfully'"`
     );
-    
-    console.log(`   ✅ Synced to ${environment}\n`);
+
+    console.log(`  [OK] Synced to ${environment}\n`);
   } catch (error) {
-    console.error(`❌ Failed to sync to ${environment}:`);
+    console.error(`[ERROR] Failed to sync to ${environment}:`);
     if (error instanceof Error) {
       console.error(`   ${error.message}`);
     }
@@ -451,9 +451,9 @@ async function deployAfterSync(
   const host = envConfig.domain;
   const user = envConfig.ssh_user || 'ubuntu';
   const repoName = config.name || 'app';
-  
-  console.log(`🚀 Deploying to ${environment}...`);
-  
+
+  console.log(`Deploying to ${environment}...`);
+
   try {
     await exec(
       `ssh -i "${sshKeyPath}" -o StrictHostKeyChecking=no "${user}@${host}" \
@@ -461,10 +461,10 @@ async function deployAfterSync(
          cd ~/.factiii/${repoName} && \
          GITHUB_ACTIONS=true node ~/.factiii/infrastructure/bin/factiii deploy --${environment}"`
     );
-    
-    console.log(`   ✅ Deployed to ${environment}\n`);
+
+    console.log(`  [OK] Deployed to ${environment}\n`);
   } catch (error) {
-    console.error(`❌ Deployment failed for ${environment}:`);
+    console.error(`[ERROR] Deployment failed for ${environment}:`);
     if (error instanceof Error) {
       console.error(`   ${error.message}`);
     }
@@ -477,35 +477,33 @@ async function deployAfterSync(
  */
 export async function devSync(options: DevSyncOptions = {}): Promise<void> {
   const rootDir = options.rootDir ?? process.cwd();
-  
-  console.log('════════════════════════════════════════════════════════════');
-  console.log('🔧 DEV SYNC - Testing uncommitted infrastructure changes');
-  console.log('════════════════════════════════════════════════════════════');
-  console.log('⚠️  This is a development command - not for production releases');
-  console.log('⚠️  Only for testing @factiii/stack beta features\n');
-  
+
+  console.log('DEV SYNC - Testing uncommitted infrastructure changes');
+  console.log('[!] This is a development command - not for production releases');
+  console.log('[!] Only for testing @factiii/stack beta features\n');
+
   // 1. Load config and validate
   const config = loadConfig(rootDir);
   const infraPath = findInfrastructurePath(rootDir);
   const environments = getTargetEnvironments(config, options);
-  
-  console.log(`📍 Infrastructure path: ${infraPath}`);
-  console.log(`🎯 Target environments: ${environments.join(', ')}\n`);
-  
+
+  console.log(`Infrastructure path: ${infraPath}`);
+  console.log(`Target environments: ${environments.join(', ')}\n`);
+
   // 2. Increment dev version
   const devVersion = incrementDevVersion(infraPath);
-  console.log(`📦 Dev version: ${devVersion}\n`);
-  
+  console.log(`Dev version: ${devVersion}\n`);
+
   // 3. Build infrastructure locally
   await buildInfrastructure(infraPath);
-  
+
   // 4. Create tarball
   const tarPath = await createTarball(infraPath);
-  
+
   // 5. Sync to each environment
   const sshKeyPaths: Map<string, string> = new Map();
   const cleanupPaths: string[] = [];
-  
+
   try {
     for (const env of environments) {
       // Get SSH key for this environment
@@ -513,25 +511,25 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
       if (!sshKeyPath) {
         sshKeyPath = await getOrPromptSSHKey(env);
         sshKeyPaths.set(env, sshKeyPath);
-        
+
         // Track temp files for cleanup (only if we created them)
         if (sshKeyPath.includes(os.tmpdir())) {
           cleanupPaths.push(sshKeyPath);
         }
       }
-      
+
       // Sync to server
       await syncToServer(tarPath, env, config, sshKeyPath);
-      
+
       // Optionally deploy
       if (options.deploy) {
         await deployAfterSync(env, config, sshKeyPath);
       }
     }
-    
-    console.log('✅ Dev sync complete!');
+
+    console.log('[OK] Dev sync complete!');
   } catch (error) {
-    console.error('\n❌ Dev sync failed');
+    console.error('\n[ERROR] Dev sync failed');
     throw error;
   } finally {
     // Cleanup temp files
@@ -541,7 +539,7 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
         fs.unlinkSync(tarPath);
         fs.rmdirSync(path.dirname(tarPath));
       }
-      
+
       // Remove SSH key temp files
       for (const keyPath of cleanupPaths) {
         if (fs.existsSync(keyPath)) {

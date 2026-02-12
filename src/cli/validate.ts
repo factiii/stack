@@ -8,7 +8,7 @@ import { scan } from './scan.js';
 import type { ValidateOptions } from '../types/index.js';
 
 export async function validate(_options: ValidateOptions = {}): Promise<boolean> {
-  console.log('⚠️  The validate command is deprecated. Use: npx factiii scan\n');
+  console.log('[!] The validate command is deprecated. Use: npx factiii scan\n');
 
   const problems = await scan({ rootDir: process.cwd() });
 

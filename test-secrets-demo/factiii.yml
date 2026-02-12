@@ -1,0 +1,17 @@
+name: test-project
+github_repo: test/test-project
+config_version: "1.0"
+
+ansible:
+  vault_path: vault.yml
+  vault_password_file: ~/.vault_pass
+
+staging:
+  server: ubuntu
+  domain: staging.example.com
+  ssh_user: ubuntu
+
+prod:
+  server: ubuntu
+  domain: prod.example.com
+  ssh_user: ubuntu

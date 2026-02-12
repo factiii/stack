@@ -59,11 +59,11 @@ class GitHubWorkflowMonitor {
    */
   async triggerWorkflow(workflowFile: string, environment?: string): Promise<number> {
     try {
-      console.log(`🚀 Triggering GitHub Actions workflow...`);
+      console.log(`Triggering GitHub Actions workflow...`);
 
       // Build command - add environment input for workflows that accept it
       let command = `gh workflow run "${workflowFile}"`;
-      
+
       // Add environment input for workflows that accept it (deploy, fix, scan)
       if (environment && (workflowFile.includes('deploy') || workflowFile.includes('fix') || workflowFile.includes('scan'))) {
         command += ` -f environment="${environment}"`;
@@ -107,7 +107,7 @@ class GitHubWorkflowMonitor {
    */
   async streamLogs(runId: number): Promise<StreamLogsResult> {
     return new Promise((resolve, reject) => {
-      console.log(`📡 Monitoring deployment progress...\n`);
+      console.log(`Monitoring deployment progress...\n`);
 
       // Use gh run watch to stream logs
       const watch = spawn('gh', ['run', 'watch', runId.toString()], {
@@ -166,9 +166,9 @@ class GitHubWorkflowMonitor {
 
       console.log('');
       if (isSuccess) {
-        console.log(`✅ Deployment successful!`);
+        console.log(`[OK] Deployment successful!`);
       } else {
-        console.log(`❌ Deployment failed! (${status.conclusion})`);
+        console.log(`[ERROR] Deployment failed! (${status.conclusion})`);
       }
       console.log(`   View full logs: ${status.url}`);
 
@@ -178,7 +178,7 @@ class GitHubWorkflowMonitor {
         runId,
       };
     } catch (error) {
-      console.error(`\n❌ Error: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`\n[ERROR] ${error instanceof Error ? error.message : String(error)}`);
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),

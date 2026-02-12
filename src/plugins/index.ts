@@ -95,6 +95,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const MacPlugin = require('./servers/mac/index').default as PluginClass;
   registry.servers['mac'] = MacPlugin;
+  registry.servers['mac-mini'] = MacPlugin;
 } catch {
   // Plugin not available
 }

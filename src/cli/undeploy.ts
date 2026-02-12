@@ -14,7 +14,7 @@ import type { FactiiiConfig, UndeployOptions, DeployResult } from '../types/inde
 interface PluginClass {
   id: string;
   category: string;
-  new (config: FactiiiConfig): PluginInstance;
+  new(config: FactiiiConfig): PluginInstance;
 }
 
 interface PluginInstance {
@@ -35,7 +35,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error(`⚠️  Error parsing factiii.yml: ${errorMessage}`);
+    console.error(`[!] Error parsing factiii.yml: ${errorMessage}`);
     return {} as FactiiiConfig;
   }
 }
@@ -44,7 +44,7 @@ export async function undeploy(environment: string, options: UndeployOptions = {
   const rootDir = options.rootDir ?? process.cwd();
   const config = loadConfig(rootDir);
 
-  console.log(`🗑️  Removing ${environment} deployment...\n`);
+  console.log(`Removing ${environment} deployment...\n`);
 
   // Load plugins
   const plugins = (await loadRelevantPlugins(rootDir, config)) as unknown as PluginClass[];
@@ -61,15 +61,15 @@ export async function undeploy(environment: string, options: UndeployOptions = {
     const result = await instance.undeploy(config, environment);
 
     if (result.success) {
-      console.log(`\n✅ Successfully removed ${environment} deployment`);
+      console.log(`\n[OK] Successfully removed ${environment} deployment`);
     } else {
-      console.log(`\n❌ Undeploy failed: ${result.error}`);
+      console.log(`\n[ERROR] Undeploy failed: ${result.error}`);
     }
 
     return result;
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.log(`\n❌ Undeploy error: ${errorMessage}`);
+    console.log(`\n[ERROR] Undeploy error: ${errorMessage}`);
     return { success: false, error: errorMessage };
   }
 }
