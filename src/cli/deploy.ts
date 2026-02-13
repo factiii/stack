@@ -128,7 +128,8 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   console.log('Stage 1: Running pre-deploy checks...\n');
 
   // First run scan to check for blocking issues
-  const problems = await scan({ ...options, silent: true });
+  // Only scan the target stage - don't let prod issues block a staging deploy
+  const problems = await scan({ ...options, silent: true, stages: [stage] });
 
   // Only block on CRITICAL issues - warnings/info will be auto-fixed during deployment
   const criticalProblems = Object.values(problems)
