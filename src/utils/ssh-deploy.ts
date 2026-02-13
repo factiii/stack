@@ -155,7 +155,7 @@ export class SSHDeploy {
 
             const envContent = this.envToFileContent(envVars);
             const envFileName = `.env.${stage}`;
-            const factiiiDir = `$HOME/.factiii/${this.repoName}`;
+            const factiiiDir = `\\$HOME/.factiii/${this.repoName}`;
             const envFilePath = `${factiiiDir}/${envFileName}`;
 
             // Create directory if it doesn't exist, then write the file
@@ -217,7 +217,7 @@ chmod 600 ${envFilePath}`;
             this.setupSSHKey();
 
             const envFileName = `.env.${stage}`;
-            const factiiiDir = `$HOME/.factiii/${this.repoName}`;
+            const factiiiDir = `\\$HOME/.factiii/${this.repoName}`;
             const envFilePath = `${factiiiDir}/${envFileName}`;
 
             const command = `test -f ${envFilePath} && echo "exists" || echo "missing"`;
@@ -239,7 +239,7 @@ chmod 600 ${envFilePath}`;
             this.setupSSHKey();
 
             const envFileName = `.env.${stage}`;
-            const factiiiDir = `$HOME/.factiii/${this.repoName}`;
+            const factiiiDir = `\\$HOME/.factiii/${this.repoName}`;
             const envFilePath = `${factiiiDir}/${envFileName}`;
 
             // Cross-platform: macOS uses `stat -f %m`, Linux uses `stat -c %Y`
