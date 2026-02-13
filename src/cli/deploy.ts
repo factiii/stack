@@ -129,7 +129,15 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
 
   // First run scan to check for blocking issues
   // Only scan the target stage - don't let prod issues block a staging deploy
-  const problems = await scan({ ...options, silent: true, stages: [stage] });
+  // Clear stage flags from options so they don't override the stages array
+  // (e.g., --secrets sets options.secrets=true which scan interprets as "scan secrets stage only")
+  const scanOptions = { ...options, silent: true, stages: [stage] as Stage[] };
+  delete scanOptions.dev;
+  delete scanOptions.secrets;
+  delete scanOptions.staging;
+  delete scanOptions.prod;
+  delete scanOptions.deploySecrets;
+  const problems = await scan(scanOptions);
 
   // Only block on CRITICAL issues - warnings/info will be auto-fixed during deployment
   const criticalProblems = Object.values(problems)
