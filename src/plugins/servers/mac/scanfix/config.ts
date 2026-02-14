@@ -27,7 +27,13 @@ export const configFixes: Fix[] = [
       return true;
     },
     fix: null,
-    manualFix: 'Create a Dockerfile for your application',
+    manualFix: 'Create a Dockerfile in your project root. Minimal example:\n' +
+      '      FROM node:18-alpine\n' +
+      '      WORKDIR /app\n' +
+      '      COPY package*.json ./\n' +
+      '      RUN npm install --production\n' +
+      '      COPY . .\n' +
+      '      CMD ["node", "dist/index.js"]',
   },
   {
     id: 'missing-docker-compose-dev',
@@ -41,7 +47,14 @@ export const configFixes: Fix[] = [
       );
     },
     fix: null,
-    manualFix: 'Create docker-compose.yml for local development (optional)',
+    manualFix: 'Create docker-compose.yml for local development (optional). Example:\n' +
+      '      services:\n' +
+      '        app:\n' +
+      '          build: .\n' +
+      '          ports:\n' +
+      '            - "3000:3000"\n' +
+      '          volumes:\n' +
+      '            - .:/app',
   },
 
   // STAGING STAGE FIXES
@@ -61,7 +74,11 @@ export const configFixes: Fix[] = [
       return !environments.staging?.domain;
     },
     fix: null,
-    manualFix: 'Add staging.domain to factiii.yml',
+    manualFix: 'Add staging.domain to factiii.yml. Example:\n' +
+      '      staging:\n' +
+      '        server: mac\n' +
+      '        domain: staging.yourdomain.com\n' +
+      '        env_file: .env.staging',
   },
   {
     id: 'staging-unreachable',

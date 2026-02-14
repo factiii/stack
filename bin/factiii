@@ -82,6 +82,7 @@ program
   .option('--commit <hash>', 'Commit hash to deploy (passed by workflow)')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .option('--secrets', 'Deploy secrets from Ansible Vault before deploying')
+  .option('--dry-run', 'Show deployment plan without actually deploying')
   .action(async (options) => {
     // Determine which environment to deploy
     let environment = options.environment;
