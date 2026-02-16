@@ -198,11 +198,21 @@ export function generateFactiiiYml(rootDir: string, options: GenerateOptions = {
   // Write file
   fs.writeFileSync(outputPath, content);
 
-  console.log('✅ Created factiii.yml');
-  console.log('\n💡 Next steps:');
-  console.log('   1. Replace EXAMPLE- values with your actual values');
-  console.log('   2. Run: npx factiii scan');
-  console.log('   3. Run: npx factiii fix\n');
+  console.log('[OK] Created factiii.yml');
+  console.log('\nNEXT STEPS:\n');
+  console.log('  1. Configure your project:');
+  console.log('     [ ] Replace all EXAMPLE- values in factiii.yml');
+  console.log('         - name, github_repo, ssl_email, domains\n');
+  console.log('  2. Set up secrets (requires ansible-vault):');
+  console.log('     [ ] Generate SSH key:  ssh-keygen -t ed25519 -f ~/.ssh/staging_deploy_key');
+  console.log('     [ ] Store in vault:    npx factiii secrets set STAGING_SSH');
+  console.log('     [ ] Add public key to server: ssh-copy-id -i ~/.ssh/staging_deploy_key.pub user@host\n');
+  console.log('  3. Validate and fix:');
+  console.log('     [ ] npx factiii scan          (check for issues)');
+  console.log('     [ ] npx factiii fix           (auto-fix what it can)\n');
+  console.log('  4. Deploy:');
+  console.log('     [ ] npx factiii deploy --staging --dry-run   (preview)');
+  console.log('     [ ] npx factiii deploy --staging             (deploy)\n');
 
   return true;
 }

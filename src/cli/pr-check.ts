@@ -1,0 +1,161 @@
+/**
+ * PR Check Command
+ *
+ * Validates that server/client/mobile builds succeed before PR merge.
+ * Per STANDARDS: Delegates to pipeline plugin for routing.
+ *
+ * Flow:
+ * - When running on server (GITHUB_ACTIONS=true): runs builds, reports to GitHub
+ * - When running from dev machine: SSHs to staging and runs pr-check there (if canReach=ssh)
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import yaml from 'js-yaml';
+
+import { loadRelevantPlugins } from '../plugins/index.js';
+import { sshRemoteFactiiiCommand } from '../utils/ssh-helper.js';
+import {
+  reportCommitStatus,
+  reportPRComment,
+  getPRNumber,
+} from '../utils/github-status.js';
+import { runBuilds } from '../plugins/pipelines/factiii/pr-check.js';
+import { extractEnvironments } from '../utils/config-helpers.js';
+import type { FactiiiConfig, Stage } from '../types/index.js';
+
+interface PipelinePluginClass {
+  id: string;
+  category: string;
+  canReach: (stage: Stage, config: FactiiiConfig) => { reachable: boolean; via?: string; reason?: string };
+  new (config: FactiiiConfig): PipelinePluginInstance;
+}
+
+interface PipelinePluginInstance {
+  runPRCheck?: (options: PRCheckOptions) => Promise<PRCheckResult>;
+}
+
+export interface PRCheckOptions {
+  rootDir?: string;
+  staging?: boolean;
+}
+
+export interface PRCheckResult {
+  success: boolean;
+  error?: string;
+}
+
+function loadConfig(rootDir: string): FactiiiConfig {
+  const configPath = path.join(rootDir, 'factiii.yml');
+  if (!fs.existsSync(configPath)) {
+    return {} as FactiiiConfig;
+  }
+  try {
+    return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
+  } catch {
+    return {} as FactiiiConfig;
+  }
+}
+
+function formatBuildReport(results: { name: string; success: boolean; output: string }[]): string {
+  const lines = ['## Factiii PR Check – Build Results\n'];
+  for (const r of results) {
+    const icon = r.success ? '✅' : '❌';
+    lines.push(`### ${icon} ${r.name}`);
+    lines.push(r.success ? 'Succeeded' : '```\n' + r.output + '\n```');
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Run PR check - entry point for CLI
+ */
+export async function prCheck(options: PRCheckOptions = {}): Promise<PRCheckResult> {
+  const rootDir = options.rootDir ?? process.cwd();
+  const config = loadConfig(rootDir);
+
+  const environments = extractEnvironments(config);
+  const stagingConfig = environments.staging;
+  if (!stagingConfig?.domain) {
+    console.log('\n❌ Staging not configured in factiii.yml (staging.domain required)');
+    return { success: false, error: 'Staging not configured' };
+  }
+
+  const plugins = await loadRelevantPlugins(rootDir, config);
+  const pipelinePlugin = plugins.find((p) => p.category === 'pipeline') as PipelinePluginClass | undefined;
+
+  if (!pipelinePlugin?.canReach) {
+    console.log('\n❌ No pipeline plugin found');
+    return { success: false, error: 'No pipeline plugin' };
+  }
+
+  const reach = pipelinePlugin.canReach('staging', config);
+
+  if (!reach.reachable) {
+    console.log('\n❌ Cannot reach staging: ' + reach.reason);
+    return { success: false, error: reach.reason };
+  }
+
+  // On server: run builds directly and report
+  if (process.env.GITHUB_ACTIONS === 'true' || process.env.FACTIII_ON_SERVER === 'true') {
+    // When SSH'd from workflow, we're run with cwd=repo (workflow does: cd $REPO_DIR && npx factiii pr-check)
+    const repoName = config.name ?? 'app';
+    const defaultRepoDir = path.join(process.env.HOME ?? '', '.factiii', repoName);
+    const repoDir = fs.existsSync(path.join(process.cwd(), 'factiii.yml'))
+      ? process.cwd()
+      : defaultRepoDir;
+
+    if (!fs.existsSync(repoDir)) {
+      console.log('\n❌ Repo not found at ' + repoDir);
+      return { success: false, error: 'Repo not found' };
+    }
+
+    const sha = process.env.COMMIT_HASH ?? process.env.GITHUB_SHA ?? '';
+    const prNum = getPRNumber();
+
+    console.log('\n🔍 Running PR check builds...\n');
+    await reportCommitStatus(sha, 'pending', 'Running server/client/mobile builds...', 'factiii/pr-check');
+
+    const buildResult = await runBuilds(repoDir, config, {
+      commit: sha || undefined,
+      branch: process.env.BRANCH ?? process.env.GITHUB_REF_NAME,
+    });
+
+    const finalState = buildResult.success ? 'success' : 'failure';
+    const desc = buildResult.success
+      ? 'All builds passed'
+      : 'One or more builds failed';
+
+    await reportCommitStatus(sha, finalState, desc, 'factiii/pr-check');
+
+    if (prNum && buildResult.results.length > 0) {
+      await reportPRComment(prNum, formatBuildReport(buildResult.results));
+    }
+
+    for (const r of buildResult.results) {
+      const icon = r.success ? '✅' : '❌';
+      console.log(`   ${icon} ${r.name}: ${r.success ? 'OK' : r.output}`);
+    }
+
+    console.log('\n' + (buildResult.success ? '✅ All builds passed' : '❌ Build(s) failed'));
+    return { success: buildResult.success };
+  }
+
+  // From dev machine: SSH to staging and run pr-check there
+  if (reach.via === 'ssh') {
+    console.log('\n🔗 Running PR check via SSH on staging...\n');
+    const result = sshRemoteFactiiiCommand('staging', config, 'pr-check --staging');
+    return {
+      success: result.success,
+      error: result.success ? undefined : result.stderr,
+    };
+  }
+
+  // Workflow: tell user to open a PR
+  console.log('\n⚠️  PR check runs automatically when you open a PR to main.');
+  console.log('   Ensure factiii-pr-check.yml workflow is committed.');
+  return { success: true };
+}
+
+export default prCheck;

@@ -142,7 +142,10 @@ export const workflowFixes: Fix[] = [
     },
     fix: null, // Cannot auto-commit
     manualFix:
-      'Commit and push workflows: git add .github/workflows/ && git commit -m "Update workflows" && git push',
+      'Commit and push workflow files to git:\n' +
+      '      git add .github/workflows/\n' +
+      '      git commit -m "Update factiii workflows"\n' +
+      '      git push',
   },
 ];
 

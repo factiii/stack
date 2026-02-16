@@ -42,6 +42,7 @@ export async function generateWorkflows(rootDir: string): Promise<void> {
     'factiii-fix.yml',
     'factiii-scan.yml',
     'factiii-undeploy.yml',
+    'factiii-pr-check.yml',
     'factiii-cicd-staging.yml',
     'factiii-cicd-prod.yml',
     'factiii-command.yml',

@@ -76,7 +76,10 @@ export const secretsFixes: Fix[] = [
       }
     },
     manualFix:
-      'Set STAGING_SSH secret: npx factiii secrets set STAGING_SSH',
+      'Store your staging SSH key in the vault:\n' +
+      '      1. Generate key: ssh-keygen -t ed25519 -C "staging-deploy" -f ~/.ssh/staging_deploy_key\n' +
+      '      2. Add to server: ssh-copy-id -i ~/.ssh/staging_deploy_key.pub user@staging-host\n' +
+      '      3. Store in vault: npx factiii secrets set STAGING_SSH',
   },
   {
     id: 'missing-prod-ssh',
@@ -110,7 +113,10 @@ export const secretsFixes: Fix[] = [
       }
     },
     manualFix:
-      'Set PROD_SSH secret: npx factiii secrets set PROD_SSH',
+      'Store your prod SSH key in the vault:\n' +
+      '      1. Generate key: ssh-keygen -t ed25519 -C "prod-deploy" -f ~/.ssh/prod_deploy_key\n' +
+      '      2. Add to server: ssh-copy-id -i ~/.ssh/prod_deploy_key.pub user@prod-host\n' +
+      '      3. Store in vault: npx factiii secrets set PROD_SSH',
   },
   {
     id: 'missing-aws-secret',
@@ -162,14 +168,16 @@ export const secretsFixes: Fix[] = [
     },
     fix: null,
     manualFix:
-      'Create the vault password file specified in factiii.yml ansible.vault_password_file\n' +
-      '  Example: echo "your-vault-password" > ~/.vault_pass && chmod 600 ~/.vault_pass',
+      'Create the vault password file specified in factiii.yml ansible.vault_password_file:\n' +
+      '      macOS/Linux: echo "your-vault-password" > ~/.vault_pass && chmod 600 ~/.vault_pass\n' +
+      '      Windows:     echo your-vault-password > %USERPROFILE%\\.vault_pass\n' +
+      '      Or run: npx factiii init (will guide you through vault setup)',
   },
   {
     id: 'missing-ssh-key-staging',
     stage: 'secrets',
     severity: 'critical',
-    description: 'SSH key file ~/.ssh/staging_deploy_key not found (required for staging access)',
+    description: 'SSH key file ' + path.join(os.homedir(), '.ssh', 'staging_deploy_key') + ' not found (required for staging access)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -188,7 +196,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ssh-key-prod',
     stage: 'secrets',
     severity: 'critical',
-    description: 'SSH key file ~/.ssh/prod_deploy_key not found (required for prod access)',
+    description: 'SSH key file ' + path.join(os.homedir(), '.ssh', 'prod_deploy_key') + ' not found (required for prod access)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);

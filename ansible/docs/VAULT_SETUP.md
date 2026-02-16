@@ -247,34 +247,6 @@ group_vars/all/vault.yml               # Encrypted vault file
 
 ---
 
-## Questions & Answers
-
-### How should developers authenticate with Ansible Vault?
-Use a **password file** (`~/.vault_pass`) on dev machines. Each developer generates or receives the same vault password and stores it locally. For CI/CD, use the `ANSIBLE_VAULT_PASSWORD` environment variable.
-
-### Where should the vault password be stored securely?
-In a **team password manager** (1Password, Bitwarden, LastPass). One team member creates the password, stores it in the shared vault, and other developers retrieve it during setup. Never send it via Slack, email, or other unencrypted channels.
-
-### How do we ensure SSH keys have correct permissions?
-The `verify-secrets.sh` script checks permissions automatically. Additionally, the `write-ssh-keys` CLI command sets `chmod 600` when extracting keys. Always run `verify-secrets.sh` after setting up a new machine.
-
-### What's the workflow for rotating secrets?
-1. Generate new SSH keys: `ssh-keygen -t ed25519 -f ~/.ssh/new_staging_key`
-2. Add public key to target server: `ssh-copy-id -i ~/.ssh/new_staging_key.pub user@server`
-3. Update vault: `ansible-vault edit ansible/vault/secrets.yml` (replace old key)
-4. Extract new keys: `npx factiii secrets write-ssh-keys`
-5. Test connectivity: `./ansible/scripts/ssh-test.sh staging`
-6. Remove old key from server's `~/.ssh/authorized_keys`
-
-### How do we handle secret sync across dev machines?
-The encrypted vault file (`ansible/vault/secrets.yml`) IS committed to git - it's safe because it's encrypted. When a new developer joins:
-1. Clone the repo (gets encrypted vault)
-2. Get vault password from team password manager
-3. Save to `~/.vault_pass`
-4. Run `npx factiii secrets write-ssh-keys` to extract SSH keys
-5. Run `./ansible/scripts/verify-secrets.sh` to confirm setup
-
----
 
 ## Troubleshooting
 

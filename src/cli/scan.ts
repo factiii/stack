@@ -96,8 +96,20 @@ async function loadPlugins(rootDir: string): Promise<PluginClass[]> {
 
   // If no config exists, tell user to run init
   if (!config || Object.keys(config).length === 0) {
-    console.error('\n[ERROR] No factiii.yml found.');
-    console.error('   Run: npx factiii init\n');
+    const configPath = path.join(rootDir, 'factiii.yml');
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, 'utf8');
+      if (!content || content.trim().length === 0) {
+        console.error('\n[ERROR] factiii.yml is empty.');
+        console.error('   Run: npx factiii init --force\n');
+      } else {
+        console.error('\n[ERROR] factiii.yml contains no valid configuration.');
+        console.error('   Check your YAML syntax or run: npx factiii init --force\n');
+      }
+    } else {
+      console.error('\n[ERROR] No factiii.yml found.');
+      console.error('   Run: npx factiii init\n');
+    }
     process.exit(1);
   }
 
@@ -148,7 +160,7 @@ function generateEnvVarFixes(
         return !content.includes(varName + '=');
       },
       fix: null,
-      manualFix: 'Add ' + varName + '=your_value to .env.example',
+      manualFix: 'Add ' + varName + '=your_value to .env.example (format: KEY=value, one per line)',
     });
 
     // Check .env.staging has the var (only if staging environment is defined)
@@ -169,7 +181,7 @@ function generateEnvVarFixes(
         return !content.includes(varName + '=');
       },
       fix: null,
-      manualFix: 'Add ' + varName + '=staging_value to .env.staging',
+      manualFix: 'Add ' + varName + '=staging_value to .env.staging (use your staging environment value)',
     });
 
     // Check .env.prod has the var (only if prod environment is defined)
@@ -190,7 +202,7 @@ function generateEnvVarFixes(
         return !content.includes(varName + '=');
       },
       fix: null,
-      manualFix: 'Add ' + varName + '=production_value to .env.prod',
+      manualFix: 'Add ' + varName + '=production_value to .env.prod (use your production environment value)',
     });
   }
 

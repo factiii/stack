@@ -87,6 +87,8 @@ export function scanRepos(): RepoInfo[] {
     // Skip non-directories and special directories
     if (!stat.isDirectory()) continue;
     if (entry === 'scripts' || entry === 'node_modules' || entry.startsWith('.')) continue;
+    // Skip the CLI tool directory (not a deployable app)
+    if (entry === 'infrastructure' || entry === 'core') continue;
 
     // Check if factiii.yml exists
     const configPath = path.join(fullPath, 'factiii.yml');

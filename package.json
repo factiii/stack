@@ -1,6 +1,6 @@
 {
   "name": "@factiii/stack",
-  "version": "0.1.0-d41",
+  "version": "0.1.2",
   "description": "Infrastructure management package for deploying services to servers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,15 +9,13 @@
   },
   "files": [
     "bin/",
-    "dist/",
-    "templates/",
-    "scripts/"
+    "dist/"
   ],
   "scripts": {
     "build": "tsc && npm run copy-assets",
     "build:watch": "tsc --watch",
-    "clean": "rm -rf dist",
-    "copy-assets": "cp src/plugins/approved.json dist/plugins/ && mkdir -p dist/plugins/pipelines/factiii/workflows && cp src/plugins/pipelines/factiii/workflows/*.yml dist/plugins/pipelines/factiii/workflows/",
+    "clean": "node -e \"const fs=require('fs');if(fs.existsSync('dist'))fs.rmSync('dist',{recursive:true,force:true})\"",
+    "copy-assets": "node -e \"const fs=require('fs'),p=require('path');fs.cpSync('src/plugins/approved.json','dist/plugins/approved.json');const d='dist/plugins/pipelines/factiii/workflows';fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync('src/plugins/pipelines/factiii/workflows').filter(f=>f.endsWith('.yml')))fs.cpSync(p.join('src/plugins/pipelines/factiii/workflows',f),p.join(d,f))\"",
     "prebuild": "npm run clean",
     "prepublish-check": "node -e \"const v=require('./package.json').version; if(v.includes('-d')){console.error('❌ Cannot publish dev version:',v); process.exit(1)}\"",
     "prepublishOnly": "npm run prepublish-check && npm run build",
@@ -34,6 +32,13 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/factiii/core.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "dependencies": {
     "@octokit/rest": "^20.0.2",
     "commander": "^11.1.0",

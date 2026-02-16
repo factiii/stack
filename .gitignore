@@ -30,6 +30,9 @@ actions-runner/
 .env.local
 .env.*.local
 
+# npm config (contains auth tokens)
+.npmrc
+
 # Node.js
 node_modules/
 package-lock.json

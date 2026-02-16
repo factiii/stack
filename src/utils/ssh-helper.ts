@@ -105,7 +105,7 @@ export function sshRemoteFactiiiCommand(
     return {
       success: false,
       stdout: '',
-      stderr: 'No SSH key found for stage: ' + stage + '. Run: npx factiii secrets write-ssh-keys',
+      stderr: 'No SSH key found at ' + path.join(os.homedir(), '.ssh', stage + '_deploy_key') + '. Run: npx factiii secrets write-ssh-keys',
     };
   }
 
@@ -121,9 +121,12 @@ export function sshRemoteFactiiiCommand(
   // Run inside the factiii repo directory on the server
   // $HOME is expanded by the remote shell, supporting non-root users
   const repoName = config.name || 'app';
-  const remoteCommand = 'cd $HOME/.factiii/' + repoName + ' && npx factiii ' + command;
+  const remoteCommand = 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH" && export FACTIII_ON_SERVER=true && cd $HOME/.factiii/' + repoName + ' && npx factiii ' + command;
 
   console.log('   SSH: ' + user + '@' + host + ' → npx factiii ' + command);
+  console.log('   Connecting to ' + host + '... (timeout: 10min)');
+
+  const startTime = Date.now();
 
   const result = spawnSync('ssh', [
     '-i', keyPath,
@@ -138,6 +141,9 @@ export function sshRemoteFactiiiCommand(
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 600000, // 10 minute timeout for long-running operations
   });
+
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  console.log('   SSH completed in ' + elapsed + 's');
 
   // Print output in real-time style
   if (result.stdout) {
