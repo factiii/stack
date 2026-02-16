@@ -11,6 +11,7 @@ const { init } = require('../dist/cli/init');
 const { scan } = require('../dist/cli/scan');
 const { fix } = require('../dist/cli/fix');
 const { deploy } = require('../dist/cli/deploy');
+const { prCheck } = require('../dist/cli/pr-check');
 const { undeploy } = require('../dist/cli/undeploy');
 const { secrets } = require('../dist/cli/secrets');
 const { upgrade } = require('../dist/cli/upgrade');
@@ -68,6 +69,18 @@ program
   .option('--continue-on-error', 'Continue even if some fixes fail')
   .action(async (options) => {
     await fix(options);
+  });
+
+// PR Check command (validates builds before merge)
+program
+  .command('pr-check')
+  .description('Run server/client/mobile builds and report to GitHub (for PR validation)')
+  .option('--staging', 'Run on staging server')
+  .action(async (options) => {
+    const result = await prCheck(options);
+    if (!result.success) {
+      process.exit(1);
+    }
   });
 
 // Deploy command

@@ -11,6 +11,7 @@ import yaml from 'js-yaml';
 import { sshExec } from '../../../utils/ssh-helper.js';
 import { extractEnvironments } from '../../../utils/config-helpers.js';
 import { generateDockerCompose, generateNginx, scanRepos, loadConfigs } from '../../../scripts/index.js';
+import { reportCommitStatus } from '../../../utils/github-status.js';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
@@ -688,6 +689,184 @@ async function updateComposeForStagingImage(
   }
 }
 
+// ============================================================
+// MIGRATION / BACKUP / ROLLBACK HELPERS
+// ============================================================
+// Reusable for staging and production deploy flows.
+// These run LOCALLY on whatever machine they're called on.
+// ============================================================
+
+const DEPLOY_PATH_PREFIX = '/opt/homebrew/bin:/usr/local/bin:';
+
+/**
+ * Get DATABASE_URL from the stage-specific .env file
+ */
+function getDatabaseUrl(repoDir: string, stage: string): string | null {
+  const envFile = stage === 'dev' ? '.env' : '.env.' + stage;
+  const envPath = path.join(repoDir, envFile);
+
+  if (!fs.existsSync(envPath)) return process.env.DATABASE_URL ?? null;
+
+  try {
+    const content = fs.readFileSync(envPath, 'utf8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('DATABASE_URL=')) {
+        return trimmed.slice('DATABASE_URL='.length).replace(/^["']|["']$/g, '');
+      }
+    }
+  } catch {
+    // Ignore
+  }
+
+  return process.env.DATABASE_URL ?? null;
+}
+
+/**
+ * Check if there are pending Prisma migrations
+ * Returns true if there ARE pending migrations that need to run
+ */
+function checkPendingMigrations(repoDir: string, pathEnv: string): boolean {
+  try {
+    const output = execSync(
+      'npx prisma migrate status',
+      {
+        cwd: repoDir,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: '/bin/bash',
+        env: { ...process.env, PATH: pathEnv },
+      }
+    );
+    // Prisma outputs "Following migration(s) have not yet been applied:" when pending
+    // Or "Database schema is up to date!" when no pending migrations
+    if (output.includes('have not yet been applied') || output.includes('not yet been applied')) {
+      return true;
+    }
+    return false;
+  } catch (error) {
+    // migrate status exits with non-zero if there are pending migrations or issues
+    const errOutput = error instanceof Error ? (error as { stderr?: string }).stderr ?? '' : '';
+    if (typeof errOutput === 'string' && (errOutput.includes('have not yet been applied') || errOutput.includes('not yet been applied'))) {
+      return true;
+    }
+    // If we can't determine, assume there might be migrations (safer)
+    console.log('   ⚠️  Could not check migration status, will attempt migrate deploy');
+    return true;
+  }
+}
+
+/**
+ * Create a .tar.gz database backup using pg_dump
+ * Returns the backup file path or null on failure
+ */
+function backupDatabase(dbUrl: string, stage: string, backupDir: string): string | null {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = path.join(backupDir, 'backup-' + stage + '-' + timestamp + '.tar.gz');
+
+  try {
+    // Ensure backup dir exists
+    if (!fs.existsSync(backupDir)) {
+      fs.mkdirSync(backupDir, { recursive: true });
+    }
+
+    console.log('   💾 Creating database backup: ' + backupPath);
+    execSync(
+      'pg_dump -Ft "' + dbUrl + '" > "' + backupPath + '"',
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: '/bin/bash',
+        env: {
+          ...process.env,
+          PATH: DEPLOY_PATH_PREFIX + (process.env.PATH ?? ''),
+        },
+      }
+    );
+
+    // Verify the backup file was created and has content
+    if (fs.existsSync(backupPath) && fs.statSync(backupPath).size > 0) {
+      console.log('   ✅ Database backup created');
+      return backupPath;
+    }
+
+    console.log('   ⚠️  Backup file is empty or missing');
+    return null;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.log('   ❌ Database backup failed: ' + msg);
+    return null;
+  }
+}
+
+/**
+ * Restore database from a .tar.gz backup
+ * Returns true on success
+ */
+function restoreDatabase(dbUrl: string, backupPath: string): boolean {
+  try {
+    console.log('   🔄 Restoring database from backup: ' + backupPath);
+    execSync(
+      'pg_restore --clean --if-exists -d "' + dbUrl + '" "' + backupPath + '"',
+      {
+        stdio: 'inherit',
+        shell: '/bin/bash',
+        env: {
+          ...process.env,
+          PATH: DEPLOY_PATH_PREFIX + (process.env.PATH ?? ''),
+        },
+      }
+    );
+    console.log('   ✅ Database restored from backup');
+    return true;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.log('   ❌ Database restore failed: ' + msg);
+    return false;
+  }
+}
+
+/**
+ * Health check containers after deploy
+ * Waits a few seconds then checks if containers are running
+ * Returns true if containers are healthy
+ */
+function healthCheckContainers(containerName: string, factiiiDir: string, pathEnv: string): boolean {
+  try {
+    // Wait for containers to stabilize
+    execSync('sleep 5', { stdio: 'pipe', shell: '/bin/bash' });
+
+    const output = execSync(
+      'docker ps --filter name=' + containerName + ' --format "{{.Status}}"',
+      {
+        cwd: factiiiDir,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: '/bin/bash',
+        env: { ...process.env, PATH: pathEnv },
+      }
+    );
+
+    // Check for running containers (Status contains "Up")
+    if (!output.trim()) {
+      console.log('   ❌ No container found with name: ' + containerName);
+      return false;
+    }
+
+    const lines = output.trim().split('\n');
+    for (const line of lines) {
+      if (line.includes('Exited') || line.includes('Restarting')) {
+        console.log('   ❌ Container unhealthy: ' + line);
+        return false;
+      }
+    }
+
+    return true;
+  } catch {
+    console.log('   ⚠️  Could not check container health');
+    return false;
+  }
+}
+
 /**
  * Deploy to staging environment
  *
@@ -709,21 +888,31 @@ export async function deployStaging(
     return { success: false, error: `${environment} domain not configured` };
   }
 
-  console.log(`   🚀 Deploying on staging (${envConfig.domain})...`);
+  console.log('   🚀 Deploying on staging (' + envConfig.domain + ')...');
+
+  // GitHub status reporting
+  const sha = process.env.COMMIT_HASH ?? process.env.GITHUB_SHA ?? '';
+  if (sha) {
+    await reportCommitStatus(sha, 'pending', 'Deploying to staging...', 'factiii/deploy');
+  }
 
   try {
     const repoName = config.name ?? 'app';
-    const repoDir = `~/.factiii/${repoName}`;
+    const repoDir = '~/.factiii/' + repoName;
 
     // Determine if we're running ON the server or remotely
-    // When GITHUB_ACTIONS=true, we're executing on the server itself
-    const isOnServer = process.env.GITHUB_ACTIONS === 'true';
+    // When GITHUB_ACTIONS=true or FACTIII_ON_SERVER=true, we're executing on the server itself
+    const isOnServer = process.env.GITHUB_ACTIONS === 'true' || process.env.FACTIII_ON_SERVER === 'true';
 
-    console.log(`   📍 Deployment mode: ${isOnServer ? 'on-server' : 'remote'}`);
+    console.log('   📍 Deployment mode: ' + (isOnServer ? 'on-server' : 'remote'));
+
+    const pathEnv = DEPLOY_PATH_PREFIX + (process.env.PATH ?? '');
+    let backupPath: string | null = null;
 
     if (isOnServer) {
       // We're on the server - run commands directly
       const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+      const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '/Users/jon');
 
       // Step 1: Regenerate unified docker-compose.yml
       console.log('   🔄 Regenerating unified docker-compose.yml...');
@@ -743,6 +932,7 @@ export async function deployStaging(
       // Step 3: Deploy using unified docker-compose.yml
       const unifiedCompose = path.join(factiiiDir, 'docker-compose.yml');
       if (!fs.existsSync(unifiedCompose)) {
+        if (sha) await reportCommitStatus(sha, 'failure', 'docker-compose.yml not found', 'factiii/deploy');
         return {
           success: false,
           error: 'Unified docker-compose.yml not found. Run generate-all.js first.',
@@ -752,45 +942,62 @@ export async function deployStaging(
       // Step 4: Start postgres first and wait for it to be ready
       console.log('   🔄 Starting postgres container...');
       execSync(
-        `cd ${factiiiDir} && docker compose up -d postgres`,
+        'cd ' + factiiiDir + ' && docker compose up -d postgres',
         {
           stdio: 'inherit',
           shell: '/bin/bash',
-          env: {
-            ...process.env,
-            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-          },
+          env: { ...process.env, PATH: pathEnv },
         }
       );
 
-      // Wait for postgres to be ready
       console.log('   ⏳ Waiting for postgres to be ready...');
-      execSync(
-        `sleep 3`,
-        { stdio: 'inherit', shell: '/bin/bash' }
-      );
+      execSync('sleep 3', { stdio: 'inherit', shell: '/bin/bash' });
 
-      // Step 5: Run Prisma migrations if prisma schema exists
-      const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '/Users/jon');
+      // Step 5: Check and run Prisma migrations with backup/rollback
       const prismaSchemaPath = path.join(expandedRepoDir, config.prisma_schema ?? 'prisma/schema.prisma');
 
       if (fs.existsSync(prismaSchemaPath)) {
-        console.log('   📦 Running Prisma migrations...');
-        try {
-          execSync(
-            `cd ${expandedRepoDir} && npx prisma migrate deploy`,
-            {
-              stdio: 'inherit',
-              shell: '/bin/bash',
-              env: {
-                ...process.env,
-                PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-              },
+        console.log('   📋 Checking migration status...');
+        const hasPending = checkPendingMigrations(expandedRepoDir, pathEnv);
+
+        if (hasPending) {
+          console.log('   📦 Pending migrations detected');
+
+          // Step 5a: Backup database before migration
+          const dbUrl = getDatabaseUrl(expandedRepoDir, 'staging');
+          if (dbUrl) {
+            backupPath = backupDatabase(dbUrl, 'staging', factiiiDir);
+            if (!backupPath) {
+              console.log('   ⚠️  Could not create backup, proceeding with migration anyway...');
             }
-          );
-          console.log('   ✅ Prisma migrations complete');
-        } catch (error) {
-          console.log('   ⚠️  Prisma migration failed, continuing anyway...');
+          } else {
+            console.log('   ⚠️  DATABASE_URL not found, skipping backup');
+          }
+
+          // Step 5b: Run migrations
+          console.log('   📦 Running Prisma migrations...');
+          try {
+            execSync(
+              'cd ' + expandedRepoDir + ' && npx prisma migrate deploy',
+              {
+                stdio: 'inherit',
+                shell: '/bin/bash',
+                env: { ...process.env, PATH: pathEnv },
+              }
+            );
+            console.log('   ✅ Prisma migrations complete');
+          } catch (error) {
+            // Step 5c: Migration failed - restore backup
+            console.log('   ❌ Prisma migration failed');
+            if (backupPath && dbUrl) {
+              restoreDatabase(dbUrl, backupPath);
+            }
+            const msg = error instanceof Error ? error.message : String(error);
+            if (sha) await reportCommitStatus(sha, 'failure', 'Migration failed', 'factiii/deploy');
+            return { success: false, error: 'Migration failed: ' + msg };
+          }
+        } else {
+          console.log('   ✅ No pending migrations');
         }
       }
 
@@ -802,16 +1009,38 @@ export async function deployStaging(
       // Step 7: Start all containers
       console.log('   🚀 Starting containers with unified docker-compose.yml...');
       execSync(
-        `cd ${factiiiDir} && docker compose up -d`,
+        'cd ' + factiiiDir + ' && docker compose up -d',
         {
           stdio: 'inherit',
           shell: '/bin/bash',
-          env: {
-            ...process.env,
-            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-          },
+          env: { ...process.env, PATH: pathEnv },
         }
       );
+
+      // Step 8: Health check
+      console.log('   🏥 Running health check...');
+      const containerName = repoName;
+      const isHealthy = healthCheckContainers(containerName, factiiiDir, pathEnv);
+
+      if (!isHealthy) {
+        console.log('   ❌ Containers are unhealthy after deploy');
+        // Restore backup if we have one
+        if (backupPath) {
+          const dbUrl = getDatabaseUrl(expandedRepoDir, 'staging');
+          if (dbUrl) {
+            restoreDatabase(dbUrl, backupPath);
+          }
+        }
+        if (sha) await reportCommitStatus(sha, 'failure', 'Deploy failed - containers unhealthy', 'factiii/deploy');
+        return { success: false, error: 'Containers unhealthy after deploy' };
+      }
+
+      // Step 9: Cleanup backup on success
+      if (backupPath && fs.existsSync(backupPath)) {
+        console.log('   🗑️  Removing backup (deploy succeeded)');
+        fs.unlinkSync(backupPath);
+      }
+
     } else {
       // We're remote - SSH to the server
       // Step 1: Regenerate unified docker-compose.yml
@@ -833,20 +1062,52 @@ export async function deployStaging(
       console.log('   🔄 Starting postgres container on remote server...');
       await sshExecCommand(
         envConfig,
-        `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-         cd ~/.factiii && \
-         docker compose up -d postgres && \
-         sleep 3`
+        'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && ' +
+        'cd ~/.factiii && ' +
+        'docker compose up -d postgres && ' +
+        'sleep 3'
       );
 
-      // Step 4: Run Prisma migrations if prisma schema exists
-      console.log('   📦 Running Prisma migrations on remote server...');
+      // Step 4: Check migrations, backup, migrate, deploy - all via SSH
+      const prismaSchema = config.prisma_schema ?? 'prisma/schema.prisma';
+      console.log('   📋 Checking migrations and deploying on remote server...');
       await sshExecCommand(
         envConfig,
-        `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-         if [ -f ${repoDir}/${config.prisma_schema ?? 'prisma/schema.prisma'} ]; then \
-           cd ${repoDir} && npx prisma migrate deploy || echo "⚠️  Prisma migration failed, continuing anyway..."; \
-         fi`
+        'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && ' +
+        'REPO_DIR=' + repoDir + ' && ' +
+        'FACTIII_DIR=~/.factiii && ' +
+        'PRISMA_SCHEMA=$REPO_DIR/' + prismaSchema + ' && ' +
+        'if [ -f "$PRISMA_SCHEMA" ]; then ' +
+        '  echo "   Checking migration status..." && ' +
+        '  cd $REPO_DIR && ' +
+        '  MIGRATE_OUTPUT=$(npx prisma migrate status 2>&1 || true) && ' +
+        '  if echo "$MIGRATE_OUTPUT" | grep -q "have not yet been applied"; then ' +
+        '    echo "   Pending migrations detected" && ' +
+        '    ENV_FILE=$REPO_DIR/.env.staging && ' +
+        '    if [ -f "$ENV_FILE" ]; then ' +
+        '      DB_URL=$(grep "^DATABASE_URL=" "$ENV_FILE" | sed "s/^DATABASE_URL=//" | sed "s/^[\\\"\\x27]//;s/[\\\"\\x27]$//") && ' +
+        '      if [ -n "$DB_URL" ]; then ' +
+        '        BACKUP_FILE=$FACTIII_DIR/backup-staging-$(date +%Y-%m-%dT%H-%M-%S).tar.gz && ' +
+        '        echo "   Creating database backup..." && ' +
+        '        pg_dump -Ft "$DB_URL" > "$BACKUP_FILE" && ' +
+        '        echo "   Backup created: $BACKUP_FILE" && ' +
+        '        echo "   Running migrations..." && ' +
+        '        if npx prisma migrate deploy; then ' +
+        '          echo "   Migrations complete" && ' +
+        '          rm -f "$BACKUP_FILE" && ' +
+        '          echo "   Backup cleaned up"; ' +
+        '        else ' +
+        '          echo "   Migration failed - restoring backup..." && ' +
+        '          pg_restore --clean --if-exists -d "$DB_URL" "$BACKUP_FILE" && ' +
+        '          echo "   Database restored" && ' +
+        '          exit 1; ' +
+        '        fi; ' +
+        '      else echo "   DATABASE_URL not found, skipping backup"; npx prisma migrate deploy || true; fi; ' +
+        '    else echo "   .env.staging not found, skipping backup"; npx prisma migrate deploy || true; fi; ' +
+        '  else ' +
+        '    echo "   No pending migrations"; ' +
+        '  fi; ' +
+        'fi'
       );
 
       // Step 5: Manage SSL certificates
@@ -854,24 +1115,40 @@ export async function deployStaging(
       await runCertbot(envConfig, config);
       await setupCertbotRenewal(envConfig);
 
-      // Step 6: Deploy using unified docker-compose.yml
-      console.log('   🚀 Starting containers with unified docker-compose.yml on remote server...');
+      // Step 6: Deploy and health check
+      console.log('   🚀 Starting containers on remote server...');
       await sshExecCommand(
         envConfig,
-        `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-         if [ ! -f ~/.factiii/docker-compose.yml ]; then \
-           echo "❌ Unified docker-compose.yml not found. Run generate-all.js first." && \
-           exit 1; \
-         fi && \
-         cd ~/.factiii && \
-         docker compose up -d`
+        'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && ' +
+        'if [ ! -f ~/.factiii/docker-compose.yml ]; then ' +
+        '  echo "docker-compose.yml not found" && exit 1; ' +
+        'fi && ' +
+        'cd ~/.factiii && ' +
+        'docker compose up -d && ' +
+        'sleep 5 && ' +
+        'echo "Health check..." && ' +
+        'docker ps --filter name=' + repoName + ' --format "{{.Status}}" | ' +
+        'while read status; do ' +
+        '  if echo "$status" | grep -qE "Exited|Restarting"; then ' +
+        '    echo "Container unhealthy: $status" && exit 1; ' +
+        '  fi; ' +
+        'done && ' +
+        'echo "Containers healthy"'
       );
     }
 
+    // Report success to GitHub
+    if (sha) {
+      await reportCommitStatus(sha, 'success', 'Staging deploy succeeded', 'factiii/deploy');
+    }
     return { success: true, message: 'Staging deployment complete' };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`   ❌ Deployment failed: ${errorMessage}`);
+    console.error('   ❌ Deployment failed: ' + errorMessage);
+    // Report failure to GitHub
+    if (sha) {
+      await reportCommitStatus(sha, 'failure', 'Staging deploy failed', 'factiii/deploy');
+    }
     return {
       success: false,
       error: errorMessage,

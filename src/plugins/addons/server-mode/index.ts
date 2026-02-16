@@ -42,6 +42,7 @@ import type {
 import { macFixes } from './scanfix/mac.js';
 import { ubuntuFixes } from './scanfix/ubuntu.js';
 import { windowsFixes } from './scanfix/windows.js';
+import { tartFixes } from './scanfix/tart.js';
 
 class ServerModeAddon {
   // ============================================================
@@ -91,6 +92,8 @@ class ServerModeAddon {
     ...ubuntuFixes,
     // Windows fixes
     ...windowsFixes,
+    // Tart VM infrastructure fixes
+    ...tartFixes,
   ];
 
   // ============================================================
