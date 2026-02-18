@@ -8,14 +8,13 @@
  * - ECR repository for container images
  */
 
-import { execSync } from 'child_process';
 import type { FactiiiConfig, Fix, DeployResult } from '../../../../types/index.js';
 import type { AWSConfigDef } from './types.js';
 
 const freeTierConfig: AWSConfigDef = {
   name: 'free-tier',
   description: 'AWS Free Tier bundle (EC2 + RDS + S3 + ECR)',
-  services: ['ec2', 'rds', 's3', 'ecr'],
+  services: ['ec2', 'rds', 's3', 'ecr', 'ses'],
 
   defaults: {
     instance_type: 't2.micro', // Free tier eligible
@@ -26,49 +25,8 @@ const freeTierConfig: AWSConfigDef = {
     ecr_repo: true,
   },
 
-  // Additional fixes specific to this config
-  fixes: [
-    {
-      id: 'ecr-repo-missing',
-      stage: 'prod',
-      severity: 'warning',
-      description: 'ECR repository not created',
-      scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        // Check if ECR repo exists
-        const repoName = config.name ?? 'app';
-        const region = config.aws?.region ?? 'us-east-1';
-
-        try {
-          execSync(
-            `aws ecr describe-repositories --repository-names ${repoName} --region ${region}`,
-            { stdio: 'pipe' }
-          );
-          return false; // Repo exists
-        } catch {
-          return true; // Repo doesn't exist
-        }
-      },
-      fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-        const repoName = config.name ?? 'app';
-        const region = config.aws?.region ?? 'us-east-1';
-
-        try {
-          execSync(
-            `aws ecr create-repository --repository-name ${repoName} --region ${region}`,
-            { stdio: 'pipe' }
-          );
-          console.log(`   Created ECR repository: ${repoName}`);
-          return true;
-        } catch (e) {
-          const errorMessage = e instanceof Error ? e.message : String(e);
-          console.log(`   Failed to create ECR repo: ${errorMessage}`);
-          return false;
-        }
-      },
-      manualFix:
-        'Create ECR repository: aws ecr create-repository --repository-name <app-name>',
-    },
-  ],
+  // ECR fix moved to scanfix/ecr.ts
+  fixes: [],
 
   /**
    * Deploy using this config

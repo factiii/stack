@@ -87,6 +87,19 @@ export interface FactiiiAutoConfig {
   prisma_schema?: string;
   prisma_version?: string;
   aws_cli_installed?: boolean;
+
+  // AWS resource IDs (populated after provisioning)
+  aws_vpc_id?: string;
+  aws_subnet_public_id?: string;
+  aws_subnet_private_ids?: string[];
+  aws_sg_ec2_id?: string;
+  aws_sg_rds_id?: string;
+  aws_ec2_instance_id?: string;
+  aws_ec2_public_ip?: string;
+  aws_rds_endpoint?: string;
+  aws_rds_db_name?: string;
+  aws_s3_bucket?: string;
+  aws_ecr_registry?: string;
 }
 
 /**

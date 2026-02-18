@@ -1,6 +1,6 @@
 {
   "name": "@factiii/stack",
-  "version": "0.1.2",
+  "version": "0.1.8",
   "description": "Infrastructure management package for deploying services to servers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -34,10 +34,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/factiii/core.git"
+    "url": "https://github.com/factiii/stack.git"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
     "@octokit/rest": "^20.0.2",

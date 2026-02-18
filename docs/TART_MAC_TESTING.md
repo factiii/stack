@@ -45,6 +45,8 @@ Inside the VM, the repo is at: `/Volumes/My Shared Files/core`
 
 ## 4. Test Scan/Fix Inside the VM
 
+**Important:** When running inside the VM (the Mac server), set `FACTIII_ON_SERVER=1` so scan/fix run locally instead of trying to SSH.
+
 SSH into the running VM and run factiii:
 
 ```bash
@@ -56,21 +58,26 @@ cd "/Volumes/My Shared Files/core"
 # Install deps and build
 pnpm install
 pnpm build
-
-# Use an app repo with factiii.yml (staging + server: mac)
-# Option A: Mount your app repo too
-#   tart run --dir=core:$(pwd) --dir=app:/path/to/your-app sequoia-base
-#   cd "/Volumes/My Shared Files/app"
-#   pnpm link "/Volumes/My Shared Files/core"
-
-# Option B: Use core's factiii.yml if it has staging with server: mac
-cd "/Volumes/My Shared Files/core"
 pnpm link .
-npx factiii scan --staging
-npx factiii fix --staging
+
+# Run scan/fix (FACTIII_ON_SERVER=1 = we're on the server, run fixes locally)
+FACTIII_ON_SERVER=1 npx factiii scan --staging
+FACTIII_ON_SERVER=1 npx factiii fix --staging
+FACTIII_ON_SERVER=1 npx factiii scan --staging   # verify
 ```
 
-## 5. One-Liner Test (from host)
+## 5. Automated Test Script (from host)
+
+Run the full test (scan → fix → scan) from the host:
+
+```bash
+./scripts/tart-mac-scanfix-test.sh [vm-name]
+# Default VM: sequoia-base
+```
+
+The script starts the VM with the core repo mounted (if not running), SSHs in, and runs scan → fix → scan.
+
+## 6. One-Liner Test (from host)
 
 Run scan inside the VM without an interactive SSH session:
 
@@ -79,12 +86,12 @@ brew install cirruslabs/cli/sshpass  # if needed
 
 sshpass -p admin ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   admin@$(tart ip sequoia-base) \
-  'cd "/Volumes/My Shared Files/core" && pnpm install && pnpm build && npx factiii scan --staging'
+  'cd "/Volumes/My Shared Files/core" && pnpm install && pnpm build && FACTIII_ON_SERVER=1 npx factiii scan --staging'
 ```
 
 (Ensure the VM was started with `--dir=core:...` so the repo is mounted.)
 
-## 6. What the Mac Host Fixes Check
+## 7. What the Mac Host Fixes Check
 
 | Fix ID | What it does |
 |--------|--------------|
@@ -94,9 +101,12 @@ sshpass -p admin ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
 | `macos-app-nap-enabled` | App Nap on → `defaults write NSGlobalDomain NSAppSleepDisabled -bool YES` |
 | `macos-autorestart-disabled` | No auto-restart on power loss → `pmset autorestart 1` |
 | `macos-disablesleep-disabled` | System sleep not fully disabled → `pmset disablesleep 1` |
-| `macos-autologin-disabled` | Auto-login not set → manual (System Settings or plist) |
+| `macos-acwake-disabled` | Wake on AC reconnect disabled → `pmset acwake 1` |
+| `macos-proximitywake-enabled` | Proximity wake (iPhone/Watch) on → `pmset proximitywake 0` |
+| `macos-ttyskeepawake-disabled` | Keep awake during SSH disabled → `pmset ttyskeepawake 1` |
+| `macos-autologin-disabled` | Auto-login not set → `defaults write ... autoLoginUser` (reboot required) |
 
-## 7. Creating a Custom Tart Image (optional)
+## 8. Creating a Custom Tart Image (optional)
 
 To bake a Mac image with factiii and your app already set up:
 
