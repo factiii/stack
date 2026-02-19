@@ -420,7 +420,7 @@ The `server-mode` addon configures machines as deployment servers:
 - Configures firewall rules
 - Provides OS-specific server hardening
 
-Enable in factiii.yml:
+Enable in stack.yml:
 ```yaml
 staging:
   domain: 192.168.1.100
@@ -442,8 +442,8 @@ class MyPlugin {
   static version = '1.0.0';          // Semantic version
   
   // REQUIRED: Config schemas
-  static configSchema = {};          // User-editable (factiii.yml)
-  static autoConfigSchema = {};      // Auto-detected (factiiiAuto.yml)
+  static configSchema = {};          // User-editable (stack.yml)
+  static autoConfigSchema = {};      // Auto-detected (stackAuto.yml)
   
   // REQUIRED: Fixes array
   static fixes = [];                 // Issues this plugin can detect/fix
@@ -582,7 +582,7 @@ static configSchema = {
 };
 ```
 
-This gets merged into `factiii.yml`:
+This gets merged into `stack.yml`:
 
 ```yaml
 name: my-app
@@ -710,7 +710,7 @@ static fixes = [
     },
 
     // Manual fix instructions
-    manualFix: 'Add api_key to factiii.yml'
+    manualFix: 'Add api_key to stack.yml'
   }
 ];
 ```
@@ -999,7 +999,7 @@ npm publish
 npm install my-factiii-plugin
 ```
 
-Add to `factiii.yml`:
+Add to `stack.yml`:
 
 ```yaml
 plugins:
@@ -1054,13 +1054,13 @@ Factiii Stack supports deploying multiple repos to the same server. Each server 
 ```
 ~/.factiii/                          # Root infrastructure directory
 ├── repo-name/                       # Each deployed repo
-│   ├── factiii.yml                  # Repo config (scanned by generate-all.js)
-│   ├── factiiiAuto.yml              # Auto-detected config
+│   ├── stack.yml                    # Repo config (scanned by generate-all.js)
+   │   ├── stackAuto.yml              # Auto-detected config
 │   ├── .env.staging                 # Secrets (staging server only)
 │   ├── .env.prod                    # Secrets (prod server only)
 │   └── ... (source code if requiresFullRepo=true)
 ├── repo-name-2/                     # Another deployed repo
-│   ├── factiii.yml
+│   ├── stack.yml
 │   └── ...
 ├── scripts/
 │   └── generate-all.js              # Regenerates merged configs
@@ -1077,7 +1077,7 @@ Pipeline plugins can declare whether they need the full repo cloned on the serve
 ```javascript
 static requiresFullRepo(environment) {
   // Return true if full repo needed (for building from source)
-  // Return false if only factiii.yml + env file needed (pulls pre-built images)
+  // Return false if only stack.yml + env file needed (pulls pre-built images)
   return environment === 'staging';
 }
 ```
@@ -1090,7 +1090,7 @@ static requiresFullRepo(environment) {
 
 This is the core server-side script that:
 
-1. Scans `~/.factiii/*/factiii.yml` for all deployed repos
+1. Scans `~/.factiii/*/stack.yml` (or factiii.yml) for all deployed repos
 2. Generates a unified `docker-compose.yml` with all services
 3. Generates a unified `nginx.conf` routing to all domains
 
@@ -1175,7 +1175,7 @@ Production environments typically use managed services (RDS, ElastiCache) rather
 
 **Production (requiresFullRepo = false):**
 1. Workflow SSHs to production server
-2. Create `~/.factiii/{repo}/` with just `factiii.yml`
+2. Create `~/.factiii/{repo}/` with just `stack.yml`
 3. Write secrets to `~/.factiii/{repo}/.env.prod`
 4. Run `generate-all.js` to regenerate merged configs
 5. Pull image from ECR and start: `docker compose up -d {repo}-prod`
@@ -1213,11 +1213,11 @@ Production environments typically use managed services (RDS, ElastiCache) rather
 
 ```
 Plugin.configSchema ──┐
-                      ├──► Merge ──► factiii.yml
+                      ├──► Merge ──► stack.yml
 Plugin.configSchema ──┘
 
 Plugin.detectConfig() ──┐
-                        ├──► Merge ──► factiiiAuto.yml
+                        ├──► Merge ──► stackAuto.yml
 Plugin.detectConfig() ──┘
 ```
 

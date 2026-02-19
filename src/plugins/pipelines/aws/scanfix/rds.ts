@@ -1,13 +1,13 @@
 /**
  * AWS RDS Fixes
  *
- * Provisions RDS PostgreSQL 15 instance (db.t2.micro free tier).
+ * Provisions RDS PostgreSQL 15 instance (db.t3.micro free tier).
  * Creates DB subnet group from private subnets, launches instance with RDS SG.
  * Stores DATABASE_URL in Ansible Vault.
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig, getProjectName } from '../utils/aws-helpers.js';
+import { awsExec, awsExecSafe, getAwsConfig, getProjectName, isOnServer } from '../utils/aws-helpers.js';
 
 /**
  * Find VPC by factiii:project tag
@@ -82,6 +82,7 @@ function findRdsInstance(dbInstanceId: string, region: string): { status: string
  * Check if AWS is configured for this project
  */
 function isAwsConfigured(config: FactiiiConfig): boolean {
+  if (isOnServer()) return false;
   if (config.aws) return true;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { extractEnvironments } = require('../../../../utils/config-helpers.js');
@@ -151,7 +152,7 @@ export const rdsFixes: Fix[] = [
     id: 'aws-rds-instance-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'RDS PostgreSQL 15 instance not created (db.t2.micro)',
+    description: 'RDS PostgreSQL 15 instance not created (db.t3.micro)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -189,7 +190,7 @@ export const rdsFixes: Fix[] = [
         awsExec(
           'aws rds create-db-instance' +
           ' --db-instance-identifier ' + dbId +
-          ' --db-instance-class db.t2.micro' +
+          ' --db-instance-class db.t3.micro' +
           ' --engine postgres' +
           ' --engine-version 15' +
           ' --allocated-storage 20' +
@@ -200,13 +201,13 @@ export const rdsFixes: Fix[] = [
           ' --vpc-security-group-ids ' + rdsSgId +
           ' --no-publicly-accessible' +
           ' --storage-type gp2' +
-          ' --backup-retention-period 7',
+          ' --backup-retention-period 1',
           region
         );
 
         console.log('   Creating RDS instance: ' + dbId);
         console.log('   Engine: PostgreSQL 15');
-        console.log('   Instance class: db.t2.micro (free tier eligible)');
+        console.log('   Instance class: db.t3.micro (free tier eligible)');
         console.log('   Storage: 20 GB gp2');
         console.log('   Database name: ' + dbName);
         console.log('   Master user: ' + masterUser);
@@ -226,7 +227,7 @@ export const rdsFixes: Fix[] = [
         return false;
       }
     },
-    manualFix: 'Create RDS instance: aws rds create-db-instance --db-instance-class db.t2.micro --engine postgres --engine-version 15',
+    manualFix: 'Create RDS instance: aws rds create-db-instance --db-instance-class db.t3.micro --engine postgres --engine-version 15',
   },
   {
     id: 'aws-rds-not-available',

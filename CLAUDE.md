@@ -36,7 +36,7 @@ If you detect a standards violation while reading or writing code, **stop and wa
 - Runtime: Node.js with TypeScript
 - Package manager: pnpm
 - CLI framework: Commander.js
-- Config format: YAML (factiii.yml, factiiiAuto.yml)
+- Config format: YAML (stack.yml, stackAuto.yml; legacy factiii.yml/factiiiAuto.yml supported)
 - Deployment: Docker, GitHub Actions, AWS ECR
 
 ## Architecture
@@ -66,8 +66,8 @@ For each stage, pipeline decides execution:
 ### Configuration Files
 | File | Purpose | Editable By |
 |------|---------|-------------|
-| `factiii.yml` | Manual settings | User |
-| `factiiiAuto.yml` | Auto-detected settings | Factiii (user can OVERRIDE) |
+| `stack.yml` | Manual settings | User |
+| `stackAuto.yml` | Auto-detected settings | Factiii (user can OVERRIDE) |
 
 **Required values:** Prefix with `EXAMPLE-` (blocks deployment until replaced)
 **Override pattern:** `detected_value OVERRIDE custom_value`

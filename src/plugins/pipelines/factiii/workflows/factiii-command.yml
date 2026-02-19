@@ -44,14 +44,15 @@ jobs:
         env:
           STAGE: ${{ inputs.stage }}
         run: |
-          if [ ! -f "factiii.yml" ]; then
-            echo "factiii.yml not found"
+          CONFIG_FILE="stack.yml"; if [ ! -f "$CONFIG_FILE" ]; then CONFIG_FILE="factiii.yml"; fi
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "❌ stack.yml or factiii.yml not found"
             exit 1
           fi
 
-          REPO_NAME=$(yq eval '.name' factiii.yml)
-          HOST=$(yq eval ".$STAGE.domain // \"\"" factiii.yml)
-          SSH_USER=$(yq eval ".$STAGE.ssh_user // \"ubuntu\"" factiii.yml)
+          REPO_NAME=$(yq eval '.name' "$CONFIG_FILE")
+          HOST=$(yq eval ".$STAGE.domain // \"\"" "$CONFIG_FILE")
+          SSH_USER=$(yq eval ".$STAGE.ssh_user // \"ubuntu\"" "$CONFIG_FILE")
 
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           echo "host=$HOST" >> $GITHUB_OUTPUT
@@ -61,9 +62,10 @@ jobs:
         env:
           STAGE: ${{ inputs.stage }}
         run: |
-          HAS_ENV=$(yq eval ".$STAGE != null" factiii.yml)
+          CONFIG_FILE="stack.yml"; if [ ! -f "$CONFIG_FILE" ]; then CONFIG_FILE="factiii.yml"; fi
+          HAS_ENV=$(yq eval ".$STAGE != null" "$CONFIG_FILE")
           if [ "$HAS_ENV" != "true" ]; then
-            echo "$STAGE environment not configured in factiii.yml"
+            echo "$STAGE not configured in config"
             exit 1
           fi
 
@@ -97,7 +99,7 @@ jobs:
           STAGE: ${{ inputs.stage }}
         run: |
           if [ -z "$HOST" ]; then
-            echo "Missing domain in factiii.yml: $STAGE.domain"
+            echo "Missing domain in config: $STAGE.domain"
             exit 1
           fi
 

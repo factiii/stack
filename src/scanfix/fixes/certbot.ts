@@ -28,10 +28,13 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
 
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       const domain = envKey === 'production'
-        ? config?.environments?.production?.domain
-        : config?.environments?.[envKey]?.domain;
+        ? ((config as Record<string, unknown>).production as Record<string, unknown> | undefined)?.domain as string | undefined
+        : ((config as Record<string, unknown>)[envKey] as Record<string, unknown> | undefined)?.domain as string | undefined;
 
       if (!domain || domain.startsWith('EXAMPLE-')) return false;
+
+      // Skip SSL for IP addresses (certs only work with domain names)
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(domain)) return false;
 
       const result = checkCertificate(domain, 7);
       if (!result.exists) {
@@ -47,8 +50,8 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
 
     fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       const domain = envKey === 'production'
-        ? config?.environments?.production?.domain
-        : config?.environments?.[envKey]?.domain;
+        ? ((config as Record<string, unknown>).production as Record<string, unknown> | undefined)?.domain as string | undefined
+        : ((config as Record<string, unknown>)[envKey] as Record<string, unknown> | undefined)?.domain as string | undefined;
       const sslEmail = config.ssl_email;
 
       if (!domain) {

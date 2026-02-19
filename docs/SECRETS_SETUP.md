@@ -11,7 +11,7 @@ echo "your-password-here" > ~/.vault_pass
 chmod 600 ~/.vault_pass
 ```
 
-## Add to factiii.yml
+## Add to stack.yml
 
 ```yaml
 ansible:

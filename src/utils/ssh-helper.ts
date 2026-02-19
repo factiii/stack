@@ -164,11 +164,13 @@ export function sshRemoteFactiiiCommand(
  * Execute a command on a remote server via SSH
  * @param envConfig - Environment config with host and ssh_user
  * @param command - Command to execute
+ * @param stage - Optional stage to use the correct SSH key (staging, prod)
  * @returns Command output
  */
 export async function sshExec(
   envConfig: EnvironmentConfig,
-  command: string
+  command: string,
+  stage?: Stage
 ): Promise<string> {
   // ============================================================
   // CRITICAL: Detect if we're already on the server
@@ -186,18 +188,25 @@ export async function sshExec(
   const host = envConfig.domain;
   const user = envConfig.ssh_user ?? 'ubuntu';
 
-  // Only use environment-specific deploy keys (no generic key fallback)
-  const keyPaths = [
-    path.join(os.homedir(), '.ssh', 'staging_deploy_key'),
-    path.join(os.homedir(), '.ssh', 'prod_deploy_key'),
-    path.join(os.homedir(), '.ssh', 'mac_deploy_key'),
-  ];
-
+  // Use stage-specific key if stage is provided
   let keyPath: string | null = null;
-  for (const kp of keyPaths) {
-    if (fs.existsSync(kp)) {
-      keyPath = kp;
-      break;
+  if (stage) {
+    keyPath = findSshKeyForStage(stage);
+  }
+
+  // Fallback: try all known deploy keys
+  if (!keyPath) {
+    const keyPaths = [
+      path.join(os.homedir(), '.ssh', 'staging_deploy_key'),
+      path.join(os.homedir(), '.ssh', 'prod_deploy_key'),
+      path.join(os.homedir(), '.ssh', 'mac_deploy_key'),
+    ];
+
+    for (const kp of keyPaths) {
+      if (fs.existsSync(kp)) {
+        keyPath = kp;
+        break;
+      }
     }
   }
 

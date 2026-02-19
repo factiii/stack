@@ -101,7 +101,7 @@ export function formatDeploymentReport(data: ReportData): string {
   if (localChecks) {
     lines.push('LOCAL CONFIGURATION');
     if (localChecks.coreYml) {
-      lines.push(`  [OK] factiii.yml valid (${repoName})`);
+      lines.push(`  [OK] stack.yml valid (${repoName})`);
     }
     if (localChecks.dockerfile) {
       lines.push('  [OK] Dockerfile found');

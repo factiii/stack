@@ -17,8 +17,8 @@ const freeTierConfig: AWSConfigDef = {
   services: ['ec2', 'rds', 's3', 'ecr', 'ses'],
 
   defaults: {
-    instance_type: 't2.micro', // Free tier eligible
-    rds_instance: 'db.t2.micro', // Free tier eligible
+    instance_type: 't3.micro', // Free tier eligible
+    rds_instance: 'db.t3.micro', // Free tier eligible
     storage: 30, // Max free tier EBS
     rds_storage: 20, // Max free tier RDS
     s3_bucket: true,

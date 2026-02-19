@@ -49,7 +49,7 @@ export ANSIBLE_VAULT_PASSWORD_FILE=~/.vault_pass
 export ANSIBLE_VAULT_PASSWORD="your-strong-password-here"
 ```
 
-### Option C: Factiii Config (factiii.yml)
+### Option C: Factiii Config (stack.yml)
 
 ```yaml
 ansible:

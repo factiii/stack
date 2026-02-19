@@ -8,6 +8,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
 
+import { getStackAutoPath } from '../constants/config-files.js';
+
 interface ParsedVersion {
   major: number;
   minor: number;
@@ -101,18 +103,18 @@ export function isBreakingUpgrade(from: string, to: string): boolean {
 }
 
 /**
- * Read version info from factiiiAuto.yml
+ * Read version info from stackAuto.yml (or legacy factiiiAuto.yml)
  * @param rootDir - Project root directory
  */
 export function readFactiiiAutoVersion(rootDir: string): FactiiiAutoVersion {
-  const factiiiAutoPath = path.join(rootDir, 'factiiiAuto.yml');
+  const autoPath = getStackAutoPath(rootDir);
 
-  if (!fs.existsSync(factiiiAutoPath)) {
+  if (!fs.existsSync(autoPath)) {
     return { factiii_version: null, factiii_min_version: null };
   }
 
   try {
-    const content = fs.readFileSync(factiiiAutoPath, 'utf8');
+    const content = fs.readFileSync(autoPath, 'utf8');
     const config = yaml.load(content) as {
       factiii_version?: string;
       factiii_min_version?: string;
@@ -144,10 +146,10 @@ export function checkVersionCompatibility(rootDir: string): VersionCompatibility
     message: '',
   };
 
-  // No version info in factiiiAuto.yml (legacy or first run)
+  // No version info in stackAuto.yml (legacy or first run)
   if (!factiii_version) {
     result.needsUpgrade = true;
-    result.message = 'No version info in factiiiAuto.yml. Run: npx factiii upgrade';
+    result.message = 'No version info in stackAuto.yml. Run: npx factiii upgrade';
     return result;
   }
 

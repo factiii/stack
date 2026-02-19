@@ -6,7 +6,7 @@
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig, getProjectName } from '../utils/aws-helpers.js';
+import { awsExec, awsExecSafe, getAwsConfig, getProjectName, isOnServer } from '../utils/aws-helpers.js';
 
 /**
  * Check if ECR repository exists
@@ -23,6 +23,7 @@ function findEcrRepo(repoName: string, region: string): boolean {
  * Check if AWS is configured for this project
  */
 function isAwsConfigured(config: FactiiiConfig): boolean {
+  if (isOnServer()) return false;
   if (config.aws) return true;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { extractEnvironments } = require('../../../../utils/config-helpers.js');

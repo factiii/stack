@@ -56,9 +56,6 @@ import type {
 // Import shared scanfix factories
 import {
   getDockerFixes,
-  getNodeFixes,
-  getGitFixes,
-  createCertbotFix,
 } from '../../../scanfix/index.js';
 
 // Import plugin-specific scanfix arrays
@@ -85,7 +82,7 @@ import freeTierConfig from './configs/free-tier.js';
 import type { AWSConfigDef } from './configs/types.js';
 
 // Import SSH helpers
-import { sshExec, findSshKeyForStage } from '../../../utils/ssh-helper.js';
+import { sshExec, findSshKeyForStage, sshRemoteFactiiiCommand, getEnvConfigForStage } from '../../../utils/ssh-helper.js';
 
 type AWSConfigType = 'ec2' | 'free-tier' | 'standard' | 'enterprise';
 
@@ -255,21 +252,29 @@ class AWSPipeline {
           return { reachable: true, via: 'local' };
         }
 
-        // Check for SSH key (direct SSH from dev machine)
+        // Check if the server actually exists (domain is set and not EXAMPLE-)
+        // If no real domain, SSH is pointless — run provisioning locally via AWS CLI
         {
-          const sshKey = findSshKeyForStage(stage);
-          if (sshKey) {
-            return { reachable: true, via: 'ssh' };
+          const firstEnvForStage = envValues[0];
+          const domain = firstEnvForStage?.domain;
+          const hasRealDomain = domain && !domain.startsWith('EXAMPLE-');
+
+          if (hasRealDomain) {
+            // Server exists — check for SSH key (direct SSH from dev machine)
+            const sshKey = findSshKeyForStage(stage);
+            if (sshKey) {
+              return { reachable: true, via: 'ssh' };
+            }
+
+            // Fallback: use GitHub workflow
+            if (process.env.GITHUB_TOKEN) {
+              return { reachable: true, via: 'workflow' };
+            }
           }
         }
 
-        // Fallback: use GitHub workflow
-        if (process.env.GITHUB_TOKEN) {
-          return { reachable: true, via: 'workflow' };
-        }
-
         // AWS provisioning fixes run locally on dev machine (AWS CLI)
-        // Even without SSH key, we can reach 'prod' for provisioning
+        // This handles: no server yet, no SSH key, no GITHUB_TOKEN
         return { reachable: true, via: 'local' };
 
       default:
@@ -296,12 +301,6 @@ class AWSPipeline {
   static readonly fixes = [
     // Dev stage - shared fixes
     ...getDockerFixes('dev', 'aws'),
-
-    // Prod stage - shared fixes (for ubuntu/amazon-linux servers)
-    ...getDockerFixes('prod'),
-    ...getNodeFixes('prod'),
-    ...getGitFixes('prod'),
-    createCertbotFix('prod', 'prod'),
 
     // Plugin-specific fixes
     ...awsCliFixes,
@@ -359,6 +358,134 @@ class AWSPipeline {
   }
 
   /**
+   * Bootstrap a fresh EC2 instance with Node.js and factiii
+   * Called before scanStage/fixStage when SSH'ing to a new server
+   */
+  private async bootstrapServer(stage: Stage): Promise<boolean> {
+    const envConfig = getEnvConfigForStage(stage, this._config);
+    if (!envConfig) {
+      console.log('   [!] No environment config for ' + stage);
+      return false;
+    }
+
+    const repoName = this._config.name || 'app';
+
+    // Check if Node.js is installed
+    try {
+      await sshExec(envConfig, 'which node', stage);
+    } catch {
+      console.log('   Installing Node.js 20 on server...');
+      try {
+        await sshExec(envConfig, 'curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs', stage);
+        console.log('   [OK] Node.js installed');
+      } catch (e) {
+        console.log('   [!] Failed to install Node.js: ' + (e instanceof Error ? e.message : String(e)));
+        return false;
+      }
+    }
+
+    // Always update factiii to latest version on server
+    console.log('   Updating @factiii/stack to latest on server...');
+    try {
+      await sshExec(envConfig, 'sudo npm install -g @factiii/stack@latest', stage);
+      console.log('   [OK] @factiii/stack updated');
+    } catch (e) {
+      console.log('   [!] Failed to install factiii: ' + (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+
+    // Ensure project directory exists and always update stack.yml
+    try {
+      await sshExec(envConfig, 'mkdir -p ~/.factiii/' + repoName, stage);
+
+      // Always write stack.yml to ensure it's up to date
+      const minimalConfig = 'name: ' + repoName + '\\n'
+        + 'prod:\\n'
+        + '  server: ubuntu\\n'
+        + '  pipeline: aws\\n'
+        + '  domain: ' + (envConfig.domain || 'localhost') + '\\n'
+        + '  ssh_user: ' + (envConfig.ssh_user || 'ubuntu') + '\\n';
+      await sshExec(envConfig, 'printf "' + minimalConfig + '" > ~/.factiii/' + repoName + '/stack.yml', stage);
+      console.log('   [OK] Server project config updated');
+    } catch (e) {
+      console.log('   [!] Failed to setup project directory: ' + (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Scan a stage - handles routing based on canReach()
+   *
+   * Returns { handled: true } if pipeline ran scan remotely.
+   * Returns { handled: false } if caller should run scan locally.
+   */
+  async scanStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean }> {
+    const reach = AWSPipeline.canReach(stage, this._config);
+
+    if (!reach.reachable) {
+      console.log('\n[X] Cannot reach ' + stage + ': ' + reach.reason);
+      return { handled: true };
+    }
+
+    if (reach.via === 'ssh') {
+      console.log('   Scanning ' + stage + ' via direct SSH...');
+
+      // Bootstrap server if needed (install Node.js, factiii, create dir)
+      const bootstrapped = await this.bootstrapServer(stage);
+      if (!bootstrapped) {
+        console.log('   [!] Server bootstrap failed — cannot scan remotely');
+        return { handled: true };
+      }
+
+      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
+      if (!sshResult.success) {
+        console.log('   [!] ' + stage + ' scan failed: ' + sshResult.stderr);
+      }
+      return { handled: true };
+    }
+
+    // via: 'local' - caller should run locally
+    return { handled: false };
+  }
+
+  /**
+   * Fix a stage - handles routing based on canReach()
+   *
+   * Returns { handled: true } if pipeline ran fix remotely.
+   * Returns { handled: false } if caller should run fix locally.
+   */
+  async fixStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean }> {
+    const reach = AWSPipeline.canReach(stage, this._config);
+
+    if (!reach.reachable) {
+      console.log('\n[X] Cannot reach ' + stage + ': ' + reach.reason);
+      return { handled: true };
+    }
+
+    if (reach.via === 'ssh') {
+      console.log('   Fixing ' + stage + ' via direct SSH...');
+
+      // Bootstrap server if needed (install Node.js, factiii, create dir)
+      const bootstrapped = await this.bootstrapServer(stage);
+      if (!bootstrapped) {
+        console.log('   [!] Server bootstrap failed — cannot fix remotely');
+        return { handled: true };
+      }
+
+      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
+      if (!sshResult.success) {
+        console.log('   [!] ' + stage + ' fix failed: ' + sshResult.stderr);
+      }
+      return { handled: true };
+    }
+
+    // via: 'local' - caller should run locally
+    return { handled: false };
+  }
+
+  /**
    * Deploy to a stage - handles routing based on canReach()
    */
   async deployStage(stage: Stage, options: { branch?: string; commit?: string } = {}): Promise<DeployResult> {
@@ -368,10 +495,24 @@ class AWSPipeline {
       return { success: false, error: reach.reason };
     }
 
+    if (reach.via === 'ssh') {
+      console.log('   Deploying ' + stage + ' via direct SSH...');
+
+      // Bootstrap server if needed
+      const bootstrapped = await this.bootstrapServer(stage);
+      if (!bootstrapped) {
+        return { success: false, error: 'Server bootstrap failed' };
+      }
+
+      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'deploy --' + stage);
+      if (!sshResult.success) {
+        return { success: false, error: sshResult.stderr };
+      }
+      return { success: true, message: stage + ' deployed via SSH' };
+    }
+
     if (reach.via === 'workflow') {
-      // Would trigger GitHub Actions workflow
-      // For now, return message about workflow triggering
-      return { success: true, message: `Workflow trigger required for ${stage}` };
+      return { success: true, message: 'Workflow trigger required for ' + stage };
     }
 
     // via: 'local' - execute directly

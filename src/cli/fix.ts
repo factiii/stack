@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
 
+import { getStackConfigPath } from '../constants/config-files.js';
 import { scan } from './scan.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import type { FactiiiConfig, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
@@ -45,10 +46,10 @@ interface PipelinePluginInstance {
 }
 
 /**
- * Load config from factiii.yml
+ * Load config from stack.yml (or legacy factiii.yml)
  */
 function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = path.join(rootDir, 'factiii.yml');
+  const configPath = getStackConfigPath(rootDir);
 
   if (!fs.existsSync(configPath)) {
     return {} as FactiiiConfig;
@@ -58,7 +59,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('[!] Error parsing factiii.yml: ' + errorMessage);
+    console.error('[!] Error parsing config: ' + errorMessage);
     return {} as FactiiiConfig;
   }
 }
@@ -68,6 +69,50 @@ function loadConfig(rootDir: string): FactiiiConfig {
  */
 function getPipelinePlugin(plugins: PluginClass[]): PluginClass | undefined {
   return plugins.find((p) => p.category === 'pipeline');
+}
+
+/**
+ * Get ALL pipeline plugins from loaded plugins
+ */
+function getAllPipelinePlugins(plugins: PluginClass[]): PluginClass[] {
+  return plugins.filter((p) => p.category === 'pipeline');
+}
+
+/**
+ * Check reachability across all pipeline plugins for a stage.
+ * Returns the first reachable result, or the last unreachable reason.
+ */
+function checkReachability(
+  pipelinePlugins: PluginClass[],
+  stage: Stage,
+  config: FactiiiConfig
+): Reachability {
+  let lastReason = 'No pipeline plugin loaded';
+  for (const plugin of pipelinePlugins) {
+    if (typeof plugin.canReach === 'function') {
+      const result = plugin.canReach(stage, config);
+      if (result.reachable) return result;
+      lastReason = result.reason ?? 'Unreachable';
+    }
+  }
+  return { reachable: false, reason: lastReason };
+}
+
+/**
+ * Find which pipeline plugin claims a stage (first reachable).
+ */
+function findPipelineForStage(
+  pipelinePlugins: PluginClass[],
+  stage: Stage,
+  config: FactiiiConfig
+): PluginClass | undefined {
+  for (const plugin of pipelinePlugins) {
+    if (typeof plugin.canReach === 'function') {
+      const result = plugin.canReach(stage, config);
+      if (result.reachable) return plugin;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -175,6 +220,7 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
 
   // Load all plugins to check reachability
   const plugins = await loadRelevantPlugins(rootDir, config);
+  const pipelinePlugins = getAllPipelinePlugins(plugins as unknown as PluginClass[]);
   const pipelinePlugin = getPipelinePlugin(plugins as unknown as PluginClass[]);
 
   // Check reachability for each stage
@@ -184,8 +230,9 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
-    if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
-      reachability[stage] = pipelinePlugin.canReach(stage, config);
+    if (pipelinePlugins.length > 0) {
+      // Check all pipeline plugins — first reachable wins
+      reachability[stage] = checkReachability(pipelinePlugins, stage, config);
 
       if (reachability[stage]?.reachable) {
         if (reachability[stage]!.via === 'local') {
@@ -204,13 +251,23 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   // Run local fixes for directly reachable stages
   const result = await runLocalFixes(options, localStages);
 
-  // Remote stages: delegate to pipeline plugin
+  // Remote stages: delegate to the pipeline plugin that claims each stage
   if (remoteStages.length > 0) {
-    const PipelineClass = pipelinePlugin as unknown as PipelinePluginClass;
-    if (PipelineClass) {
-      const pipeline = new PipelineClass(config);
-      for (const stage of remoteStages) {
-        await pipeline.fixStage(stage, {});
+    for (const stage of remoteStages) {
+      const claimingPlugin = findPipelineForStage(pipelinePlugins, stage, config);
+      if (claimingPlugin) {
+        const PipelineClass = claimingPlugin as unknown as PipelinePluginClass;
+        const pipeline = new PipelineClass(config);
+        if (typeof pipeline.fixStage === 'function') {
+          await pipeline.fixStage(stage, {});
+        } else {
+          // Pipeline doesn't have fixStage — run fixes locally instead
+          const localResult = await runLocalFixes({ ...options, stages: [stage] }, [stage]);
+          result.fixed += localResult.fixed;
+          result.manual += localResult.manual;
+          result.failed += localResult.failed;
+          result.fixes.push(...localResult.fixes);
+        }
       }
     }
   }

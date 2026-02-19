@@ -37,13 +37,14 @@ export function createPnpmInstallFix(stage: Stage): Fix {
       // For non-dev stages, check if environment is configured
       if (stage !== 'dev') {
         const envConfig = stage === 'prod'
-          ? (config?.environments?.prod ?? config?.environments?.production)
-          : config?.environments?.[stage];
+          ? ((config as Record<string, unknown>).prod ?? (config as Record<string, unknown>).production) as Record<string, unknown> | undefined
+          : (config as Record<string, unknown>)[stage] as Record<string, unknown> | undefined;
         if (!envConfig?.domain) return false;
       }
 
       // Only check if project uses pnpm
-      const autoConfigPath = path.join(rootDir, 'factiiiAuto.yml');
+      const { getStackAutoPath } = await import('../../constants/config-files.js');
+      const autoConfigPath = getStackAutoPath(rootDir);
       if (!fs.existsSync(autoConfigPath)) return false;
 
       try {

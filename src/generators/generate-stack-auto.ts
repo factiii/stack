@@ -1,12 +1,14 @@
 /**
- * Generate factiiiAuto.yml
+ * Generate stackAuto.yml
  *
- * Generates the factiiiAuto.yml configuration file with auto-detected values.
+ * Generates the stackAuto.yml configuration file with auto-detected values.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
+
+import { STACK_AUTO_FILENAME, getStackAutoPath } from '../constants/config-files.js';
 
 interface DetectedConfig {
   has_prisma?: boolean;
@@ -98,13 +100,13 @@ function loadAllPlugins(): PluginWithDetect[] {
 }
 
 /**
- * Generate factiiiAuto.yml with auto-detected values from plugins
+ * Generate stackAuto.yml with auto-detected values from plugins
  */
 export async function generateFactiiiAuto(
   rootDir: string,
   options: GenerateAutoOptions = {}
 ): Promise<void> {
-  const outputPath = path.join(rootDir, 'factiiiAuto.yml');
+  const outputPath = path.join(rootDir, STACK_AUTO_FILENAME);
 
   console.log('🔍 Auto-detecting project configuration...\n');
 
@@ -229,18 +231,19 @@ export async function generateFactiiiAuto(
 
   const finalContent = sections.join('\n');
 
-  // Check if file exists and content changed
-  const exists = fs.existsSync(outputPath);
+  // Check if file exists and content changed (check both new and legacy paths)
+  const existingPath = getStackAutoPath(rootDir);
+  const exists = fs.existsSync(existingPath);
   if (exists) {
-    const existingContent = fs.readFileSync(outputPath, 'utf8');
+    const existingContent = fs.readFileSync(existingPath, 'utf8');
     if (existingContent === finalContent) {
-      console.log('\n⏭️  factiiiAuto.yml unchanged');
+      console.log('\n⏭️  ' + STACK_AUTO_FILENAME + ' unchanged');
       return;
     }
     // If file exists and content changed, only update if force is true
     // (init.ts handles prompting, so if we get here with force=false, skip)
     if (options.force === false) {
-      console.log('\n⏭️  factiiiAuto.yml would be updated, but overwrite was declined');
+      console.log('\n⏭️  ' + STACK_AUTO_FILENAME + ' would be updated, but overwrite was declined');
       return;
     }
   }
@@ -249,9 +252,8 @@ export async function generateFactiiiAuto(
   fs.writeFileSync(outputPath, finalContent);
 
   if (exists) {
-    console.log('\n🔄 Updated factiiiAuto.yml');
+    console.log('\n🔄 Updated ' + STACK_AUTO_FILENAME);
   } else {
-    console.log('\n✅ Created factiiiAuto.yml');
+    console.log('\n✅ Created ' + STACK_AUTO_FILENAME);
   }
 }
-

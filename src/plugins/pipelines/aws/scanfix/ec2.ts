@@ -2,12 +2,12 @@
  * AWS EC2 Fixes
  *
  * Provisions EC2 key pair, instance, and Elastic IP.
- * Uses Ubuntu 22.04 AMI, t2.micro (free tier), public subnet.
+ * Uses Ubuntu 22.04 AMI, t3.micro (free tier), public subnet.
  * Key pair private key is stored in Ansible Vault.
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig, getProjectName, tagSpec } from '../utils/aws-helpers.js';
+import { awsExec, awsExecSafe, getAwsConfig, getProjectName, isOnServer, tagSpec } from '../utils/aws-helpers.js';
 
 /**
  * Find VPC by factiii:project tag
@@ -96,6 +96,7 @@ function getUbuntuAmi(region: string): string | null {
  * Check if AWS is configured for this project
  */
 function isAwsConfigured(config: FactiiiConfig): boolean {
+  if (isOnServer()) return false;
   if (config.aws) return true;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { extractEnvironments } = require('../../../../utils/config-helpers.js');
@@ -159,7 +160,7 @@ export const ec2Fixes: Fix[] = [
     id: 'aws-ec2-instance-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'EC2 instance not created (Ubuntu 22.04, t2.micro)',
+    description: 'EC2 instance not created (Ubuntu 22.04, t3.micro)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -206,7 +207,7 @@ export const ec2Fixes: Fix[] = [
         const instanceResult = awsExec(
           'aws ec2 run-instances' +
           ' --image-id ' + amiId +
-          ' --instance-type t2.micro' +
+          ' --instance-type t3.micro' +
           ' --key-name ' + keyName +
           ' --security-group-ids ' + ec2SgId +
           ' --subnet-id ' + publicSubnet +
@@ -216,7 +217,7 @@ export const ec2Fixes: Fix[] = [
         );
         const instanceId = JSON.parse(instanceResult).Instances[0].InstanceId;
         console.log('   Launched EC2 instance: ' + instanceId);
-        console.log('   Instance type: t2.micro (free tier eligible)');
+        console.log('   Instance type: t3.micro (free tier eligible)');
         console.log('   Waiting for instance to be running...');
 
         // Wait for instance to be running
@@ -241,7 +242,7 @@ export const ec2Fixes: Fix[] = [
         return false;
       }
     },
-    manualFix: 'Launch EC2: aws ec2 run-instances --image-id <ubuntu-ami> --instance-type t2.micro --key-name factiii-{name}',
+    manualFix: 'Launch EC2: aws ec2 run-instances --image-id <ubuntu-ami> --instance-type t3.micro --key-name factiii-{name}',
   },
   {
     id: 'aws-ec2-elastic-ip',
@@ -256,7 +257,7 @@ export const ec2Fixes: Fix[] = [
       if (!instanceId) return false; // Instance must exist first
       return !findElasticIp(instanceId, region);
     },
-    fix: async (config: FactiiiConfig): Promise<boolean> => {
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const instanceId = findInstance(projectName, region);
@@ -282,7 +283,12 @@ export const ec2Fixes: Fix[] = [
           region
         );
         console.log('   Associated with instance: ' + instanceId);
-        console.log('   Update factiii.yml prod.domain to: ' + publicIp);
+
+        // Auto-update factiii.yml with the new Elastic IP
+        const { updateConfigValue } = await import('../../../../utils/config-writer.js');
+        const dir = rootDir || process.cwd();
+        updateConfigValue(dir, 'prod.domain', publicIp);
+        updateConfigValue(dir, 'prod.ssh_user', 'ubuntu');
 
         return true;
       } catch (e) {

@@ -28,6 +28,8 @@ import * as path from 'path';
 import * as os from 'os';
 import * as readline from 'readline';
 import * as child_process from 'child_process';
+
+import { getStackConfigPath } from '../constants/config-files.js';
 import { promisify } from 'util';
 
 import yaml from 'js-yaml';
@@ -96,13 +98,13 @@ function saveDevSyncConfig(config: DevSyncConfig): void {
 }
 
 /**
- * Load config from factiii.yml
+ * Load config from stack.yml (or legacy factiii.yml)
  */
 function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = path.join(rootDir, 'factiii.yml');
+  const configPath = getStackConfigPath(rootDir);
 
   if (!fs.existsSync(configPath)) {
-    console.error('[ERROR] factiii.yml not found in current directory');
+    console.error('[ERROR] stack.yml not found in current directory');
     console.error('   Make sure you are running this from your app repository');
     process.exit(1);
   }
@@ -111,7 +113,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error(`[ERROR] Error parsing factiii.yml: ${errorMessage}`);
+    console.error('[ERROR] Error parsing config: ' + errorMessage);
     process.exit(1);
   }
 }
@@ -167,7 +169,7 @@ function getTargetEnvironments(config: FactiiiConfig, options: DevSyncOptions): 
     if (stagingEnv) {
       environments.push(stagingEnv);
     } else {
-      console.warn('[!] Staging environment not configured in factiii.yml');
+      console.warn('[!] Staging environment not configured in config');
     }
   }
 
@@ -177,7 +179,7 @@ function getTargetEnvironments(config: FactiiiConfig, options: DevSyncOptions): 
     if (prodEnv) {
       environments.push(prodEnv);
     } else {
-      console.warn('[!] Production environment not configured in factiii.yml');
+      console.warn('[!] Production environment not configured in config');
     }
   }
 
@@ -188,8 +190,8 @@ function getTargetEnvironments(config: FactiiiConfig, options: DevSyncOptions): 
   }
 
   if (environments.length === 0) {
-    console.error('[ERROR] No environments configured in factiii.yml');
-    console.error('   Add staging and/or prod environments to factiii.yml');
+    console.error('[ERROR] No environments configured in config');
+    console.error('   Add staging and/or prod environments to stack.yml');
     process.exit(1);
   }
 
@@ -386,7 +388,7 @@ async function syncToServer(
   const envConfig = allEnvs[environment];
 
   if (!envConfig?.domain) {
-    console.error(`[ERROR] ${environment} domain not configured in factiii.yml`);
+    console.error('[ERROR] ' + environment + ' domain not configured in config');
     process.exit(1);
   }
 

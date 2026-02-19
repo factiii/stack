@@ -34,7 +34,7 @@ async function ensureNodeInstalled(envConfig: EnvironmentConfig): Promise<void> 
     console.log('      Installing Node.js...');
     await sshExecCommand(
       envConfig,
-      'curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs'
+      'curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs'
     );
   }
 }
@@ -47,7 +47,7 @@ async function ensureGitInstalled(envConfig: EnvironmentConfig): Promise<void> {
     await sshExecCommand(envConfig, 'which git');
   } catch {
     console.log('      Installing git...');
-    await sshExecCommand(envConfig, 'sudo apt-get update && sudo apt-get install -y git');
+    await sshExecCommand(envConfig, 'sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git');
   }
 }
 
@@ -441,6 +441,23 @@ export async function deployProd(
       envConfig,
       `cd ~/.factiii && docker compose up -d ${repoName}-prod`
     );
+
+    // Step 6: Post-deploy health check
+    console.log('   🔍 Running post-deploy health check...');
+    try {
+      const healthResult = await sshExecCommand(
+        envConfig,
+        'sleep 5 && curl -s -o /dev/null -w "%{http_code}" http://localhost:80 || echo "000"'
+      );
+      const statusCode = healthResult.trim();
+      if (statusCode === '200' || statusCode === '301' || statusCode === '302') {
+        console.log('   Health check passed (HTTP ' + statusCode + ')');
+      } else {
+        console.log('   Health check returned HTTP ' + statusCode + ' — app may still be starting');
+      }
+    } catch {
+      console.log('   Health check could not connect — app may still be starting');
+    }
 
     return { success: true, message: 'Production deployment complete' };
   } catch (error) {

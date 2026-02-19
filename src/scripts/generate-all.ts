@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
 
+import { getStackConfigPath, getStackAutoPath } from '../constants/config-files.js';
 import type { FactiiiConfig, EnvironmentConfig } from '../types/index.js';
 import { extractEnvironments } from '../utils/config-helpers.js';
 
@@ -90,8 +91,8 @@ export function scanRepos(): RepoInfo[] {
     // Skip the CLI tool directory (not a deployable app)
     if (entry === 'infrastructure' || entry === 'core') continue;
 
-    // Check if factiii.yml exists
-    const configPath = path.join(fullPath, 'factiii.yml');
+    // Check if stack.yml (or legacy factiii.yml) exists
+    const configPath = getStackConfigPath(fullPath);
     if (fs.existsSync(configPath)) {
       repos.push({
         name: entry,
@@ -119,7 +120,7 @@ export function loadConfigs(repos: RepoInfo[]): Record<string, FactiiiConfig> {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`[!] Failed to load ${repo.name}/factiii.yml: ${errorMessage}`);
+      console.error('[!] Failed to load ' + repo.name + ' config: ' + errorMessage);
     }
   }
 
@@ -175,10 +176,10 @@ export function generateDockerCompose(allConfigs: Record<string, FactiiiConfig>)
       const serviceName = `${repoName}-${envName}`;
       const repoPath = path.join(factiiiDir, repoName);
 
-      // Always use build context - this script is generic and only generates from factiii.yml
+      // Always use build context - this script is generic and only generates from stack config
       // Server plugins will modify docker-compose.yml after generation if needed (e.g., ECR images for prod)
       let dockerfile = 'Dockerfile';
-      const autoConfigPath = path.join(repoPath, 'factiiiAuto.yml');
+      const autoConfigPath = getStackAutoPath(repoPath);
       if (fs.existsSync(autoConfigPath)) {
         try {
           const autoConfig = yaml.load(fs.readFileSync(autoConfigPath, 'utf8')) as AutoConfig | null;

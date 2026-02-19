@@ -10,7 +10,7 @@
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExecSafe, getAwsConfig, getProjectName } from '../utils/aws-helpers.js';
+import { awsExecSafe, getAwsConfig, getProjectName, isOnServer } from '../utils/aws-helpers.js';
 
 /**
  * Find RDS instance endpoint
@@ -30,6 +30,7 @@ function findRdsEndpoint(projectName: string, region: string): string | null {
  * Check if AWS is configured for this project
  */
 function isAwsConfigured(config: FactiiiConfig): boolean {
+  if (isOnServer()) return false;
   if (config.aws) return true;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { extractEnvironments } = require('../../../../utils/config-helpers.js');

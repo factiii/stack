@@ -6,7 +6,7 @@
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig } from '../utils/aws-helpers.js';
+import { awsExec, awsExecSafe, getAwsConfig, isOnServer } from '../utils/aws-helpers.js';
 
 /**
  * Get the production domain from config
@@ -49,6 +49,7 @@ function hasDkim(domain: string, region: string): boolean {
  * Check if AWS is configured for this project
  */
 function isAwsConfigured(config: FactiiiConfig): boolean {
+  if (isOnServer()) return false;
   if (config.aws) return true;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { extractEnvironments } = require('../../../../utils/config-helpers.js');

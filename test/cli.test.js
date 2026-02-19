@@ -59,7 +59,7 @@ describe('CLI Command Tests', () => {
     test('scans and reports no issues when properly configured', async () => {
       // Create a minimal valid config
       const yaml = require('js-yaml');
-      fs.writeFileSync(path.join(testDir, 'factiii.yml'), yaml.dump({
+      fs.writeFileSync(path.join(testDir, 'stack.yml'), yaml.dump({
         name: 'test-repo',
         environments: {
           staging: {
@@ -81,11 +81,11 @@ describe('CLI Command Tests', () => {
       expect(Array.isArray(problems.dev)).toBe(true);
     });
 
-    test('detects missing factiii.yml', async () => {
+    test('detects missing stack.yml', async () => {
       const problems = await scan({ rootDir: testDir, dev: true });
 
-      // Should detect missing factiii.yml
-      expect(problems.dev.some(p => p.id === 'missing-factiii-yml')).toBe(true);
+      // Should detect missing config (stack.yml)
+      expect(problems.dev.some(p => p.id === 'missing-stack-yml')).toBe(true);
     });
 
     test('returns problems grouped by stage', async () => {
@@ -189,7 +189,7 @@ describe('CLI Command Tests', () => {
   if (validate) {
     describe('validate command (legacy)', () => {
       test('validates a correct config file', () => {
-        const configPath = path.join(testDir, 'factiii.yml');
+        const configPath = path.join(testDir, 'stack.yml');
         const validConfig = {
           name: 'test-repo',
           environments: {
@@ -205,14 +205,14 @@ describe('CLI Command Tests', () => {
         const yaml = require('js-yaml');
         fs.writeFileSync(configPath, yaml.dump(validConfig));
 
-        validate({ config: 'factiii.yml' });
+        validate({ config: 'stack.yml' });
 
         expect(consoleOutput.some(o => o[1]?.includes('Configuration is valid'))).toBe(true);
         expect(exitCode).toBeNull();
       });
 
       test('fails on missing name field', () => {
-        const configPath = path.join(testDir, 'factiii.yml');
+        const configPath = path.join(testDir, 'stack.yml');
         const invalidConfig = {
           environments: {
             staging: {
@@ -225,7 +225,7 @@ describe('CLI Command Tests', () => {
         fs.writeFileSync(configPath, yaml.dump(invalidConfig));
 
         try {
-          validate({ config: 'factiii.yml' });
+          validate({ config: 'stack.yml' });
           fail('Should have exited');
         } catch (error) {
           expect(exitCode).toBe(1);

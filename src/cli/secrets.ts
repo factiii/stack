@@ -17,6 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import yaml from 'js-yaml';
+import { getStackConfigPath } from '../constants/config-files.js';
 import { AnsibleVaultSecrets } from '../utils/ansible-vault-secrets.js';
 import { promptForSecret, promptForEnvSecret } from '../utils/secret-prompts.js';
 import { deploySecrets } from './deploy-secrets.js';
@@ -32,21 +33,21 @@ export type SecretsAction =
   | 'write-ssh-keys';
 
 function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = path.join(rootDir, 'factiii.yml');
+  const configPath = getStackConfigPath(rootDir);
   if (!fs.existsSync(configPath)) {
-    throw new Error('factiii.yml not found. Run: npx factiii init');
+    throw new Error('stack.yml not found. Run: npx factiii init');
   }
   try {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
-    throw new Error(`Error parsing factiii.yml: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error('Error parsing config: ' + (e instanceof Error ? e.message : String(e)));
   }
 }
 
 function getVaultStore(config: FactiiiConfig, rootDir: string): AnsibleVaultSecrets {
   if (!config.ansible?.vault_path) {
     throw new Error(
-      'ansible.vault_path not configured in factiii.yml. Add:\n' +
+      'ansible.vault_path not configured in config. Add:\n' +
       '  ansible:\n' +
       '    vault_path: group_vars/all/vault.yml\n' +
       '    vault_password_file: ~/.vault_pass  # optional'

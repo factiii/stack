@@ -12,11 +12,11 @@ npm install @factiii/stack
 npx factiii init
 
 # This creates:
-# - factiii.yml (user-editable config)
-# - factiiiAuto.yml (auto-detected config)
+# - stack.yml (user-editable config)
+# - stackAuto.yml (auto-detected config)
 # - .github/workflows/ (CI/CD workflows)
 
-# Edit factiii.yml to replace EXAMPLE- values
+# Edit stack.yml to replace EXAMPLE- values
 # Then run:
 npx factiii scan    # Check for issues
 npx factiii fix     # Auto-fix issues
@@ -33,7 +33,7 @@ Factiii Stack uses a **plugin-based architecture** where each plugin:
 
 ### The Two Config Files
 
-**`factiii.yml`** - User-Editable Configuration
+**`stack.yml`** - User-Editable Configuration
 ```yaml
 name: my-app
 
@@ -61,7 +61,7 @@ container_exclusions:
   - legacy_container
 ```
 
-**`factiiiAuto.yml`** - Auto-Detected Configuration
+**`stackAuto.yml`** - Auto-Detected Configuration
 ```yaml
 # Auto-detected by plugins
 factiii_version: 1.0.0
@@ -90,8 +90,8 @@ npx factiii init --force  # Regenerate configs
 
 **What it does:**
 - Detects which plugins are relevant to your project
-- Generates `factiii.yml` with only relevant sections
-- Generates `factiiiAuto.yml` with auto-detected values
+- Generates `stack.yml` with only relevant sections
+- Generates `stackAuto.yml` with auto-detected values
 - Creates GitHub Actions workflows
 
 ### Scan
@@ -105,7 +105,7 @@ npx factiii scan --staging # Scan staging only
 npx factiii scan --prod    # Scan prod only
 ```
 
-**Note:** Requires `factiii.yml` to exist. Run `npx factiii init` first.
+**Note:** Requires `stack.yml` (or legacy factiii.yml) to exist. Run `npx factiii init` first.
 
 ### Fix
 
@@ -118,7 +118,7 @@ npx factiii fix --staging # Fix staging only
 npx factiii fix --prod    # Fix prod only
 ```
 
-**Note:** Requires `factiii.yml` to exist. Run `npx factiii init` first.
+**Note:** Requires `stack.yml` (or legacy factiii.yml) to exist. Run `npx factiii init` first.
 
 ### Deploy
 
@@ -130,7 +130,7 @@ npx factiii deploy --staging  # Deploy to staging server
 npx factiii deploy --prod     # Deploy to production server
 ```
 
-**Note:** Requires `factiii.yml` to exist. Run `npx factiii init` first.
+**Note:** Requires `stack.yml` (or legacy factiii.yml) to exist. Run `npx factiii init` first.
 
 ### Secrets Management
 
@@ -172,7 +172,7 @@ npx factiii secrets deploy --staging --dry-run   # Show what would be deployed
    - Writes a `.env.{stage}` file with your environment variables
 3. Your application reads the `.env.{stage}` file on startup
 
-**Note:** Requires `factiii.yml` with Ansible Vault configured. Run `npx factiii init` first.
+**Note:** Requires `stack.yml` with Ansible Vault configured. Run `npx factiii init` first.
 
 ## Stage Execution
 

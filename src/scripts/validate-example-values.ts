@@ -1,20 +1,21 @@
 #!/usr/bin/env node
 
 /**
- * Validates that factiii.yml doesn't contain EXAMPLE- placeholder values
+ * Validates that stack.yml doesn't contain EXAMPLE- placeholder values
  * This script properly parses YAML and ignores comments
  * Use this in workflows instead of grep to avoid false positives from documentation
  */
 
 import * as fs from 'fs';
 import yaml from 'js-yaml';
+import { getStackConfigPath } from '../constants/config-files.js';
 
 interface ExampleValue {
   path: string;
   value: string;
 }
 
-const configPath = process.argv[2] ?? 'factiii.yml';
+const configPath = process.argv[2] ?? getStackConfigPath(process.cwd());
 
 if (!fs.existsSync(configPath)) {
   console.log(`❌ ${configPath} not found`);

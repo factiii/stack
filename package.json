@@ -1,6 +1,6 @@
 {
   "name": "@factiii/stack",
-  "version": "0.1.8",
+  "version": "0.1.24",
   "description": "Infrastructure management package for deploying services to servers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,7 +15,7 @@
     "build": "tsc && npm run copy-assets",
     "build:watch": "tsc --watch",
     "clean": "node -e \"const fs=require('fs');if(fs.existsSync('dist'))fs.rmSync('dist',{recursive:true,force:true})\"",
-    "copy-assets": "node -e \"const fs=require('fs'),p=require('path');fs.cpSync('src/plugins/approved.json','dist/plugins/approved.json');const d='dist/plugins/pipelines/factiii/workflows';fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync('src/plugins/pipelines/factiii/workflows').filter(f=>f.endsWith('.yml')))fs.cpSync(p.join('src/plugins/pipelines/factiii/workflows',f),p.join(d,f))\"",
+    "copy-assets": "node -e \"const fs=require('fs'),p=require('path');fs.cpSync('src/plugins/approved.json','dist/plugins/approved.json');const d='dist/plugins/pipelines/factiii/workflows';fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync('src/plugins/pipelines/factiii/workflows').filter(f=>f.endsWith('.yml')))fs.cpSync(p.join('src/plugins/pipelines/factiii/workflows',f),p.join(d,f));const pd='dist/plugins/pipelines/aws/policies';fs.mkdirSync(pd,{recursive:true});for(const f of fs.readdirSync('src/plugins/pipelines/aws/policies').filter(f=>f.endsWith('.json')))fs.cpSync(p.join('src/plugins/pipelines/aws/policies',f),p.join(pd,f))\"",
     "prebuild": "npm run clean",
     "prepublish-check": "node -e \"const v=require('./package.json').version; if(v.includes('-d')){console.error('❌ Cannot publish dev version:',v); process.exit(1)}\"",
     "prepublishOnly": "npm run prepublish-check && npm run build",
@@ -78,5 +78,11 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "minimatch": ">=10.2.1",
+      "diff": ">=4.0.4"
+    }
   }
 }

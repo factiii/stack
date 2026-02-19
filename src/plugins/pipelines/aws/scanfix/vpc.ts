@@ -6,7 +6,7 @@
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig, getProjectName, tagSpec } from '../utils/aws-helpers.js';
+import { awsExec, awsExecSafe, getAwsConfig, getProjectName, isOnServer, tagSpec } from '../utils/aws-helpers.js';
 
 /**
  * Find VPC by factiii:project tag
@@ -60,6 +60,7 @@ function findIgw(vpcId: string, region: string): string | null {
  * Check if AWS is configured for this project (skip fixes if not)
  */
 function isAwsConfigured(config: FactiiiConfig): boolean {
+  if (isOnServer()) return false;
   if (config.aws) return true;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { extractEnvironments } = require('../../../../utils/config-helpers.js');

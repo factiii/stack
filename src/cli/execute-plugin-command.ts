@@ -15,6 +15,7 @@ import * as path from 'path';
 import yaml from 'js-yaml';
 import { execSync, spawn } from 'child_process';
 
+import { getStackConfigPath } from '../constants/config-files.js';
 import type {
   FactiiiConfig,
   Stage,
@@ -32,10 +33,10 @@ interface PipelinePluginClass {
 }
 
 /**
- * Load config from factiii.yml
+ * Load config from stack.yml (or legacy factiii.yml)
  */
 function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = path.join(rootDir, 'factiii.yml');
+  const configPath = getStackConfigPath(rootDir);
 
   if (!fs.existsSync(configPath)) {
     return {} as FactiiiConfig;
@@ -45,7 +46,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('Error parsing factiii.yml: ' + errorMessage);
+    console.error('Error parsing config: ' + errorMessage);
     return {} as FactiiiConfig;
   }
 }

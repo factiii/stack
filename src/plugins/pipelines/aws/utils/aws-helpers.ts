@@ -15,7 +15,9 @@ import type { FactiiiConfig, EnvironmentConfig } from '../../../../types/index.j
  */
 export function awsExec(cmd: string, region?: string): string {
   const regionFlag = region ? ' --region ' + region : '';
-  const fullCmd = cmd + regionFlag + ' --output json';
+  // Only add --output json if command doesn't already specify output format
+  const outputFlag = cmd.includes('--output ') ? '' : ' --output json';
+  const fullCmd = cmd + regionFlag + outputFlag;
   try {
     return execSync(fullCmd, {
       encoding: 'utf8',
@@ -62,17 +64,23 @@ export function findResourceByTag(
 /**
  * Generate --tag-specifications string for AWS resource creation
  * Tags resources with factiii:project={name} and factiii:managed=true
+ * Uses JSON format to avoid shell parsing issues with colons in tag keys
  */
 export function tagSpec(resourceType: string, projectName: string, extraTags?: Record<string, string>): string {
-  let tags = '{Key=factiii:project,Value=' + projectName + '},{Key=factiii:managed,Value=true},{Key=Name,Value=factiii-' + projectName + '}';
+  const tags: Array<{ Key: string; Value: string }> = [
+    { Key: 'factiii:project', Value: projectName },
+    { Key: 'factiii:managed', Value: 'true' },
+    { Key: 'Name', Value: 'factiii-' + projectName },
+  ];
 
   if (extraTags) {
     for (const [key, value] of Object.entries(extraTags)) {
-      tags += ',{Key=' + key + ',Value=' + value + '}';
+      tags.push({ Key: key, Value: value });
     }
   }
 
-  return '--tag-specifications ResourceType=' + resourceType + ',Tags=[' + tags + ']';
+  const spec = JSON.stringify([{ ResourceType: resourceType, Tags: tags }]);
+  return "--tag-specifications '" + spec + "'";
 }
 
 /**
@@ -110,6 +118,15 @@ export function getAwsConfig(config: FactiiiConfig): {
 
   // Default
   return { region: 'us-east-1', configType: 'ec2' };
+}
+
+/**
+ * Check if AWS provisioning should run
+ * AWS provisioning (VPC, EC2, RDS, etc.) only runs from the dev machine.
+ * When on the server (FACTIII_ON_SERVER=true), skip provisioning — only server-level fixes run.
+ */
+export function isOnServer(): boolean {
+  return process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true';
 }
 
 /**
