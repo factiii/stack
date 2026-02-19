@@ -30,27 +30,27 @@ export async function generateWorkflows(rootDir: string): Promise<void> {
 
   // Copy workflow files and inject version
   // Infrastructure management (manual dispatch):
-  //   - factiii-deploy.yml: Manual deploy with --staging or --prod
-  //   - factiii-fix.yml: Manual fix with matrix for all configured envs
-  //   - factiii-scan.yml: Manual scan with matrix for all configured envs
-  //   - factiii-undeploy.yml: Manual cleanup
+  //   - stack-deploy.yml: Manual deploy with --staging or --prod
+  //   - stack-fix.yml: Manual fix with matrix for all configured envs
+  //   - stack-scan.yml: Manual scan with matrix for all configured envs
+  //   - stack-undeploy.yml: Manual cleanup
   // CI/CD (auto on push):
-  //   - factiii-cicd-staging.yml: Auto-deploy on push to main
-  //   - factiii-cicd-prod.yml: Auto-deploy on push to prod
+  //   - stack-cicd-staging.yml: Auto-deploy on push to main
+  //   - stack-cicd-prod.yml: Auto-deploy on push to prod
   const workflows = [
-    'factiii-deploy.yml',
-    'factiii-fix.yml',
-    'factiii-scan.yml',
-    'factiii-undeploy.yml',
-    'factiii-pr-check.yml',
-    'factiii-cicd-staging.yml',
-    'factiii-cicd-prod.yml',
-    'factiii-command.yml',
+    'stack-deploy.yml',
+    'stack-fix.yml',
+    'stack-scan.yml',
+    'stack-undeploy.yml',
+    'stack-pr-check.yml',
+    'stack-cicd-staging.yml',
+    'stack-cicd-prod.yml',
+    'stack-command.yml',
   ];
 
   // Only add dev-sync workflow in dev mode
   if (process.env.DEV_MODE === 'true') {
-    workflows.push('factiii-dev-sync.yml');
+    workflows.push('stack-dev-sync.yml');
   }
 
   for (const workflow of workflows) {

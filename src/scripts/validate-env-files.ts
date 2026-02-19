@@ -6,6 +6,7 @@
 
 import * as fs from 'fs';
 import yaml from 'js-yaml';
+import { getStackConfigPath } from '../constants/config-files.js';
 
 interface EnvVars {
   [key: string]: string;
@@ -20,7 +21,12 @@ interface FactiiiConfig {
 }
 
 // Load config
-const config = yaml.load(fs.readFileSync('factiii.yml', 'utf8')) as FactiiiConfig | null;
+const configPath = getStackConfigPath(process.cwd());
+if (!fs.existsSync(configPath)) {
+  console.error('stack.yml not found');
+  process.exit(1);
+}
+const config = yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig | null;
 const isStagingSecret = config?.auto?.isStagingSecret !== false; // default true
 
 // Parse env files

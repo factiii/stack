@@ -133,16 +133,16 @@ canReach(stage: Stage, config: FactiiiConfig): Reachability {
 
 When `canReach()` returns `via: 'workflow'`, the pipeline triggers a workflow that:
 1. SSHs to the target server
-2. Runs the command with the specific stage flag: `npx factiii fix --staging`
+2. Runs the command with the specific stage flag: `npx stack fix --staging`
 
 **CRITICAL: Workflows MUST specify --staging or --prod**
 
 ```bash
 # Correct - specifies which stage to run
-GITHUB_ACTIONS=true npx factiii fix --staging
+GITHUB_ACTIONS=true npx stack fix --staging
 
 # WRONG - will try to run all stages, may trigger more workflows
-npx factiii fix
+npx stack fix
 ```
 
 On the server, the command:
@@ -250,7 +250,7 @@ Pipeline plugins generate workflow files, but these files should contain MINIMAL
 **Exception: Node.js Bootstrap**
 
 Workflows include a one-time Node.js bootstrap step to solve the chicken-and-egg problem:
-- `npx factiii` requires Node.js to run
+- `npx stack` requires Node.js to run
 - But we want plugins to handle Node.js installation
 - Solution: Workflows check if Node.js exists and install if missing (one-time)
 - After bootstrap, plugins verify Node.js is present for ongoing operations
@@ -289,7 +289,7 @@ Plugins that generate files should:
 ```yaml
 ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
   "COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-   npx factiii deploy --staging --commit=$COMMIT_HASH --branch=$BRANCH"
+   npx stack deploy --staging --commit=$COMMIT_HASH --branch=$BRANCH"
 ```
 
 **The CLI handles everything:**
@@ -420,7 +420,7 @@ The `server-mode` addon configures machines as deployment servers:
 - Configures firewall rules
 - Provides OS-specific server hardening
 
-Enable in factiii.yml:
+Enable in stack.yml:
 ```yaml
 staging:
   domain: 192.168.1.100
@@ -442,8 +442,8 @@ class MyPlugin {
   static version = '1.0.0';          // Semantic version
   
   // REQUIRED: Config schemas
-  static configSchema = {};          // User-editable (factiii.yml)
-  static autoConfigSchema = {};      // Auto-detected (factiiiAuto.yml)
+  static configSchema = {};          // User-editable (stack.yml)
+  static autoConfigSchema = {};      // Auto-detected (stackAuto.yml)
   
   // REQUIRED: Fixes array
   static fixes = [];                 // Issues this plugin can detect/fix
@@ -582,7 +582,7 @@ static configSchema = {
 };
 ```
 
-This gets merged into `factiii.yml`:
+This gets merged into `stack.yml`:
 
 ```yaml
 name: my-app
@@ -612,7 +612,7 @@ Determine if this plugin should be loaded for the project:
 ```javascript
 static async shouldLoad(rootDir, config = {}) {
   // Check if this plugin is relevant to the project
-  // Called during 'npx factiii init' to decide which plugins to include
+  // Called during 'npx stack init' to decide which plugins to include
   
   const pkgPath = path.join(rootDir, 'package.json');
   if (!fs.existsSync(pkgPath)) return false;
@@ -626,8 +626,8 @@ static async shouldLoad(rootDir, config = {}) {
 ```
 
 **When shouldLoad() is called:**
-- During `npx factiii init` - to determine which plugins to include in configs
-- During `npx factiii scan/fix/deploy` - to load only relevant plugins
+- During `npx stack init` - to determine which plugins to include in configs
+- During `npx stack scan/fix/deploy` - to load only relevant plugins
 
 **Examples:**
 
@@ -710,7 +710,7 @@ static fixes = [
     },
 
     // Manual fix instructions
-    manualFix: 'Add api_key to factiii.yml'
+    manualFix: 'Add api_key to stack.yml'
   }
 ];
 ```
@@ -823,21 +823,21 @@ Plugins are loaded from:
 - `node_modules/@factiii/stack-plugin-*`
 
 ### 2. Scan
-When `npx factiii scan` runs:
+When `npx stack scan` runs:
 1. All plugins' `fixes` arrays are collected
 2. Each fix's `scan()` function is called
 3. Problems are grouped by stage
 4. Results are displayed to user
 
 ### 3. Fix
-When `npx factiii fix` runs:
+When `npx stack fix` runs:
 1. Scan is run first to find problems
 2. Fixes are reordered by stage (dev → secrets → staging → prod)
 3. Each fix's `fix()` function is called
 4. Manual fixes are displayed for unfixable issues
 
 ### 4. Deploy
-When `npx factiii deploy --{env}` runs:
+When `npx stack deploy --{env}` runs:
 1. Scan is run first - aborts if problems found
 2. Environment-specific `.env` file is loaded
 3. Each plugin's `deploy()` method is called
@@ -999,7 +999,7 @@ npm publish
 npm install my-factiii-plugin
 ```
 
-Add to `factiii.yml`:
+Add to `stack.yml`:
 
 ```yaml
 plugins:
@@ -1024,7 +1024,7 @@ Validate configuration early in the scan phase, not during deployment.
 Keep GitHub Actions workflows thin - just SSH and call CLI.
 
 ### 6. Test Locally
-All deployment logic should be testable locally via `npx factiii deploy --dev`.
+All deployment logic should be testable locally via `npx stack deploy --dev`.
 
 ### 7. Document Everything
 Provide clear `helpText` for all secrets and configuration options.
@@ -1054,13 +1054,13 @@ Factiii Stack supports deploying multiple repos to the same server. Each server 
 ```
 ~/.factiii/                          # Root infrastructure directory
 ├── repo-name/                       # Each deployed repo
-│   ├── factiii.yml                  # Repo config (scanned by generate-all.js)
-│   ├── factiiiAuto.yml              # Auto-detected config
+│   ├── stack.yml                    # Repo config (scanned by generate-all.js)
+   │   ├── stackAuto.yml              # Auto-detected config
 │   ├── .env.staging                 # Secrets (staging server only)
 │   ├── .env.prod                    # Secrets (prod server only)
 │   └── ... (source code if requiresFullRepo=true)
 ├── repo-name-2/                     # Another deployed repo
-│   ├── factiii.yml
+│   ├── stack.yml
 │   └── ...
 ├── scripts/
 │   └── generate-all.js              # Regenerates merged configs
@@ -1077,7 +1077,7 @@ Pipeline plugins can declare whether they need the full repo cloned on the serve
 ```javascript
 static requiresFullRepo(environment) {
   // Return true if full repo needed (for building from source)
-  // Return false if only factiii.yml + env file needed (pulls pre-built images)
+  // Return false if only stack.yml + env file needed (pulls pre-built images)
   return environment === 'staging';
 }
 ```
@@ -1090,7 +1090,7 @@ static requiresFullRepo(environment) {
 
 This is the core server-side script that:
 
-1. Scans `~/.factiii/*/factiii.yml` for all deployed repos
+1. Scans `~/.factiii/*/stack.yml` (or factiii.yml) for all deployed repos
 2. Generates a unified `docker-compose.yml` with all services
 3. Generates a unified `nginx.conf` routing to all domains
 
@@ -1175,7 +1175,7 @@ Production environments typically use managed services (RDS, ElastiCache) rather
 
 **Production (requiresFullRepo = false):**
 1. Workflow SSHs to production server
-2. Create `~/.factiii/{repo}/` with just `factiii.yml`
+2. Create `~/.factiii/{repo}/` with just `stack.yml`
 3. Write secrets to `~/.factiii/{repo}/.env.prod`
 4. Run `generate-all.js` to regenerate merged configs
 5. Pull image from ECR and start: `docker compose up -d {repo}-prod`
@@ -1213,18 +1213,18 @@ Production environments typically use managed services (RDS, ElastiCache) rather
 
 ```
 Plugin.configSchema ──┐
-                      ├──► Merge ──► factiii.yml
+                      ├──► Merge ──► stack.yml
 Plugin.configSchema ──┘
 
 Plugin.detectConfig() ──┐
-                        ├──► Merge ──► factiiiAuto.yml
+                        ├──► Merge ──► stackAuto.yml
 Plugin.detectConfig() ──┘
 ```
 
 ### Deployment Flow
 
 ```
-npx factiii deploy --staging
+npx stack deploy --staging
          │
          ├─ 1. Scan (abort if problems)
          │

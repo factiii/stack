@@ -13,7 +13,7 @@
 # What it does:
 #   1. Verifies SSH connectivity
 #   2. Ensures Node.js is available on the remote host
-#   3. Runs `npx factiii scan --{environment}` on the remote server
+#   3. Runs `npx stack scan --{environment}` on the remote server
 #   4. Returns scan results
 # =============================================================================
 
@@ -59,7 +59,7 @@
 
     - name: Run Factiii scan
       ansible.builtin.command:
-        cmd: "npx factiii scan --{{ factiii_env }}"
+        cmd: "npx stack scan --{{ factiii_env }}"
         chdir: "{{ factiii_repo_path }}"
       register: scan_result
       changed_when: false

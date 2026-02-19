@@ -19,7 +19,7 @@
 #   1. Extracts SSH keys from Ansible Vault (if needed)
 #   2. Verifies connectivity to the target server
 #   3. For production: runs build on staging server first
-#   4. Runs `npx factiii deploy --{environment}` on the target server
+#   4. Runs `npx stack deploy --{environment}` on the target server
 #   5. Reports deployment status
 #
 # Variables (set in inventory or passed via -e):
@@ -49,7 +49,7 @@
           -o StrictHostKeyChecking=no
           -o ConnectTimeout=10
           {{ staging_user }}@{{ staging_host }}
-          "cd {{ staging_repo_path }} && npx factiii deploy --staging --build-only"
+          "cd {{ staging_repo_path }} && npx stack deploy --staging --build-only"
       delegate_to: localhost
       register: staging_build
       changed_when: false
@@ -98,7 +98,7 @@
 
     - name: Run Factiii deploy
       ansible.builtin.command:
-        cmd: "npx factiii deploy --{{ factiii_env }}"
+        cmd: "npx stack deploy --{{ factiii_env }}"
         chdir: "{{ factiii_repo_path }}"
       register: deploy_result
       changed_when: false

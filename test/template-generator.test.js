@@ -42,7 +42,7 @@ describe('Template Generator', () => {
       const template = generateEnvTemplate('staging', devEnv);
       
       expect(template).toContain('Instructions:');
-      expect(template).toContain('npx factiii');
+      expect(template).toContain('npx stack');
     });
   });
 

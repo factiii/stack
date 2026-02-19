@@ -2,7 +2,7 @@
 
 # Server-side deployment script
 # Manual helper to deploy a service and regenerate configs
-# Uses generate-all.js to scan ~/.factiii/*/factiii.yml and regenerate merged configs
+# Uses generate-all.js to scan ~/.factiii/*/stack.yml and regenerate merged configs
 
 set -e
 
@@ -31,9 +31,9 @@ if [ ! -d "$REPO_DIR" ]; then
     exit 1
 fi
 
-# Check factiii.yml exists
-if [ ! -f "${REPO_DIR}/factiii.yml" ]; then
-    echo "❌ factiii.yml not found in ${REPO_DIR}"
+# Check stack.yml or factiii.yml exists
+if [ ! -f "${REPO_DIR}/stack.yml" ] && [ ! -f "${REPO_DIR}/factiii.yml" ]; then
+    echo "❌ stack.yml not found in ${REPO_DIR}"
     exit 1
 fi
 

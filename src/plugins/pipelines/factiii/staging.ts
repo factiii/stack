@@ -10,6 +10,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
+import { getStackAutoPath } from '../../../constants/config-files.js';
 import { sshExec } from '../../../utils/ssh-helper.js';
 import type {
   FactiiiConfig,
@@ -18,10 +19,10 @@ import type {
 } from '../../../types/index.js';
 
 /**
- * Get dockerfile path from factiiiAuto.yml or use default
+ * Get dockerfile path from stackAuto.yml (or legacy factiiiAuto.yml) or use default
  */
 export function getDockerfilePath(repoDir: string): string {
-  const autoConfigPath = path.join(repoDir, 'factiiiAuto.yml');
+  const autoConfigPath = getStackAutoPath(repoDir);
   if (fs.existsSync(autoConfigPath)) {
     try {
       const autoConfig = yaml.load(fs.readFileSync(autoConfigPath, 'utf8')) as {

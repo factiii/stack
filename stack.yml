@@ -47,7 +47,7 @@ prod:
 # ENVIRONMENT OPTIONS
 # ============================================================
 # All environments support these optional fields:
-#   ssh_user: ubuntu  # Override SSH user (defaults to factiiiAuto.yml ssh_user)
+#   ssh_user: ubuntu  # Override SSH user (defaults to stackAuto.yml ssh_user)
 #   env_file: .env.{environment}  # Override env file name
 
 # ============================================================

@@ -30,19 +30,20 @@ jobs:
       - name: Read config
         id: config
         run: |
-          if [ ! -f "factiii.yml" ]; then
-            echo "❌ factiii.yml not found"
+          CONFIG_FILE="stack.yml"; if [ ! -f "$CONFIG_FILE" ]; then CONFIG_FILE="factiii.yml"; fi
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "❌ stack.yml or factiii.yml not found"
             exit 1
           fi
           
-          REPO_NAME=$(yq eval '.name' factiii.yml)
+          REPO_NAME=$(yq eval '.name' "$CONFIG_FILE")
           
           if [ "${{ inputs.environment }}" == "staging" ]; then
-            HOST=$(yq eval '.environments.staging.domain // ""' factiii.yml)
-            SSH_USER=$(yq eval '.environments.staging.ssh_user // "ubuntu"' factiii.yml)
+            HOST=$(yq eval '.staging.domain // ""' "$CONFIG_FILE")
+            SSH_USER=$(yq eval '.staging.ssh_user // "ubuntu"' "$CONFIG_FILE")
           else
-            HOST=$(yq eval '.environments.prod.domain // ""' factiii.yml)
-            SSH_USER=$(yq eval '.environments.prod.ssh_user // "ubuntu"' factiii.yml)
+            HOST=$(yq eval '.prod.domain // ""' "$CONFIG_FILE")
+            SSH_USER=$(yq eval '.prod.ssh_user // "ubuntu"' "$CONFIG_FILE")
           fi
           
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
@@ -70,7 +71,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
         run: |
           if [ -z "$HOST" ]; then
-            echo "❌ Missing domain in factiii.yml: environments.$ENVIRONMENT.domain"
+            echo "❌ Missing domain in config: $ENVIRONMENT.domain"
             exit 1
           fi
           

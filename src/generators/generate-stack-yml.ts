@@ -1,13 +1,14 @@
 /**
- * Generate factiii.yml
+ * Generate stack.yml
  *
- * Generates the factiii.yml configuration file from plugin schemas.
+ * Generates the stack.yml configuration file from plugin schemas.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
 
+import { STACK_CONFIG_FILENAME } from '../constants/config-files.js';
 import type { FactiiiConfig } from '../types/index.js';
 
 interface PluginWithSchema {
@@ -73,7 +74,7 @@ function loadAllPlugins(): PluginWithSchema[] {
 }
 
 /**
- * Generate factiii.yml template from plugin schemas
+ * Generate stack.yml template from plugin schemas
  * @param plugins - Optional array of plugin classes to use
  */
 export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = null): string {
@@ -164,7 +165,7 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
 # ENVIRONMENT OPTIONS
 # ============================================================
 # All environments support these optional fields:
-#   ssh_user: ubuntu  # Override SSH user (defaults to factiiiAuto.yml ssh_user)
+#   ssh_user: ubuntu  # Override SSH user (defaults to stackAuto.yml ssh_user)
 #   env_file: .env.{environment}  # Override env file name
 
 # ============================================================
@@ -181,14 +182,14 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
 }
 
 /**
- * Generate factiii.yml file in the target directory
+ * Generate stack.yml file in the target directory
  */
 export function generateFactiiiYml(rootDir: string, options: GenerateOptions = {}): boolean {
-  const outputPath = path.join(rootDir, 'factiii.yml');
+  const outputPath = path.join(rootDir, STACK_CONFIG_FILENAME);
 
   // Check if file already exists
   if (fs.existsSync(outputPath) && !options.force) {
-    console.log('⏭️  factiii.yml already exists (use --force to overwrite)');
+    console.log('⏭️  ' + STACK_CONFIG_FILENAME + ' already exists (use --force to overwrite)');
     return false;
   }
 
@@ -198,22 +199,21 @@ export function generateFactiiiYml(rootDir: string, options: GenerateOptions = {
   // Write file
   fs.writeFileSync(outputPath, content);
 
-  console.log('[OK] Created factiii.yml');
+  console.log('[OK] Created ' + STACK_CONFIG_FILENAME);
   console.log('\nNEXT STEPS:\n');
   console.log('  1. Configure your project:');
-  console.log('     [ ] Replace all EXAMPLE- values in factiii.yml');
+  console.log('     [ ] Replace all EXAMPLE- values in ' + STACK_CONFIG_FILENAME);
   console.log('         - name, github_repo, ssl_email, domains\n');
   console.log('  2. Set up secrets (requires ansible-vault):');
   console.log('     [ ] Generate SSH key:  ssh-keygen -t ed25519 -f ~/.ssh/staging_deploy_key');
-  console.log('     [ ] Store in vault:    npx factiii secrets set STAGING_SSH');
+  console.log('     [ ] Store in vault:    npx stack secrets set STAGING_SSH');
   console.log('     [ ] Add public key to server: ssh-copy-id -i ~/.ssh/staging_deploy_key.pub user@host\n');
   console.log('  3. Validate and fix:');
-  console.log('     [ ] npx factiii scan          (check for issues)');
-  console.log('     [ ] npx factiii fix           (auto-fix what it can)\n');
+  console.log('     [ ] npx stack scan          (check for issues)');
+  console.log('     [ ] npx stack fix           (auto-fix what it can)\n');
   console.log('  4. Deploy:');
-  console.log('     [ ] npx factiii deploy --staging --dry-run   (preview)');
-  console.log('     [ ] npx factiii deploy --staging             (deploy)\n');
+  console.log('     [ ] npx stack deploy --staging --dry-run   (preview)');
+  console.log('     [ ] npx stack deploy --staging             (deploy)\n');
 
   return true;
 }
-

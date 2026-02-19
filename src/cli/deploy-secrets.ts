@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
+import { getStackConfigPath } from '../constants/config-files.js';
 import { AnsibleVaultSecrets } from '../utils/ansible-vault-secrets.js';
 import { SSHDeploy } from '../utils/ssh-deploy.js';
 import type { FactiiiConfig, EnvironmentConfig } from '../types/index.js';
@@ -19,17 +20,17 @@ export interface DeploySecretsResult {
 }
 
 /**
- * Load configuration from factiii.yml
+ * Load configuration from stack.yml (or legacy factiii.yml)
  */
 function loadConfig(rootDir: string): FactiiiConfig {
-    const configPath = path.join(rootDir, 'factiii.yml');
+    const configPath = getStackConfigPath(rootDir);
     if (!fs.existsSync(configPath)) {
-        throw new Error('factiii.yml not found. Run: npx factiii init');
+        throw new Error('stack.yml not found. Run: npx stack init');
     }
     try {
         return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
     } catch (e) {
-        throw new Error(`Error parsing factiii.yml: ${e instanceof Error ? e.message : String(e)}`);
+        throw new Error('Error parsing config: ' + (e instanceof Error ? e.message : String(e)));
     }
 }
 
@@ -59,7 +60,7 @@ async function deployToEnvironment(
     if (!sshKey) {
         return {
             success: false,
-            error: `No SSH key found for ${stage}. Run: npx factiii secrets set ${stage.toUpperCase()}_SSH`
+            error: `No SSH key found for ${stage}. Run: npx stack secrets set ${stage.toUpperCase()}_SSH`
         };
     }
 
@@ -67,7 +68,7 @@ async function deployToEnvironment(
     const envSecrets = await store.getEnvironmentSecrets(stage);
     if (Object.keys(envSecrets).length === 0) {
         console.log(`  [!] No environment secrets found for ${stage}`);
-        console.log(`      Add secrets with: npx factiii secrets set-env <NAME> --${stage}`);
+        console.log(`      Add secrets with: npx stack secrets set-env <NAME> --${stage}`);
         return {
             success: true,
             message: `No secrets to deploy for ${stage}`,
@@ -155,9 +156,9 @@ export async function deploySecrets(
 
     // Check Ansible Vault configuration
     if (!config.ansible?.vault_path) {
-        const error = 'ansible.vault_path not configured in factiii.yml';
-        console.log(`\n[ERROR] ${error}`);
-        console.log('Add to factiii.yml:');
+        const error = 'ansible.vault_path not configured in config';
+        console.log('\n[ERROR] ' + error);
+        console.log('Add to stack.yml:');
         console.log('  ansible:');
         console.log('    vault_path: group_vars/all/vault.yml');
         console.log('    vault_password_file: ~/.vault_pass');
@@ -183,7 +184,7 @@ export async function deploySecrets(
         // Find environment config for this stage
         const envName = Object.keys(environments).find(name => getStageType(name) === stage);
         if (!envName) {
-            console.log(`\n[!] No ${stage} environment configured in factiii.yml`);
+            console.log('\n[!] No ' + stage + ' environment configured in config');
             continue;
         }
 

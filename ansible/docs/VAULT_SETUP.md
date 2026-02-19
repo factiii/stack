@@ -49,7 +49,7 @@ export ANSIBLE_VAULT_PASSWORD_FILE=~/.vault_pass
 export ANSIBLE_VAULT_PASSWORD="your-strong-password-here"
 ```
 
-### Option C: Factiii Config (factiii.yml)
+### Option C: Factiii Config (stack.yml)
 
 ```yaml
 ansible:
@@ -117,12 +117,12 @@ Save and close. The file is now encrypted.
 
 ```bash
 # Store individual secrets via CLI
-npx factiii secrets set STAGING_SSH    # Prompts for SSH key
-npx factiii secrets set PROD_SSH       # Prompts for SSH key
-npx factiii secrets set MAC_SSH        # Prompts for SSH key
+npx stack secrets set STAGING_SSH    # Prompts for SSH key
+npx stack secrets set PROD_SSH       # Prompts for SSH key
+npx stack secrets set MAC_SSH        # Prompts for SSH key
 
 # Verify secrets are stored
-npx factiii secrets list
+npx stack secrets list
 ```
 
 ---
@@ -135,7 +135,7 @@ SSH keys must be written to disk (unencrypted) for SSH to use them. Extract them
 
 ```bash
 # Extract all SSH keys from vault to ~/.ssh/
-npx factiii secrets write-ssh-keys
+npx stack secrets write-ssh-keys
 ```
 
 This writes:
@@ -266,6 +266,6 @@ group_vars/all/vault.yml               # Encrypted vault file
 ## Next Steps
 
 1. Create your vault password: `openssl rand -base64 32 > ~/.vault_pass`
-2. Add existing SSH keys to vault: `npx factiii secrets set STAGING_SSH`
+2. Add existing SSH keys to vault: `npx stack secrets set STAGING_SSH`
 3. Run verification: `./ansible/scripts/verify-secrets.sh`
 4. Test connectivity: `./ansible/scripts/ssh-test.sh`

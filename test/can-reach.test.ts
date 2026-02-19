@@ -145,12 +145,13 @@ describe('canReach - staging/prod stages', () => {
     }
   });
 
-  test('returns ssh when generic key exists (fallback)', () => {
+  test('returns unreachable when only generic key exists (no stage-specific fallback)', () => {
     mockSshKey('id_ed25519');
+    // Implementation only accepts stage-specific keys (staging_deploy_key), not id_ed25519
     const result = FactiiiPipeline.canReach('staging', baseConfig);
-    expect(result.reachable).toBe(true);
-    if (result.reachable) {
-      expect(result.via).toBe('ssh');
+    expect(result.reachable).toBe(false);
+    if (!result.reachable) {
+      expect(result.reason).toContain('SSH key');
     }
   });
 

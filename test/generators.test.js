@@ -4,25 +4,25 @@ const yaml = require('js-yaml');
 const { scanRepos, loadConfigs, generateDockerCompose, generateNginx } = require('../src/scripts/generate-all');
 
 describe('Generator Tests (generate-all.js)', () => {
-  const testFactiiiDir = path.join(__dirname, 'temp-factiii');
+  const testStackDir = path.join(__dirname, 'temp-stack');
   const fixturesDir = path.join(__dirname, 'fixtures');
 
   // Store original env
   const originalFactiiiDir = process.env.FACTIII_DIR;
 
   beforeEach(() => {
-    // Create temp factiii directory structure
-    if (!fs.existsSync(testFactiiiDir)) {
-      fs.mkdirSync(testFactiiiDir, { recursive: true });
+    // Create temp stack directory structure
+    if (!fs.existsSync(testStackDir)) {
+      fs.mkdirSync(testStackDir, { recursive: true });
     }
     // Set FACTIII_DIR to use our test directory
-    process.env.FACTIII_DIR = testFactiiiDir;
+    process.env.FACTIII_DIR = testStackDir;
   });
 
   afterEach(() => {
     // Clean up
-    if (fs.existsSync(testFactiiiDir)) {
-      fs.rmSync(testFactiiiDir, { recursive: true, force: true });
+    if (fs.existsSync(testStackDir)) {
+      fs.rmSync(testStackDir, { recursive: true, force: true });
     }
     // Restore original env
     if (originalFactiiiDir) {
@@ -33,9 +33,9 @@ describe('Generator Tests (generate-all.js)', () => {
   });
 
   function createTestRepo(repoName, config) {
-    const repoDir = path.join(testFactiiiDir, repoName);
+    const repoDir = path.join(testStackDir, repoName);
     fs.mkdirSync(repoDir, { recursive: true });
-    fs.writeFileSync(path.join(repoDir, 'factiii.yml'), yaml.dump(config));
+    fs.writeFileSync(path.join(repoDir, 'stack.yml'), yaml.dump(config));
     return repoDir;
   }
 
@@ -45,12 +45,12 @@ describe('Generator Tests (generate-all.js)', () => {
   }
 
   describe('scanRepos', () => {
-    test('finds repos with factiii.yml', () => {
+    test('finds repos with stack.yml', () => {
       createTestRepo('test-repo1', { name: 'test-repo1', environments: {} });
       createTestRepo('test-repo2', { name: 'test-repo2', environments: {} });
       
-      // Create a directory without factiii.yml (should be skipped)
-      fs.mkdirSync(path.join(testFactiiiDir, 'no-config'), { recursive: true });
+      // Create a directory without stack.yml (should be skipped)
+      fs.mkdirSync(path.join(testStackDir, 'no-config'), { recursive: true });
       
       const repos = scanRepos();
       
@@ -63,9 +63,9 @@ describe('Generator Tests (generate-all.js)', () => {
       createTestRepo('test-repo', { name: 'test-repo', environments: {} });
       
       // Create special directories that should be skipped
-      fs.mkdirSync(path.join(testFactiiiDir, 'scripts'), { recursive: true });
-      fs.mkdirSync(path.join(testFactiiiDir, 'node_modules'), { recursive: true });
-      fs.mkdirSync(path.join(testFactiiiDir, '.hidden'), { recursive: true });
+      fs.mkdirSync(path.join(testStackDir, 'scripts'), { recursive: true });
+      fs.mkdirSync(path.join(testStackDir, 'node_modules'), { recursive: true });
+      fs.mkdirSync(path.join(testStackDir, '.hidden'), { recursive: true });
       
       const repos = scanRepos();
       
@@ -97,7 +97,7 @@ describe('Generator Tests (generate-all.js)', () => {
       const configs = loadConfigs(repos);
       generateDockerCompose(configs);
       
-      const composePath = path.join(testFactiiiDir, 'docker-compose.yml');
+      const composePath = path.join(testStackDir, 'docker-compose.yml');
       expect(fs.existsSync(composePath)).toBe(true);
       
       const content = fs.readFileSync(composePath, 'utf8');
@@ -112,7 +112,7 @@ describe('Generator Tests (generate-all.js)', () => {
       const configs = loadConfigs(repos);
       generateDockerCompose(configs);
       
-      const composePath = path.join(testFactiiiDir, 'docker-compose.yml');
+      const composePath = path.join(testStackDir, 'docker-compose.yml');
       const content = fs.readFileSync(composePath, 'utf8');
       
       expect(content).toContain('repo1-staging:');
@@ -128,7 +128,7 @@ describe('Generator Tests (generate-all.js)', () => {
       
       expect(serviceCount).toBe(2); // Both repos have staging environment
       
-      const composePath = path.join(testFactiiiDir, 'docker-compose.yml');
+      const composePath = path.join(testStackDir, 'docker-compose.yml');
       const content = fs.readFileSync(composePath, 'utf8');
       
       expect(content).toContain('repo1-staging:');
@@ -144,7 +144,7 @@ describe('Generator Tests (generate-all.js)', () => {
       const configs = loadConfigs(repos);
       generateNginx(configs);
       
-      const nginxPath = path.join(testFactiiiDir, 'nginx.conf');
+      const nginxPath = path.join(testStackDir, 'nginx.conf');
       expect(fs.existsSync(nginxPath)).toBe(true);
       
       const content = fs.readFileSync(nginxPath, 'utf8');
@@ -162,7 +162,7 @@ describe('Generator Tests (generate-all.js)', () => {
       
       expect(domainCount).toBe(2);
       
-      const nginxPath = path.join(testFactiiiDir, 'nginx.conf');
+      const nginxPath = path.join(testStackDir, 'nginx.conf');
       const content = fs.readFileSync(nginxPath, 'utf8');
       
       expect(content).toContain('server_name test-repo1.local;');
@@ -195,7 +195,7 @@ describe('Generator Tests (generate-all.js)', () => {
       generateDockerCompose(configs);
       generateNginx(configs);
       
-      let composePath = path.join(testFactiiiDir, 'docker-compose.yml');
+      let composePath = path.join(testStackDir, 'docker-compose.yml');
       let content = fs.readFileSync(composePath, 'utf8');
       expect(content).toContain('repo1-staging:');
       expect(content).not.toContain('repo2-staging:');
@@ -213,7 +213,7 @@ describe('Generator Tests (generate-all.js)', () => {
       expect(content).toContain('repo2-staging:');
       
       // Phase 3: Remove repo2
-      fs.rmSync(path.join(testFactiiiDir, 'repo2'), { recursive: true, force: true });
+      fs.rmSync(path.join(testStackDir, 'repo2'), { recursive: true, force: true });
       
       repos = scanRepos();
       configs = loadConfigs(repos);
@@ -225,7 +225,7 @@ describe('Generator Tests (generate-all.js)', () => {
       expect(content).not.toContain('repo2-staging:');
       
       // Phase 4: Remove repo1
-      fs.rmSync(path.join(testFactiiiDir, 'repo1'), { recursive: true, force: true });
+      fs.rmSync(path.join(testStackDir, 'repo1'), { recursive: true, force: true });
       
       repos = scanRepos();
       expect(repos.length).toBe(0);

@@ -7,13 +7,13 @@ This repository IS the `@factiii/stack` CLI tool. It is NOT an application that 
 
 ### Boundaries
 - NEVER edit files outside `/Users/jon/infrastructure/`
-- NEVER run `npx factiii` commands in this repository (test in app repos)
+- NEVER run `npx stack` commands in this repository (test in app repos)
 - NEVER run `git add`, `git commit`, `git push` without explicit user approval
 - NEVER delete or modify existing code comments without asking
 
 ### When Testing Changes
 1. Edit source files in `src/`
-2. Test in a SEPARATE app repository: `cd /path/to/app && pnpm link /Users/jon/infrastructure && npx factiii`
+2. Test in a SEPARATE app repository: `cd /path/to/app && pnpm link /Users/jon/infrastructure && npx stack`
 
 ## Standards Enforcement
 
@@ -36,7 +36,7 @@ If you detect a standards violation while reading or writing code, **stop and wa
 - Runtime: Node.js with TypeScript
 - Package manager: pnpm
 - CLI framework: Commander.js
-- Config format: YAML (factiii.yml, factiiiAuto.yml)
+- Config format: YAML (stack.yml, stackAuto.yml; legacy factiii.yml/factiiiAuto.yml supported)
 - Deployment: Docker, GitHub Actions, AWS ECR
 
 ## Architecture
@@ -66,8 +66,8 @@ For each stage, pipeline decides execution:
 ### Configuration Files
 | File | Purpose | Editable By |
 |------|---------|-------------|
-| `factiii.yml` | Manual settings | User |
-| `factiiiAuto.yml` | Auto-detected settings | Factiii (user can OVERRIDE) |
+| `stack.yml` | Manual settings | User |
+| `stackAuto.yml` | Auto-detected settings | Factiii (user can OVERRIDE) |
 
 **Required values:** Prefix with `EXAMPLE-` (blocks deployment until replaced)
 **Override pattern:** `detected_value OVERRIDE custom_value`
@@ -76,9 +76,9 @@ For each stage, pipeline decides execution:
 
 | Command | Behavior |
 |---------|----------|
-| `npx factiii` | Scan + auto-fix local, check-only remote |
-| `npx factiii fix` | Fix ALL environments including remote |
-| `npx factiii deploy` | Run scan, deploy if checks pass |
+| `npx stack` | Scan + auto-fix local, check-only remote |
+| `npx stack fix` | Fix ALL environments including remote |
+| `npx stack deploy` | Run scan, deploy if checks pass |
 
 ## Project Structure
 ```
@@ -125,7 +125,7 @@ GitHub workflow YML files must be ultra-thin.
 **Correct pattern:**
 ```yaml
 ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
-  "GITHUB_ACTIONS=true npx factiii deploy --staging"
+  "GITHUB_ACTIONS=true npx stack deploy --staging"
 ```
 
 **Why:** All logic belongs in plugins, not workflows. Exception: Node.js bootstrap (chicken-and-egg).
@@ -165,7 +165,7 @@ Add protection comments:
 
 ## Common Mistakes to Avoid
 
-- Running `npx factiii` in this repo instead of an app repo
+- Running `npx stack` in this repo instead of an app repo
 - Adding SSH calls inside scan/fix functions (pipeline handles this)
 - Running workflows without `GITHUB_ACTIONS=true --staging`/`--prod`
 - Putting server setup logic in workflow YML files

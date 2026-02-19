@@ -5,6 +5,7 @@
 
 import { execSync } from 'child_process';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
+import { isOnServer } from '../utils/aws-helpers.js';
 
 export const configFixes: Fix[] = [
   // PROD STAGE FIXES
@@ -14,6 +15,7 @@ export const configFixes: Fix[] = [
     severity: 'critical',
     description: 'Production domain not configured in factiii.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
 
@@ -32,6 +34,7 @@ export const configFixes: Fix[] = [
     severity: 'critical',
     description: 'AWS configuration missing in factiii.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
 
@@ -51,6 +54,7 @@ export const configFixes: Fix[] = [
     severity: 'critical',
     description: 'Cannot reach production server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
 
@@ -77,6 +81,7 @@ export const configFixes: Fix[] = [
     severity: 'warning',
     description: 'Repository not cloned on production server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
 

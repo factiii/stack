@@ -1,10 +1,10 @@
 /**
  * Upgrade Command
  *
- * Regenerates factiiiAuto.yml configuration
+ * Regenerates stackAuto.yml configuration
  */
 
-import { generateFactiiiAuto } from '../generators/generate-factiii-auto.js';
+import { generateFactiiiAuto } from '../generators/generate-stack-auto.js';
 import type { UpgradeOptions } from '../types/index.js';
 
 export async function upgrade(options: UpgradeOptions = {}): Promise<void> {
@@ -18,8 +18,8 @@ export async function upgrade(options: UpgradeOptions = {}): Promise<void> {
 
   console.log('Upgrading configuration...\n');
 
-  // Regenerate factiiiAuto.yml
-  console.log('Regenerating factiiiAuto.yml...');
+  // Regenerate stackAuto.yml
+  console.log('Regenerating stackAuto.yml...');
   await generateFactiiiAuto(rootDir);
 
   console.log('\n[OK] Upgrade complete!');

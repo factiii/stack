@@ -11,7 +11,7 @@ describe('Deployment Report', () => {
       const data = {
         repoName: 'test-app',
         localChecks: {
-          factiiiYml: true,
+          coreYml: true,
           dockerfile: true,
           git: true,
           branch: 'main',
@@ -89,7 +89,7 @@ describe('Deployment Report', () => {
 
   describe('generateSummary', () => {
     it('should generate ready summary with no issues', () => {
-      const localChecks = { factiiiYml: true, workflows: true };
+      const localChecks = { coreYml: true, workflows: true };
       const secretsCheck = { present: ['ALL'], missing: [], error: null };
       const serverChecks = [
         { connected: true, error: null }
@@ -104,7 +104,7 @@ describe('Deployment Report', () => {
     });
 
     it('should detect missing secrets as warnings', () => {
-      const localChecks = { factiiiYml: true };
+      const localChecks = { coreYml: true };
       const secretsCheck = { 
         present: ['STAGING_SSH'], 
         missing: ['PROD_SSH', 'AWS_ACCESS_KEY_ID'],
@@ -120,7 +120,7 @@ describe('Deployment Report', () => {
     });
 
     it('should detect connection errors', () => {
-      const localChecks = { factiiiYml: true };
+      const localChecks = { coreYml: true };
       const secretsCheck = { present: [], missing: [], error: null };
       const serverChecks = [
         { environment: 'staging', connected: false, error: 'Connection failed' }
@@ -155,7 +155,7 @@ describe('Deployment Report', () => {
   describe('formatLocalChecks', () => {
     it('should format audit results', () => {
       const auditResults = {
-        factiiiYml: { exists: true, parseError: null, needsCustomization: false },
+        coreYml: { exists: true, parseError: null, needsCustomization: false },
         workflows: { allExist: true },
         branches: { hasGit: true, currentBranch: 'main' },
         repoScripts: { 
@@ -166,7 +166,7 @@ describe('Deployment Report', () => {
       
       const checks = formatLocalChecks(auditResults);
       
-      expect(checks.factiiiYml).toBe(true);
+      expect(checks.coreYml).toBe(true);
       expect(checks.git).toBe(true);
       expect(checks.branch).toBe('main');
       expect(checks.workflows).toBe(true);

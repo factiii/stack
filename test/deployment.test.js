@@ -4,25 +4,25 @@ const yaml = require('js-yaml');
 const { scanRepos, loadConfigs, generateDockerCompose, generateNginx } = require('../src/scripts/generate-all');
 
 describe('Deployment Simulation Test', () => {
-  const testFactiiiDir = path.join(__dirname, 'temp-factiii-deployment');
+  const testStackDir = path.join(__dirname, 'temp-stack-deployment');
   const fixturesDir = path.join(__dirname, 'fixtures');
 
   // Store original env
   const originalFactiiiDir = process.env.FACTIII_DIR;
 
   beforeEach(() => {
-    // Create temp factiii directory structure
-    if (!fs.existsSync(testFactiiiDir)) {
-      fs.mkdirSync(testFactiiiDir, { recursive: true });
+    // Create temp stack directory structure
+    if (!fs.existsSync(testStackDir)) {
+      fs.mkdirSync(testStackDir, { recursive: true });
     }
     // Set FACTIII_DIR to use our test directory
-    process.env.FACTIII_DIR = testFactiiiDir;
+    process.env.FACTIII_DIR = testStackDir;
   });
 
   afterEach(() => {
     // Clean up
-    if (fs.existsSync(testFactiiiDir)) {
-      fs.rmSync(testFactiiiDir, { recursive: true, force: true });
+    if (fs.existsSync(testStackDir)) {
+      fs.rmSync(testStackDir, { recursive: true, force: true });
     }
     // Restore original env
     if (originalFactiiiDir) {
@@ -33,11 +33,11 @@ describe('Deployment Simulation Test', () => {
   });
 
   function createTestRepo(repoName, fixtureName) {
-    const repoDir = path.join(testFactiiiDir, repoName);
+    const repoDir = path.join(testStackDir, repoName);
     fs.mkdirSync(repoDir, { recursive: true });
     fs.copyFileSync(
       path.join(fixturesDir, fixtureName),
-      path.join(repoDir, 'factiii.yml')
+      path.join(repoDir, 'stack.yml')
     );
     return repoDir;
   }
@@ -51,13 +51,13 @@ describe('Deployment Simulation Test', () => {
   }
 
   function readGeneratedCompose() {
-    const composePath = path.join(testFactiiiDir, 'docker-compose.yml');
+    const composePath = path.join(testStackDir, 'docker-compose.yml');
     if (!fs.existsSync(composePath)) return null;
     return fs.readFileSync(composePath, 'utf8');
   }
 
   function readGeneratedNginx() {
-    const nginxPath = path.join(testFactiiiDir, 'nginx.conf');
+    const nginxPath = path.join(testStackDir, 'nginx.conf');
     if (!fs.existsSync(nginxPath)) return null;
     return fs.readFileSync(nginxPath, 'utf8');
   }
@@ -124,7 +124,7 @@ describe('Deployment Simulation Test', () => {
       regenerateConfigs();
 
       // Remove repo2
-      fs.rmSync(path.join(testFactiiiDir, 'repo2'), { recursive: true, force: true });
+      fs.rmSync(path.join(testStackDir, 'repo2'), { recursive: true, force: true });
       regenerateConfigs();
 
       const composeContent = readGeneratedCompose();
@@ -147,7 +147,7 @@ describe('Deployment Simulation Test', () => {
       regenerateConfigs();
 
       // Remove repo1
-      fs.rmSync(path.join(testFactiiiDir, 'repo1'), { recursive: true, force: true });
+      fs.rmSync(path.join(testStackDir, 'repo1'), { recursive: true, force: true });
 
       // Verify no repos remain
       const repos = scanRepos();
@@ -172,7 +172,7 @@ describe('Deployment Simulation Test', () => {
       expect(countAppServices(composeContent)).toBe(2);
 
       // Phase 3: Remove repo2
-      fs.rmSync(path.join(testFactiiiDir, 'repo2'), { recursive: true, force: true });
+      fs.rmSync(path.join(testStackDir, 'repo2'), { recursive: true, force: true });
       regenerateConfigs();
       
       composeContent = readGeneratedCompose();
@@ -181,7 +181,7 @@ describe('Deployment Simulation Test', () => {
       expect(composeContent).not.toContain('repo2-staging:');
 
       // Phase 4: Remove repo1
-      fs.rmSync(path.join(testFactiiiDir, 'repo1'), { recursive: true, force: true });
+      fs.rmSync(path.join(testStackDir, 'repo1'), { recursive: true, force: true });
       
       // Verify no repos remain
       const repos = scanRepos();

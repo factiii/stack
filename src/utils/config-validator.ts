@@ -1,13 +1,14 @@
 /**
  * Config Validator
  *
- * Validates factiii.yml configuration and workflow sync.
+ * Validates stack.yml configuration and workflow sync.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
 
+import { getStackConfigPath } from '../constants/config-files.js';
 import type { FactiiiConfig, EnvironmentConfig } from '../types/index.js';
 
 interface WorkflowConfig {
@@ -86,14 +87,14 @@ export function extractWorkflowConfig(workflowPath: string): WorkflowConfig | nu
 }
 
 /**
- * Compare factiii.yml with generated workflows
+ * Compare stack.yml with generated workflows
  */
 export function validateConfigSync(rootDir: string): ValidationResult {
-  const configPath = path.join(rootDir, 'factiii.yml');
-  const workflowPath = path.join(rootDir, '.github/workflows/factiii-deploy.yml');
+  const configPath = getStackConfigPath(rootDir);
+  const workflowPath = path.join(rootDir, '.github/workflows/stack-deploy.yml');
 
   if (!fs.existsSync(configPath)) {
-    return { valid: false, error: 'factiii.yml not found' };
+    return { valid: false, error: 'stack.yml not found' };
   }
 
   if (!fs.existsSync(workflowPath)) {
@@ -113,7 +114,7 @@ export function validateConfigSync(rootDir: string): ValidationResult {
       return {
         valid: false,
         drift: true,
-        message: 'factiii.yml modified after workflows were generated',
+        message: 'Config modified after workflows were generated',
         needsRegeneration: true,
       };
     }

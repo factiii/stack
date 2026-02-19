@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
 
+import { getStackConfigPath } from '../constants/config-files.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import { sshRemoteFactiiiCommand } from '../utils/ssh-helper.js';
 import {
@@ -46,7 +47,7 @@ export interface PRCheckResult {
 }
 
 function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = path.join(rootDir, 'factiii.yml');
+  const configPath = getStackConfigPath(rootDir);
   if (!fs.existsSync(configPath)) {
     return {} as FactiiiConfig;
   }
@@ -78,7 +79,7 @@ export async function prCheck(options: PRCheckOptions = {}): Promise<PRCheckResu
   const environments = extractEnvironments(config);
   const stagingConfig = environments.staging;
   if (!stagingConfig?.domain) {
-    console.log('\n❌ Staging not configured in factiii.yml (staging.domain required)');
+    console.log('\n❌ Staging not configured in config (staging.domain required)');
     return { success: false, error: 'Staging not configured' };
   }
 
@@ -99,10 +100,10 @@ export async function prCheck(options: PRCheckOptions = {}): Promise<PRCheckResu
 
   // On server: run builds directly and report
   if (process.env.GITHUB_ACTIONS === 'true' || process.env.FACTIII_ON_SERVER === 'true') {
-    // When SSH'd from workflow, we're run with cwd=repo (workflow does: cd $REPO_DIR && npx factiii pr-check)
+    // When SSH'd from workflow, we're run with cwd=repo (workflow does: cd $REPO_DIR && npx stack pr-check)
     const repoName = config.name ?? 'app';
     const defaultRepoDir = path.join(process.env.HOME ?? '', '.factiii', repoName);
-    const repoDir = fs.existsSync(path.join(process.cwd(), 'factiii.yml'))
+    const repoDir = fs.existsSync(getStackConfigPath(process.cwd()))
       ? process.cwd()
       : defaultRepoDir;
 

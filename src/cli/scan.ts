@@ -5,10 +5,10 @@
  * Returns problems found (which are the fixes that need to run).
  *
  * Usage:
- *   npx factiii scan           # Scan all stages
- *   npx factiii scan --dev     # Scan dev only
- *   npx factiii scan --staging # Scan staging only
- *   npx factiii scan --prod    # Scan prod only
+ *   npx stack scan           # Scan all stages
+ *   npx stack scan --dev     # Scan dev only
+ *   npx stack scan --staging # Scan staging only
+ *   npx stack scan --prod    # Scan prod only
  *
  * ============================================================
  * STAGE EXECUTION PATTERN - DO NOT MODIFY WITHOUT READING
@@ -46,8 +46,8 @@
  * When your workflow/CI SSHs to a server, you MUST call the
  * command with the specific stage flag:
  *
- *   npx factiii fix --staging    # NOT just "npx factiii fix"
- *   npx factiii scan --prod      # NOT just "npx factiii scan"
+ *   npx stack fix --staging    # NOT just "npx stack fix"
+ *   npx stack scan --prod      # NOT just "npx stack scan"
  *
  * Without the stage flag, the command will try to run ALL stages
  * and may try to trigger workflows for stages it can't reach.
@@ -63,6 +63,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
+import { getStackConfigPath } from '../constants/config-files.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import type { FactiiiConfig, Stage, Fix, Reachability, ScanOptions, ScanProblems, ServerOS } from '../types/index.js';
 import { extractEnvironments } from '../utils/config-helpers.js';
@@ -96,19 +97,19 @@ async function loadPlugins(rootDir: string): Promise<PluginClass[]> {
 
   // If no config exists, tell user to run init
   if (!config || Object.keys(config).length === 0) {
-    const configPath = path.join(rootDir, 'factiii.yml');
+    const configPath = getStackConfigPath(rootDir);
     if (fs.existsSync(configPath)) {
       const content = fs.readFileSync(configPath, 'utf8');
       if (!content || content.trim().length === 0) {
-        console.error('\n[ERROR] factiii.yml is empty.');
-        console.error('   Run: npx factiii init --force\n');
+        console.error('\n[ERROR] Config file is empty.');
+        console.error('   Run: npx stack init --force\n');
       } else {
-        console.error('\n[ERROR] factiii.yml contains no valid configuration.');
-        console.error('   Check your YAML syntax or run: npx factiii init --force\n');
+        console.error('\n[ERROR] Config contains no valid configuration.');
+        console.error('   Check your YAML syntax or run: npx stack init --force\n');
       }
     } else {
-      console.error('\n[ERROR] No factiii.yml found.');
-      console.error('   Run: npx factiii init\n');
+      console.error('\n[ERROR] No stack.yml found.');
+      console.error('   Run: npx stack init\n');
     }
     process.exit(1);
   }
@@ -117,10 +118,10 @@ async function loadPlugins(rootDir: string): Promise<PluginClass[]> {
 }
 
 /**
- * Load config from factiii.yml
+ * Load config from stack.yml (or legacy factiii.yml)
  */
 function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = path.join(rootDir, 'factiii.yml');
+  const configPath = getStackConfigPath(rootDir);
 
   if (!fs.existsSync(configPath)) {
     return {} as FactiiiConfig;
@@ -130,7 +131,7 @@ function loadConfig(rootDir: string): FactiiiConfig {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('[!] Error parsing factiii.yml: ' + errorMessage);
+    console.error('[!] Error parsing config: ' + errorMessage);
     return {} as FactiiiConfig;
   }
 }
@@ -314,14 +315,14 @@ function displayProblems(
 
       // Provide smart hints based on the actual reason
       if (reason.includes('vault_path')) {
-        console.log('   Hint: Add ansible config to factiii.yml:');
+        console.log('   Hint: Add ansible config to stack.yml:');
         console.log('         ansible:');
         console.log('           vault_path: group_vars/all/vault.yml');
         console.log('           vault_password_file: ~/.vault_pass');
       } else if (reason.includes('Vault password')) {
         console.log('   Hint: Create vault password file or set ANSIBLE_VAULT_PASSWORD env var');
       } else if (reason.includes('SSH key')) {
-        console.log('   Hint: Run: npx factiii secrets write-ssh-keys');
+        console.log('   Hint: Run: npx stack secrets write-ssh-keys');
       } else if (reason.includes('GITHUB_TOKEN')) {
         console.log('   Hint: Run: export GITHUB_TOKEN=your_token');
       }
@@ -365,7 +366,7 @@ function displayProblems(
     console.log('[!] Some stages cannot be reached. Fix blockers above.\n');
   } else {
     console.log('Found ' + totalProblems + ' issue' + (totalProblems > 1 ? 's' : '') + '.');
-    console.log('Hint: Run: npx factiii fix\n');
+    console.log('Hint: Run: npx stack fix\n');
   }
 }
 
@@ -374,6 +375,33 @@ function displayProblems(
  */
 function getPipelinePlugin(plugins: PluginClass[]): PluginClass | undefined {
   return plugins.find((p) => p.category === 'pipeline');
+}
+
+/**
+ * Get ALL pipeline plugins from loaded plugins
+ */
+function getAllPipelinePlugins(plugins: PluginClass[]): PluginClass[] {
+  return plugins.filter((p) => p.category === 'pipeline');
+}
+
+/**
+ * Check reachability across all pipeline plugins for a stage.
+ * Returns the first reachable result, or the last unreachable reason.
+ */
+function checkReachability(
+  pipelinePlugins: PluginClass[],
+  stage: Stage,
+  config: FactiiiConfig
+): Reachability {
+  let lastReason = 'No pipeline plugin loaded';
+  for (const plugin of pipelinePlugins) {
+    if (typeof plugin.canReach === 'function') {
+      const result = plugin.canReach(stage, config);
+      if (result.reachable) return result;
+      lastReason = result.reason ?? 'Unreachable';
+    }
+  }
+  return { reachable: false, reason: lastReason };
 }
 
 /**
@@ -416,7 +444,8 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   // Load all plugins
   const plugins = await loadPlugins(rootDir);
 
-  // Get pipeline plugin to check reachability
+  // Get all pipeline plugins to check reachability (multi-pipeline support)
+  const pipelinePlugins = getAllPipelinePlugins(plugins);
   const pipelinePlugin = getPipelinePlugin(plugins);
 
   // Check reachability for each stage
@@ -426,8 +455,9 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
-    if (pipelinePlugin && typeof pipelinePlugin.canReach === 'function') {
-      reachability[stage] = pipelinePlugin.canReach(stage, config);
+    if (pipelinePlugins.length > 0) {
+      // Check all pipeline plugins — first reachable wins
+      reachability[stage] = checkReachability(pipelinePlugins, stage, config);
 
       if (reachability[stage]?.reachable) {
         if (reachability[stage]!.via === 'local') {

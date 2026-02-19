@@ -69,14 +69,16 @@ describe('findSshKeyForStage', () => {
     expect(findSshKeyForStage('mac')).toBe(keyPath);
   });
 
-  test('falls back to id_ed25519 when no stage-specific key', () => {
-    const keyPath = mockSshKey('id_ed25519');
-    expect(findSshKeyForStage('staging')).toBe(keyPath);
+  test('returns null when only id_ed25519 exists (no stage-specific fallback)', () => {
+    mockSshKey('id_ed25519');
+    // Implementation only checks stage-specific keys (staging_deploy_key), not generic keys
+    expect(findSshKeyForStage('staging')).toBeNull();
   });
 
-  test('falls back to id_rsa when no ed25519 key', () => {
-    const keyPath = mockSshKey('id_rsa');
-    expect(findSshKeyForStage('staging')).toBe(keyPath);
+  test('returns null when only id_rsa exists (no generic key fallback)', () => {
+    mockSshKey('id_rsa');
+    // Implementation only checks stage-specific keys, not generic keys
+    expect(findSshKeyForStage('staging')).toBeNull();
   });
 
   test('prefers stage-specific key over generic key', () => {

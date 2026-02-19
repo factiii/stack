@@ -30,9 +30,10 @@ export function createDockerInstallFix(stage: Stage, idPrefix?: string): Fix {
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       // For non-dev stages, check if environment is configured
       if (stage !== 'dev') {
+        // Environments are top-level keys in factiii.yml (not under config.environments)
         const envConfig = stage === 'prod'
-          ? (config?.environments?.prod ?? config?.environments?.production)
-          : config?.environments?.[stage];
+          ? ((config as Record<string, unknown>).prod ?? (config as Record<string, unknown>).production) as Record<string, unknown> | undefined
+          : (config as Record<string, unknown>)[stage] as Record<string, unknown> | undefined;
         if (!envConfig?.domain) return false;
       }
 
@@ -81,8 +82,8 @@ export function createDockerRunningFix(stage: Stage, idPrefix?: string): Fix {
       // For non-dev stages, check if environment is configured
       if (stage !== 'dev') {
         const envConfig = stage === 'prod'
-          ? (config?.environments?.prod ?? config?.environments?.production)
-          : config?.environments?.[stage];
+          ? ((config as Record<string, unknown>).prod ?? (config as Record<string, unknown>).production) as Record<string, unknown> | undefined
+          : (config as Record<string, unknown>)[stage] as Record<string, unknown> | undefined;
         if (!envConfig?.domain) return false;
       }
 

@@ -176,6 +176,18 @@ class FactiiiPipeline {
 
       case 'staging':
       case 'prod':
+        // Skip environments owned by another pipeline (e.g. AWS)
+        {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
+          const envs = getEnvironmentsForStage(config, stage);
+          const envValues = Object.values(envs) as EnvironmentConfig[];
+          const firstEnv = envValues[0];
+          if (firstEnv && envValues.every((e: EnvironmentConfig) => e.pipeline && e.pipeline !== 'factiii')) {
+            return { reachable: false, reason: 'Handled by ' + (firstEnv.pipeline ?? 'other') + ' pipeline' };
+          }
+        }
+
         // If GITHUB_ACTIONS is set, we're running inside a workflow on the server
         // Return 'local' so fixes run directly without triggering another workflow
         if (process.env.GITHUB_ACTIONS || process.env.FACTIII_ON_SERVER) {
@@ -205,7 +217,7 @@ class FactiiiPipeline {
         const expectedKeyPath = require('path').join(osForPath.homedir(), '.ssh', stage + '_deploy_key');
         return {
           reachable: false,
-          reason: 'No SSH key found at ' + expectedKeyPath + '. Run: npx factiii secrets write-ssh-keys\n' +
+          reason: 'No SSH key found at ' + expectedKeyPath + '. Run: npx stack secrets write-ssh-keys\n' +
             '   Fallback: set GITHUB_TOKEN for GitHub Actions workflows.',
         };
 

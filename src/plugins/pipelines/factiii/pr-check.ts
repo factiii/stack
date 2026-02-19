@@ -5,7 +5,7 @@
  * Used when PR opens to main - validates code builds before merge.
  *
  * Per STANDARDS: Build logic lives here, not in workflows.
- * Workflow SSHs to staging and runs: GITHUB_ACTIONS=true npx factiii pr-check --staging
+ * Workflow SSHs to staging and runs: GITHUB_ACTIONS=true npx stack pr-check --staging
  */
 
 import * as fs from 'fs';

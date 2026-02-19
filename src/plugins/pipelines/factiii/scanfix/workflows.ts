@@ -18,13 +18,13 @@ export const workflowFixes: Fix[] = [
     description: 'GitHub workflows not generated',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const workflowsDir = path.join(rootDir, '.github', 'workflows');
-      return !fs.existsSync(path.join(workflowsDir, 'factiii-deploy.yml'));
+      return !fs.existsSync(path.join(workflowsDir, 'stack-deploy.yml'));
     },
     fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       await generateWorkflowsUtil(rootDir);
       return true;
     },
-    manualFix: 'Run: npx factiii fix (will generate workflow files)',
+    manualFix: 'Run: npx stack fix (will generate workflow files)',
   },
   {
     id: 'outdated-workflows',
@@ -36,7 +36,7 @@ export const workflowFixes: Fix[] = [
         rootDir,
         '.github',
         'workflows',
-        'factiii-deploy.yml'
+        'stack-deploy.yml'
       );
       if (!fs.existsSync(workflowPath)) return false;
 
@@ -58,7 +58,7 @@ export const workflowFixes: Fix[] = [
       await generateWorkflowsUtil(rootDir);
       return true;
     },
-    manualFix: 'Run: npx factiii fix (will regenerate thin workflows)',
+    manualFix: 'Run: npx stack fix (will regenerate thin workflows)',
   },
   {
     id: 'orphaned-workflows',
@@ -71,21 +71,23 @@ export const workflowFixes: Fix[] = [
 
       // List of workflows we currently generate
       const validWorkflows = [
-        'factiii-deploy.yml',
-        'factiii-fix.yml',
-        'factiii-scan.yml',
-        'factiii-undeploy.yml',
-        'factiii-cicd-staging.yml',
-        'factiii-cicd-prod.yml',
-        'factiii-dev-sync.yml', // Only in dev mode
+        'stack-deploy.yml',
+        'stack-fix.yml',
+        'stack-scan.yml',
+        'stack-undeploy.yml',
+        'stack-pr-check.yml',
+        'stack-command.yml',
+        'stack-cicd-staging.yml',
+        'stack-cicd-prod.yml',
+        'stack-dev-sync.yml', // Only in dev mode
       ];
 
-      // Find all factiii-*.yml files
+      // Find all stack-*.yml files
       const files = fs.readdirSync(workflowsDir);
-      const factiiiFiles = files.filter((f) => f.startsWith('factiii-') && f.endsWith('.yml'));
+      const stackFiles = files.filter((f) => f.startsWith('stack-') && f.endsWith('.yml'));
 
       // Check for orphaned files
-      const orphaned = factiiiFiles.filter((f) => !validWorkflows.includes(f));
+      const orphaned = stackFiles.filter((f) => !validWorkflows.includes(f));
 
       return orphaned.length > 0;
     },
@@ -93,18 +95,20 @@ export const workflowFixes: Fix[] = [
       const workflowsDir = path.join(rootDir, '.github', 'workflows');
 
       const validWorkflows = [
-        'factiii-deploy.yml',
-        'factiii-fix.yml',
-        'factiii-scan.yml',
-        'factiii-undeploy.yml',
-        'factiii-cicd-staging.yml',
-        'factiii-cicd-prod.yml',
-        'factiii-dev-sync.yml',
+        'stack-deploy.yml',
+        'stack-fix.yml',
+        'stack-scan.yml',
+        'stack-undeploy.yml',
+        'stack-pr-check.yml',
+        'stack-command.yml',
+        'stack-cicd-staging.yml',
+        'stack-cicd-prod.yml',
+        'stack-dev-sync.yml',
       ];
 
       const files = fs.readdirSync(workflowsDir);
-      const factiiiFiles = files.filter((f) => f.startsWith('factiii-') && f.endsWith('.yml'));
-      const orphaned = factiiiFiles.filter((f) => !validWorkflows.includes(f));
+      const stackFiles = files.filter((f) => f.startsWith('stack-') && f.endsWith('.yml'));
+      const orphaned = stackFiles.filter((f) => !validWorkflows.includes(f));
 
       for (const file of orphaned) {
         const filePath = path.join(workflowsDir, file);
@@ -114,7 +118,7 @@ export const workflowFixes: Fix[] = [
 
       return orphaned.length > 0;
     },
-    manualFix: 'Run: npx factiii fix (will remove old workflow files)',
+    manualFix: 'Run: npx stack fix (will remove old workflow files)',
   },
   {
     id: 'workflows-uncommitted',
@@ -144,7 +148,7 @@ export const workflowFixes: Fix[] = [
     manualFix:
       'Commit and push workflow files to git:\n' +
       '      git add .github/workflows/\n' +
-      '      git commit -m "Update factiii workflows"\n' +
+      '      git commit -m "Update stack workflows"\n' +
       '      git push',
   },
 ];
