@@ -61,9 +61,9 @@ pnpm build
 pnpm link .
 
 # Run scan/fix (FACTIII_ON_SERVER=1 = we're on the server, run fixes locally)
-FACTIII_ON_SERVER=1 npx factiii scan --staging
-FACTIII_ON_SERVER=1 npx factiii fix --staging
-FACTIII_ON_SERVER=1 npx factiii scan --staging   # verify
+FACTIII_ON_SERVER=1 npx stack scan --staging
+FACTIII_ON_SERVER=1 npx stack fix --staging
+FACTIII_ON_SERVER=1 npx stack scan --staging   # verify
 ```
 
 ## 5. Automated Test Script (from host)
@@ -86,7 +86,7 @@ brew install cirruslabs/cli/sshpass  # if needed
 
 sshpass -p admin ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   admin@$(tart ip sequoia-base) \
-  'cd "/Volumes/My Shared Files/core" && pnpm install && pnpm build && FACTIII_ON_SERVER=1 npx factiii scan --staging'
+  'cd "/Volumes/My Shared Files/core" && pnpm install && pnpm build && FACTIII_ON_SERVER=1 npx stack scan --staging'
 ```
 
 (Ensure the VM was started with `--dir=core:...` so the repo is mounted.)

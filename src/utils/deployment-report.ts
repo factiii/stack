@@ -297,14 +297,14 @@ export function generateSummary(
 
   // If ready, add deployment instructions
   if (summary.ready && summary.warnings === 0) {
-    summary.nextSteps.push('Run: npx factiii deploy --environment staging');
+    summary.nextSteps.push('Run: npx stack deploy --environment staging');
     summary.nextSteps.push('Or push to main branch to trigger automatic deployment');
   } else if (summary.ready && summary.warnings > 0) {
     summary.nextSteps.push('Review warnings above');
-    summary.nextSteps.push('Run: npx factiii deploy (deployment will proceed with warnings)');
+    summary.nextSteps.push('Run: npx stack deploy (deployment will proceed with warnings)');
   } else {
     summary.nextSteps.push('Fix errors above');
-    summary.nextSteps.push('Run: npx factiii (to verify fixes)');
+    summary.nextSteps.push('Run: npx stack (to verify fixes)');
   }
 
   return summary;

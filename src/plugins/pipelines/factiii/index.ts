@@ -217,7 +217,7 @@ class FactiiiPipeline {
         const expectedKeyPath = require('path').join(osForPath.homedir(), '.ssh', stage + '_deploy_key');
         return {
           reachable: false,
-          reason: 'No SSH key found at ' + expectedKeyPath + '. Run: npx factiii secrets write-ssh-keys\n' +
+          reason: 'No SSH key found at ' + expectedKeyPath + '. Run: npx stack secrets write-ssh-keys\n' +
             '   Fallback: set GITHUB_TOKEN for GitHub Actions workflows.',
         };
 

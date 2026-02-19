@@ -144,14 +144,14 @@ async function firstRun(rootDir: string, options: InitOptions): Promise<void> {
       } else {
         console.log('  [!] Skipped vault setup. Set up later:');
         console.log('      1. Create vault password: echo "your-password" > ~/.vault_pass');
-        console.log('      2. Store a secret: npx factiii secrets set STAGING_SSH');
+        console.log('      2. Store a secret: npx stack secrets set STAGING_SSH');
       }
     }
   }
 
   // Tell the user what future runs will auto-fix
   console.log('\n  ────────────────────────────────────────────────');
-  console.log('  From now on, running `npx factiii init` will auto-fix:');
+  console.log('  From now on, running `npx stack init` will auto-fix:');
   console.log('    - Refresh auto-detected config (' + STACK_AUTO_FILENAME + ')');
   console.log('    - Verify prerequisites (ansible-vault)');
   console.log('    - Repair vault directory and files if missing');

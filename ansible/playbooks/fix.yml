@@ -13,7 +13,7 @@
 # What it does:
 #   1. Verifies SSH connectivity
 #   2. Ensures Node.js is available on the remote host
-#   3. Runs `npx factiii fix --{environment}` on the remote server
+#   3. Runs `npx stack fix --{environment}` on the remote server
 #   4. Returns fix results
 #
 # Note: Fix operations may take longer than scans. Ansible SSH keepalive
@@ -54,7 +54,7 @@
 
     - name: Run Factiii fix
       ansible.builtin.command:
-        cmd: "npx factiii fix --{{ factiii_env }}"
+        cmd: "npx stack fix --{{ factiii_env }}"
         chdir: "{{ factiii_repo_path }}"
       register: fix_result
       changed_when: false

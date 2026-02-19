@@ -35,7 +35,7 @@ export type SecretsAction =
 function loadConfig(rootDir: string): FactiiiConfig {
   const configPath = getStackConfigPath(rootDir);
   if (!fs.existsSync(configPath)) {
-    throw new Error('stack.yml not found. Run: npx factiii init');
+    throw new Error('stack.yml not found. Run: npx stack init');
   }
   try {
     return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
@@ -124,7 +124,7 @@ export async function secrets(
         }
       } else {
         console.log('  [!] No environment variables set');
-        console.log('      Add with: npx factiii secrets set-env <NAME> --staging');
+        console.log('      Add with: npx stack secrets set-env <NAME> --staging');
       }
 
       // Check prod environment secrets
@@ -136,22 +136,22 @@ export async function secrets(
         }
       } else {
         console.log('  [!] No environment variables set');
-        console.log('      Add with: npx factiii secrets set-env <NAME> --prod');
+        console.log('      Add with: npx stack secrets set-env <NAME> --prod');
       }
 
       // Show missing summary
       const allMissing = [...(sshResult.missing ?? []), ...(awsResult.missing ?? [])];
       if (allMissing.length > 0) {
         console.log(`\nMissing secrets: ${allMissing.join(', ')}`);
-        console.log('  Set them with: npx factiii secrets set <name>');
+        console.log('  Set them with: npx stack secrets set <name>');
       }
 
       // Show deploy hint if env vars exist
       if (stagingKeys.length > 0 || prodKeys.length > 0) {
         console.log('\nDeploy secrets to servers:');
-        console.log('  npx factiii secrets deploy --staging   # Deploy to staging');
-        console.log('  npx factiii secrets deploy --prod      # Deploy to production');
-        console.log('  npx factiii secrets deploy --all       # Deploy to all');
+        console.log('  npx stack secrets deploy --staging   # Deploy to staging');
+        console.log('  npx stack secrets deploy --prod      # Deploy to production');
+        console.log('  npx stack secrets deploy --all       # Deploy to all');
       }
       break;
     }
@@ -159,7 +159,7 @@ export async function secrets(
     case 'set': {
       if (!secretName) {
         console.log('[ERROR] Secret name required');
-        console.log('Usage: npx factiii secrets set <name>');
+        console.log('Usage: npx stack secrets set <name>');
         console.log('');
         console.log('Available secrets:');
         console.log('   STAGING_SSH          - SSH private key for staging');
@@ -204,11 +204,11 @@ export async function secrets(
     case 'set-env': {
       if (!secretName) {
         console.log('[ERROR] Environment variable name required');
-        console.log('Usage: npx factiii secrets set-env <NAME> --staging|--prod');
+        console.log('Usage: npx stack secrets set-env <NAME> --staging|--prod');
         console.log('');
         console.log('Examples:');
-        console.log('   npx factiii secrets set-env DATABASE_URL --staging');
-        console.log('   npx factiii secrets set-env JWT_SECRET --prod');
+        console.log('   npx stack secrets set-env DATABASE_URL --staging');
+        console.log('   npx stack secrets set-env JWT_SECRET --prod');
         return;
       }
 
@@ -233,7 +233,7 @@ export async function secrets(
 
       if (result.success) {
         console.log(`[OK] ${secretName} set successfully for ${stage}`);
-        console.log(`Deploy with: npx factiii secrets deploy --${stage}`);
+        console.log(`Deploy with: npx stack secrets deploy --${stage}`);
       } else {
         console.log(`[ERROR] Failed to set ${secretName}: ${result.error}`);
         process.exit(1);
@@ -259,7 +259,7 @@ export async function secrets(
           }
         } else {
           console.log('   (none)');
-          console.log(`\nAdd with: npx factiii secrets set-env <NAME> --${stage}`);
+          console.log(`\nAdd with: npx stack secrets set-env <NAME> --${stage}`);
         }
       } else {
         // List both

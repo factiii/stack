@@ -79,7 +79,7 @@ export const secretsFixes: Fix[] = [
       'Store your staging SSH key in the vault:\n' +
       '      1. Generate key: ssh-keygen -t ed25519 -C "staging-deploy" -f ~/.ssh/staging_deploy_key\n' +
       '      2. Add to server: ssh-copy-id -i ~/.ssh/staging_deploy_key.pub user@staging-host\n' +
-      '      3. Store in vault: npx factiii secrets set STAGING_SSH',
+      '      3. Store in vault: npx stack secrets set STAGING_SSH',
   },
   {
     id: 'missing-prod-ssh',
@@ -116,7 +116,7 @@ export const secretsFixes: Fix[] = [
       'Store your prod SSH key in the vault:\n' +
       '      1. Generate key: ssh-keygen -t ed25519 -C "prod-deploy" -f ~/.ssh/prod_deploy_key\n' +
       '      2. Add to server: ssh-copy-id -i ~/.ssh/prod_deploy_key.pub user@prod-host\n' +
-      '      3. Store in vault: npx factiii secrets set PROD_SSH',
+      '      3. Store in vault: npx stack secrets set PROD_SSH',
   },
   {
     id: 'missing-aws-secret',
@@ -152,7 +152,7 @@ export const secretsFixes: Fix[] = [
       }
     },
     manualFix:
-      'Set AWS_SECRET_ACCESS_KEY secret: npx factiii secrets set AWS_SECRET_ACCESS_KEY',
+      'Set AWS_SECRET_ACCESS_KEY secret: npx stack secrets set AWS_SECRET_ACCESS_KEY',
   },
   {
     id: 'missing-vault-password-file',
@@ -171,7 +171,7 @@ export const secretsFixes: Fix[] = [
       'Create the vault password file specified in factiii.yml ansible.vault_password_file:\n' +
       '      macOS/Linux: echo "your-vault-password" > ~/.vault_pass && chmod 600 ~/.vault_pass\n' +
       '      Windows:     echo your-vault-password > %USERPROFILE%\\.vault_pass\n' +
-      '      Or run: npx factiii init (will guide you through vault setup)',
+      '      Or run: npx stack init (will guide you through vault setup)',
   },
   {
     id: 'missing-ssh-key-staging',
@@ -190,7 +190,7 @@ export const secretsFixes: Fix[] = [
     },
     fix: null,
     manualFix:
-      'Extract SSH keys from vault: npx factiii secrets write-ssh-keys',
+      'Extract SSH keys from vault: npx stack secrets write-ssh-keys',
   },
   {
     id: 'missing-ssh-key-prod',
@@ -209,7 +209,7 @@ export const secretsFixes: Fix[] = [
     },
     fix: null,
     manualFix:
-      'Extract SSH keys from vault: npx factiii secrets write-ssh-keys',
+      'Extract SSH keys from vault: npx stack secrets write-ssh-keys',
   },
 ];
 

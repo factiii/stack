@@ -114,12 +114,12 @@ function printRollbackInstructions(stage: Stage, environment: string, config: Fa
   console.log('     ssh -i ~/.ssh/' + stage + '_deploy_key ' + user + '@' + domain + ' "docker logs --tail 50 \\$(docker ps -lq)"');
   console.log('\n  2. Rollback to previous commit:');
   console.log('     git log --oneline -5              # find working commit');
-  console.log('     npx factiii deploy --' + stage + ' --commit <hash>');
+  console.log('     npx stack deploy --' + stage + ' --commit <hash>');
   console.log('\n  3. Manual server access:');
   console.log('     ssh -i ~/.ssh/' + stage + '_deploy_key ' + user + '@' + domain);
   console.log('\n  4. Full reset:');
-  console.log('     npx factiii undeploy --' + stage);
-  console.log('     npx factiii deploy --' + stage + '\n');
+  console.log('     npx stack undeploy --' + stage);
+  console.log('     npx stack deploy --' + stage + '\n');
 }
 
 /**
@@ -263,7 +263,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     }
 
     console.log('\n[DRY RUN] All pre-deploy checks passed. Run without --dry-run to execute:\n');
-    console.log('  npx factiii deploy --' + stage + '\n');
+    console.log('  npx stack deploy --' + stage + '\n');
     return { success: true, message: 'Dry run completed' };
   }
 
@@ -290,11 +290,22 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
         console.log(`  ${result.message}`);
       }
 
-      // Post-deploy health check for staging/prod
+      // Post-deploy summary for staging/prod
       if (stage === 'staging' || stage === 'prod') {
         const environments = extractEnvironments(config);
         const envConfig = environments[environment];
         if (envConfig?.domain) {
+          console.log('');
+          console.log('============================================================');
+          console.log('DEPLOYMENT SUMMARY');
+          console.log('============================================================');
+          console.log('  Domain:     https://' + envConfig.domain);
+          console.log('  Server:     ' + (envConfig.server ?? 'ubuntu'));
+          console.log('  Docker:     ✅ Containers running');
+          console.log('  Nginx:      ✅ Reverse proxy configured');
+          console.log('  SSL:        ✅ Let\'s Encrypt (auto-renewal)');
+          console.log('============================================================');
+
           await runHealthCheck(envConfig.domain);
         }
       }

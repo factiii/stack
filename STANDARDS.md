@@ -133,16 +133,16 @@ canReach(stage: Stage, config: FactiiiConfig): Reachability {
 
 When `canReach()` returns `via: 'workflow'`, the pipeline triggers a workflow that:
 1. SSHs to the target server
-2. Runs the command with the specific stage flag: `npx factiii fix --staging`
+2. Runs the command with the specific stage flag: `npx stack fix --staging`
 
 **CRITICAL: Workflows MUST specify --staging or --prod**
 
 ```bash
 # Correct - specifies which stage to run
-GITHUB_ACTIONS=true npx factiii fix --staging
+GITHUB_ACTIONS=true npx stack fix --staging
 
 # WRONG - will try to run all stages, may trigger more workflows
-npx factiii fix
+npx stack fix
 ```
 
 On the server, the command:
@@ -250,7 +250,7 @@ Pipeline plugins generate workflow files, but these files should contain MINIMAL
 **Exception: Node.js Bootstrap**
 
 Workflows include a one-time Node.js bootstrap step to solve the chicken-and-egg problem:
-- `npx factiii` requires Node.js to run
+- `npx stack` requires Node.js to run
 - But we want plugins to handle Node.js installation
 - Solution: Workflows check if Node.js exists and install if missing (one-time)
 - After bootstrap, plugins verify Node.js is present for ongoing operations
@@ -289,7 +289,7 @@ Plugins that generate files should:
 ```yaml
 ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
   "COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-   npx factiii deploy --staging --commit=$COMMIT_HASH --branch=$BRANCH"
+   npx stack deploy --staging --commit=$COMMIT_HASH --branch=$BRANCH"
 ```
 
 **The CLI handles everything:**
@@ -612,7 +612,7 @@ Determine if this plugin should be loaded for the project:
 ```javascript
 static async shouldLoad(rootDir, config = {}) {
   // Check if this plugin is relevant to the project
-  // Called during 'npx factiii init' to decide which plugins to include
+  // Called during 'npx stack init' to decide which plugins to include
   
   const pkgPath = path.join(rootDir, 'package.json');
   if (!fs.existsSync(pkgPath)) return false;
@@ -626,8 +626,8 @@ static async shouldLoad(rootDir, config = {}) {
 ```
 
 **When shouldLoad() is called:**
-- During `npx factiii init` - to determine which plugins to include in configs
-- During `npx factiii scan/fix/deploy` - to load only relevant plugins
+- During `npx stack init` - to determine which plugins to include in configs
+- During `npx stack scan/fix/deploy` - to load only relevant plugins
 
 **Examples:**
 
@@ -823,21 +823,21 @@ Plugins are loaded from:
 - `node_modules/@factiii/stack-plugin-*`
 
 ### 2. Scan
-When `npx factiii scan` runs:
+When `npx stack scan` runs:
 1. All plugins' `fixes` arrays are collected
 2. Each fix's `scan()` function is called
 3. Problems are grouped by stage
 4. Results are displayed to user
 
 ### 3. Fix
-When `npx factiii fix` runs:
+When `npx stack fix` runs:
 1. Scan is run first to find problems
 2. Fixes are reordered by stage (dev → secrets → staging → prod)
 3. Each fix's `fix()` function is called
 4. Manual fixes are displayed for unfixable issues
 
 ### 4. Deploy
-When `npx factiii deploy --{env}` runs:
+When `npx stack deploy --{env}` runs:
 1. Scan is run first - aborts if problems found
 2. Environment-specific `.env` file is loaded
 3. Each plugin's `deploy()` method is called
@@ -1024,7 +1024,7 @@ Validate configuration early in the scan phase, not during deployment.
 Keep GitHub Actions workflows thin - just SSH and call CLI.
 
 ### 6. Test Locally
-All deployment logic should be testable locally via `npx factiii deploy --dev`.
+All deployment logic should be testable locally via `npx stack deploy --dev`.
 
 ### 7. Document Everything
 Provide clear `helpText` for all secrets and configuration options.
@@ -1224,7 +1224,7 @@ Plugin.detectConfig() ──┘
 ### Deployment Flow
 
 ```
-npx factiii deploy --staging
+npx stack deploy --staging
          │
          ├─ 1. Scan (abort if problems)
          │

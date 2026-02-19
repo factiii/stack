@@ -93,7 +93,7 @@ async function triggerCommandWorkflow(
 
   try {
     // Build the gh workflow run command with inputs
-    const workflowFile = 'factiii-command.yml';
+    const workflowFile = 'stack-command.yml';
     const optionsJson = JSON.stringify(options);
 
     // Use gh workflow run with -f for each input field
@@ -170,7 +170,7 @@ export async function executePluginCommand(
     console.error('Please specify an environment: --dev, --staging, or --prod');
     console.error('');
     console.error('Example:');
-    console.error('  npx factiii ' + command.category + ' ' + command.name + ' --staging');
+    console.error('  npx stack ' + command.category + ' ' + command.name + ' --staging');
     console.error('');
     process.exit(1);
   }
@@ -196,7 +196,7 @@ export async function executePluginCommand(
     console.error('');
     console.error('  To proceed, add the --force flag:');
     console.error('');
-    console.error('    npx factiii ' + command.category + ' ' + command.name + ' --prod --force');
+    console.error('    npx stack ' + command.category + ' ' + command.name + ' --prod --force');
     console.error('');
     console.error('================================================================');
     console.error('');

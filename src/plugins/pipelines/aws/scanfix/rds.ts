@@ -217,9 +217,9 @@ export const rdsFixes: Fix[] = [
         console.log('   DATABASE_URL: postgresql://' + masterUser + ':' + masterPassword + '@<endpoint>:5432/' + dbName);
         console.log('');
         console.log('   RDS instance takes ~5-10 minutes to become available.');
-        console.log('   Run "npx factiii scan --prod" to check status.');
+        console.log('   Run "npx stack scan --prod" to check status.');
         console.log('');
-        console.log('   TIP: Store credentials in Ansible Vault: npx factiii secrets edit');
+        console.log('   TIP: Store credentials in Ansible Vault: npx stack secrets edit');
 
         return true;
       } catch (e) {

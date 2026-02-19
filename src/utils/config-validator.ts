@@ -91,7 +91,7 @@ export function extractWorkflowConfig(workflowPath: string): WorkflowConfig | nu
  */
 export function validateConfigSync(rootDir: string): ValidationResult {
   const configPath = getStackConfigPath(rootDir);
-  const workflowPath = path.join(rootDir, '.github/workflows/factiii-deploy.yml');
+  const workflowPath = path.join(rootDir, '.github/workflows/stack-deploy.yml');
 
   if (!fs.existsSync(configPath)) {
     return { valid: false, error: 'stack.yml not found' };

@@ -149,7 +149,7 @@ export function checkVersionCompatibility(rootDir: string): VersionCompatibility
   // No version info in stackAuto.yml (legacy or first run)
   if (!factiii_version) {
     result.needsUpgrade = true;
-    result.message = 'No version info in stackAuto.yml. Run: npx factiii upgrade';
+    result.message = 'No version info in stackAuto.yml. Run: npx stack upgrade';
     return result;
   }
 
@@ -166,9 +166,9 @@ export function checkVersionCompatibility(rootDir: string): VersionCompatibility
     result.isBreaking = isBreakingUpgrade(factiii_version, currentVersion);
 
     if (result.isBreaking) {
-      result.message = `Major version change: ${factiii_version} → ${currentVersion}. Run: npx factiii upgrade`;
+      result.message = `Major version change: ${factiii_version} → ${currentVersion}. Run: npx stack upgrade`;
     } else {
-      result.message = `Version mismatch: config=${factiii_version}, installed=${currentVersion}. Run: npx factiii upgrade`;
+      result.message = `Version mismatch: config=${factiii_version}, installed=${currentVersion}. Run: npx stack upgrade`;
     }
     return result;
   }

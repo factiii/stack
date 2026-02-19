@@ -145,7 +145,7 @@ export const ec2Fixes: Fix[] = [
 
         // Store in Ansible Vault if configured
         if (config.ansible?.vault_path) {
-          console.log('   TIP: Add this key to Ansible Vault with: npx factiii secrets edit');
+          console.log('   TIP: Add this key to Ansible Vault with: npx stack secrets edit');
         }
 
         return true;

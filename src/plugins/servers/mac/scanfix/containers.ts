@@ -152,7 +152,7 @@ export const containerFixes: Fix[] = [
         return false;
       }
     },
-    manualFix: 'Run: npx factiii fix --staging (will stop unmanaged containers). To keep specific containers running, add them to container_exclusions in factiii.yml',
+    manualFix: 'Run: npx stack fix --staging (will stop unmanaged containers). To keep specific containers running, add them to container_exclusions in stack.yml',
   },
 ];
 

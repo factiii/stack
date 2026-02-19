@@ -25,7 +25,7 @@ export interface DeploySecretsResult {
 function loadConfig(rootDir: string): FactiiiConfig {
     const configPath = getStackConfigPath(rootDir);
     if (!fs.existsSync(configPath)) {
-        throw new Error('stack.yml not found. Run: npx factiii init');
+        throw new Error('stack.yml not found. Run: npx stack init');
     }
     try {
         return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
@@ -60,7 +60,7 @@ async function deployToEnvironment(
     if (!sshKey) {
         return {
             success: false,
-            error: `No SSH key found for ${stage}. Run: npx factiii secrets set ${stage.toUpperCase()}_SSH`
+            error: `No SSH key found for ${stage}. Run: npx stack secrets set ${stage.toUpperCase()}_SSH`
         };
     }
 
@@ -68,7 +68,7 @@ async function deployToEnvironment(
     const envSecrets = await store.getEnvironmentSecrets(stage);
     if (Object.keys(envSecrets).length === 0) {
         console.log(`  [!] No environment secrets found for ${stage}`);
-        console.log(`      Add secrets with: npx factiii secrets set-env <NAME> --${stage}`);
+        console.log(`      Add secrets with: npx stack secrets set-env <NAME> --${stage}`);
         return {
             success: true,
             message: `No secrets to deploy for ${stage}`,

@@ -42,7 +42,7 @@ export const configFixes: Fix[] = [
       );
       return generateFactiiiYml(rootDir, { force: false });
     },
-    manualFix: 'Run: npx factiii fix (will create ' + STACK_CONFIG_FILENAME + ' from plugin schemas)',
+    manualFix: 'Run: npx stack fix (will create ' + STACK_CONFIG_FILENAME + ' from plugin schemas)',
   },
 ];
 

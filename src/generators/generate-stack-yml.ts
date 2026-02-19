@@ -206,14 +206,14 @@ export function generateFactiiiYml(rootDir: string, options: GenerateOptions = {
   console.log('         - name, github_repo, ssl_email, domains\n');
   console.log('  2. Set up secrets (requires ansible-vault):');
   console.log('     [ ] Generate SSH key:  ssh-keygen -t ed25519 -f ~/.ssh/staging_deploy_key');
-  console.log('     [ ] Store in vault:    npx factiii secrets set STAGING_SSH');
+  console.log('     [ ] Store in vault:    npx stack secrets set STAGING_SSH');
   console.log('     [ ] Add public key to server: ssh-copy-id -i ~/.ssh/staging_deploy_key.pub user@host\n');
   console.log('  3. Validate and fix:');
-  console.log('     [ ] npx factiii scan          (check for issues)');
-  console.log('     [ ] npx factiii fix           (auto-fix what it can)\n');
+  console.log('     [ ] npx stack scan          (check for issues)');
+  console.log('     [ ] npx stack fix           (auto-fix what it can)\n');
   console.log('  4. Deploy:');
-  console.log('     [ ] npx factiii deploy --staging --dry-run   (preview)');
-  console.log('     [ ] npx factiii deploy --staging             (deploy)\n');
+  console.log('     [ ] npx stack deploy --staging --dry-run   (preview)');
+  console.log('     [ ] npx stack deploy --staging             (deploy)\n');
 
   return true;
 }

@@ -23,14 +23,14 @@ const { devSync } = require('../dist/cli/dev-sync');
 const packageJson = require('../package.json');
 
 program
-  .name('factiii')
-  .description('Factiii Stack - Infrastructure management CLI')
+  .name('stack')
+  .description('Stack - Infrastructure management CLI')
   .version(packageJson.version);
 
 // Init command (primary setup command)
 program
   .command('init')
-  .description('Initialize Factiii Stack in your project (run this first)')
+  .description('Initialize Stack in your project (run this first)')
   .option('-f, --force', 'Overwrite existing config files')
   .action(async (options) => {
     await init(options);
@@ -164,7 +164,7 @@ program
     if (!action || !validActions.includes(action)) {
       // Show help if no valid action provided
       console.log('');
-      console.log('Usage: npx factiii secrets <action> [name] [options]');
+      console.log('Usage: npx stack secrets <action> [name] [options]');
       console.log('');
       console.log('Actions:');
       console.log('  list              List all secrets (SSH keys + env vars)');
@@ -176,12 +176,12 @@ program
       console.log('  write-ssh-keys    Write SSH keys to ~/.ssh/ (for workflows)');
       console.log('');
       console.log('Examples:');
-      console.log('  npx factiii secrets list');
-      console.log('  npx factiii secrets set STAGING_SSH');
-      console.log('  npx factiii secrets set-env DATABASE_URL --staging');
-      console.log('  npx factiii secrets list-env --staging');
-      console.log('  npx factiii secrets deploy --staging');
-      console.log('  npx factiii secrets deploy --all');
+      console.log('  npx stack secrets list');
+      console.log('  npx stack secrets set STAGING_SSH');
+      console.log('  npx stack secrets set-env DATABASE_URL --staging');
+      console.log('  npx stack secrets list-env --staging');
+      console.log('  npx stack secrets deploy --staging');
+      console.log('  npx stack secrets deploy --all');
       console.log('');
       return;
     }
@@ -214,8 +214,8 @@ if (process.env.DEV_MODE === 'true') {
 // Legacy commands (for backwards compatibility)
 program
   .command('validate')
-  .description('[Legacy] Validate factiii.yml config file')
-  .option('-c, --config <path>', 'Path to config file', 'factiii.yml')
+  .description('[Legacy] Validate stack.yml config file')
+  .option('-c, --config <path>', 'Path to config file', 'stack.yml')
   .action(async (options) => {
     await validate(options);
   });

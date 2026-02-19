@@ -5,10 +5,10 @@
  * Returns problems found (which are the fixes that need to run).
  *
  * Usage:
- *   npx factiii scan           # Scan all stages
- *   npx factiii scan --dev     # Scan dev only
- *   npx factiii scan --staging # Scan staging only
- *   npx factiii scan --prod    # Scan prod only
+ *   npx stack scan           # Scan all stages
+ *   npx stack scan --dev     # Scan dev only
+ *   npx stack scan --staging # Scan staging only
+ *   npx stack scan --prod    # Scan prod only
  *
  * ============================================================
  * STAGE EXECUTION PATTERN - DO NOT MODIFY WITHOUT READING
@@ -46,8 +46,8 @@
  * When your workflow/CI SSHs to a server, you MUST call the
  * command with the specific stage flag:
  *
- *   npx factiii fix --staging    # NOT just "npx factiii fix"
- *   npx factiii scan --prod      # NOT just "npx factiii scan"
+ *   npx stack fix --staging    # NOT just "npx stack fix"
+ *   npx stack scan --prod      # NOT just "npx stack scan"
  *
  * Without the stage flag, the command will try to run ALL stages
  * and may try to trigger workflows for stages it can't reach.
@@ -102,14 +102,14 @@ async function loadPlugins(rootDir: string): Promise<PluginClass[]> {
       const content = fs.readFileSync(configPath, 'utf8');
       if (!content || content.trim().length === 0) {
         console.error('\n[ERROR] Config file is empty.');
-        console.error('   Run: npx factiii init --force\n');
+        console.error('   Run: npx stack init --force\n');
       } else {
         console.error('\n[ERROR] Config contains no valid configuration.');
-        console.error('   Check your YAML syntax or run: npx factiii init --force\n');
+        console.error('   Check your YAML syntax or run: npx stack init --force\n');
       }
     } else {
       console.error('\n[ERROR] No stack.yml found.');
-      console.error('   Run: npx factiii init\n');
+      console.error('   Run: npx stack init\n');
     }
     process.exit(1);
   }
@@ -322,7 +322,7 @@ function displayProblems(
       } else if (reason.includes('Vault password')) {
         console.log('   Hint: Create vault password file or set ANSIBLE_VAULT_PASSWORD env var');
       } else if (reason.includes('SSH key')) {
-        console.log('   Hint: Run: npx factiii secrets write-ssh-keys');
+        console.log('   Hint: Run: npx stack secrets write-ssh-keys');
       } else if (reason.includes('GITHUB_TOKEN')) {
         console.log('   Hint: Run: export GITHUB_TOKEN=your_token');
       }
@@ -366,7 +366,7 @@ function displayProblems(
     console.log('[!] Some stages cannot be reached. Fix blockers above.\n');
   } else {
     console.log('Found ' + totalProblems + ' issue' + (totalProblems > 1 ? 's' : '') + '.');
-    console.log('Hint: Run: npx factiii fix\n');
+    console.log('Hint: Run: npx stack fix\n');
   }
 }
 

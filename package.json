@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "factiii": "./bin/factiii"
+    "stack": "./bin/stack"
   },
   "files": [
     "bin/",

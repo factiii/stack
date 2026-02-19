@@ -313,6 +313,25 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   console.log('-'.repeat(60));
   console.log('TOTAL: Fixed: ' + result.fixed + ', Manual: ' + result.manual + ', Failed: ' + result.failed);
 
+  // Show next-step guidance after successful fix
+  if (result.failed === 0 && result.manual === 0) {
+    const hasProdStage = stages.includes('prod') || stages.includes('staging');
+    if (hasProdStage) {
+      console.log('');
+      console.log('============================================================');
+      console.log('✅ Infrastructure ready!');
+      if (stages.includes('prod')) {
+        console.log('   Next step:  npx factiii deploy --prod');
+      } else if (stages.includes('staging')) {
+        console.log('   Next step:  npx factiii deploy --staging');
+      }
+      console.log('============================================================');
+    }
+  } else if (result.manual > 0 && result.failed === 0) {
+    console.log('');
+    console.log('⚠️  Resolve manual fixes above, then re-run: npx factiii fix');
+  }
+
   // Exit with error if any fixes failed
   if (result.failed > 0) {
     process.exit(1);

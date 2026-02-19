@@ -1,4 +1,4 @@
-# Factiii Stack
+# Stack
 
 Infrastructure management CLI for deploying full-stack applications with plugin-based configuration.
 
@@ -9,7 +9,7 @@ Infrastructure management CLI for deploying full-stack applications with plugin-
 npm install @factiii/stack
 
 # Initialize configuration (run this first!)
-npx factiii init
+npx stack init
 
 # This creates:
 # - stack.yml (user-editable config)
@@ -18,14 +18,14 @@ npx factiii init
 
 # Edit stack.yml to replace EXAMPLE- values
 # Then run:
-npx factiii scan    # Check for issues
-npx factiii fix     # Auto-fix issues
-npx factiii deploy --staging  # Deploy to staging
+npx stack scan    # Check for issues
+npx stack fix     # Auto-fix issues
+npx stack deploy --staging  # Deploy to staging
 ```
 
 ## How It Works
 
-Factiii Stack uses a **plugin-based architecture** where each plugin:
+Stack uses a **plugin-based architecture** where each plugin:
 1. Defines its own configuration schema
 2. Auto-detects project settings
 3. Validates and fixes issues
@@ -84,8 +84,8 @@ aws_cli_installed: true
 Scans your project and generates configuration files:
 
 ```bash
-npx factiii init          # Initialize Factiii Stack
-npx factiii init --force  # Regenerate configs
+npx stack init          # Initialize Stack
+npx stack init --force  # Regenerate configs
 ```
 
 **What it does:**
@@ -99,38 +99,59 @@ npx factiii init --force  # Regenerate configs
 Checks all environments for issues:
 
 ```bash
-npx factiii scan           # Scan all (dev, secrets, staging, prod)
-npx factiii scan --dev     # Scan dev only
-npx factiii scan --staging # Scan staging only
-npx factiii scan --prod    # Scan prod only
+npx stack scan           # Scan all (dev, secrets, staging, prod)
+npx stack scan --dev     # Scan dev only
+npx stack scan --staging # Scan staging only
+npx stack scan --prod    # Scan prod only
 ```
 
-**Note:** Requires `stack.yml` (or legacy factiii.yml) to exist. Run `npx factiii init` first.
+**Note:** Requires `stack.yml` (or legacy factiii.yml) to exist. Run `npx stack init` first.
 
 ### Fix
 
 Automatically fixes issues where possible:
 
 ```bash
-npx factiii fix           # Fix all environments
-npx factiii fix --dev     # Fix dev only
-npx factiii fix --staging # Fix staging only
-npx factiii fix --prod    # Fix prod only
+npx stack fix           # Fix all environments
+npx stack fix --dev     # Fix dev only
+npx stack fix --staging # Fix staging only
+npx stack fix --prod    # Fix prod only
 ```
 
-**Note:** Requires `stack.yml` (or legacy factiii.yml) to exist. Run `npx factiii init` first.
+**Note:** Requires `stack.yml` (or legacy factiii.yml) to exist. Run `npx stack init` first.
 
 ### Deploy
 
 Deploys to environments (runs scan first, aborts on issues):
 
 ```bash
-npx factiii deploy --dev      # Start local dev containers
-npx factiii deploy --staging  # Deploy to staging server
-npx factiii deploy --prod     # Deploy to production server
+npx stack deploy --dev      # Start local dev containers
+npx stack deploy --staging  # Deploy to staging server
+npx stack deploy --prod     # Deploy to production server
 ```
 
-**Note:** Requires `stack.yml` (or legacy factiii.yml) to exist. Run `npx factiii init` first.
+**Note:** Requires `stack.yml` (or legacy factiii.yml) to exist. Run `npx stack init` first.
+
+### AWS EC2 Deployment (2 Commands)
+
+Deploy your full-stack app to AWS EC2 with just two commands:
+
+```bash
+# 1. Provision all AWS infrastructure
+npx factiii fix
+
+# Creates: VPC, Security Groups, EC2 instance, RDS database,
+# S3 bucket, ECR repository, IAM users, SES email
+
+# 2. Deploy your application
+npx factiii deploy --prod
+
+# Configures: Docker, Nginx, SSL certificates, pulls images, starts containers
+```
+
+**Prerequisites:** You need an IAM user with the `factiii-bootstrap` policy configured via `aws configure`.
+
+See [docs/aws-setup-guide.md](docs/aws-setup-guide.md) for the full step-by-step setup guide including the IAM policy JSON.
 
 ### Secrets Management
 
@@ -138,30 +159,30 @@ Manage secrets via Ansible Vault and deploy them directly to servers:
 
 ```bash
 # List all secrets (SSH keys + environment variables)
-npx factiii secrets list
+npx stack secrets list
 
 # Set SSH keys (required for deployment)
-npx factiii secrets set STAGING_SSH
-npx factiii secrets set PROD_SSH
+npx stack secrets set STAGING_SSH
+npx stack secrets set PROD_SSH
 
 # Set environment variables for each stage
-npx factiii secrets set-env DATABASE_URL --staging
-npx factiii secrets set-env JWT_SECRET --staging
-npx factiii secrets set-env DATABASE_URL --prod
-npx factiii secrets set-env JWT_SECRET --prod
+npx stack secrets set-env DATABASE_URL --staging
+npx stack secrets set-env JWT_SECRET --staging
+npx stack secrets set-env DATABASE_URL --prod
+npx stack secrets set-env JWT_SECRET --prod
 
 # List environment variables
-npx factiii secrets list-env --staging
-npx factiii secrets list-env --prod
+npx stack secrets list-env --staging
+npx stack secrets list-env --prod
 
 # Deploy secrets to servers via SSH
-npx factiii secrets deploy --staging  # Deploy to staging server
-npx factiii secrets deploy --prod     # Deploy to production server
-npx factiii secrets deploy --all      # Deploy to all servers
+npx stack secrets deploy --staging  # Deploy to staging server
+npx stack secrets deploy --prod     # Deploy to production server
+npx stack secrets deploy --all      # Deploy to all servers
 
 # Options
-npx factiii secrets deploy --staging --restart   # Restart container after deploy
-npx factiii secrets deploy --staging --dry-run   # Show what would be deployed
+npx stack secrets deploy --staging --restart   # Restart container after deploy
+npx stack secrets deploy --staging --dry-run   # Show what would be deployed
 ```
 
 **How it works:**
@@ -172,24 +193,24 @@ npx factiii secrets deploy --staging --dry-run   # Show what would be deployed
    - Writes a `.env.{stage}` file with your environment variables
 3. Your application reads the `.env.{stage}` file on startup
 
-**Note:** Requires `stack.yml` with Ansible Vault configured. Run `npx factiii init` first.
+**Note:** Requires `stack.yml` with Ansible Vault configured. Run `npx stack init` first.
 
 ## Stage Execution
 
-Factiii commands work with four stages: `dev`, `secrets`, `staging`, `prod`.
+Stack commands work with four stages: `dev`, `secrets`, `staging`, `prod`.
 
 ### Running Commands
 
 ```bash
-npx factiii scan              # Scan all reachable stages
-npx factiii scan --dev        # Scan only dev stage
-npx factiii scan --staging    # Scan only staging stage
+npx stack scan              # Scan all reachable stages
+npx stack scan --dev        # Scan only dev stage
+npx stack scan --staging    # Scan only staging stage
 
-npx factiii fix               # Fix all reachable stages
-npx factiii fix --staging     # Fix only staging stage
+npx stack fix               # Fix all reachable stages
+npx stack fix --staging     # Fix only staging stage
 
-npx factiii deploy --staging  # Deploy to staging
-npx factiii deploy --prod     # Deploy to prod
+npx stack deploy --staging  # Deploy to staging
+npx stack deploy --prod     # Deploy to prod
 ```
 
 ### How Stages Are Reached
@@ -209,8 +230,8 @@ When your CI/CD workflow SSHs to a server to run commands, you **MUST** specify 
 
 ```bash
 # In your workflow, after SSH to staging server:
-GITHUB_ACTIONS=true npx factiii fix --staging     # ✅ Correct
-npx factiii fix                                    # ❌ Wrong - will try to run all stages
+GITHUB_ACTIONS=true npx stack fix --staging     # ✅ Correct
+npx stack fix                                    # ❌ Wrong - will try to run all stages
 ```
 
 This prevents the command from trying to reach stages it can't access from the server.
@@ -304,7 +325,7 @@ GitHub Actions workflows are intentionally minimal - they just SSH into servers 
     ssh user@host << EOF
       cd ~/.factiii/my-app
       git pull
-      GITHUB_ACTIONS=true npx factiii deploy --staging
+      GITHUB_ACTIONS=true npx stack deploy --staging
     EOF
 ```
 
@@ -339,16 +360,16 @@ Provide the vault password via one of:
 
 ```bash
 # List all secrets
-npx factiii secrets list
+npx stack secrets list
 
 # Set a secret (interactive prompt)
-npx factiii secrets set STAGING_SSH
+npx stack secrets set STAGING_SSH
 
 # Set a secret (non-interactive)
-npx factiii secrets set STAGING_SSH --value "your-key-here"
+npx stack secrets set STAGING_SSH --value "your-key-here"
 
 # Check if secrets exist
-npx factiii secrets check
+npx stack secrets check
 ```
 
 ### Required Secrets
@@ -364,7 +385,7 @@ In GitHub Actions workflows, provide the vault password as a GitHub secret:
 1. Add `ANSIBLE_VAULT_PASSWORD` to your repository secrets
 2. Workflows automatically load SSH keys from Ansible Vault using this password
 
-The workflow step `npx factiii secrets write-ssh-keys` extracts secrets from the vault and writes SSH keys to `~/.ssh/` for deployment steps.
+The workflow step `npx stack secrets write-ssh-keys` extracts secrets from the vault and writes SSH keys to `~/.ssh/` for deployment steps.
 
 ## Environment Variables
 

@@ -11,8 +11,8 @@
 #
 # Flow:
 #   1. Start VM with core repo mounted (if not running)
-#   2. SSH in, run: FACTIII_ON_SERVER=1 npx factiii scan --staging
-#   3. Run: FACTIII_ON_SERVER=1 npx factiii fix --staging
+#   2. SSH in, run: FACTIII_ON_SERVER=1 npx stack scan --staging
+#   3. Run: FACTIII_ON_SERVER=1 npx stack fix --staging
 #   4. Run scan again to verify
 #
 set -e
@@ -79,15 +79,15 @@ RUN="cd $REPO_PATH && pnpm install && pnpm build"
 
 echo ""
 echo "=== Step 1: Scan (before fix) ==="
-$SSH_CMD "env FACTIII_ON_SERVER=1 $RUN && npx factiii scan --staging" || true
+$SSH_CMD "env FACTIII_ON_SERVER=1 $RUN && npx stack scan --staging" || true
 
 echo ""
 echo "=== Step 2: Fix ==="
-$SSH_CMD "env FACTIII_ON_SERVER=1 $RUN && npx factiii fix --staging" || true
+$SSH_CMD "env FACTIII_ON_SERVER=1 $RUN && npx stack fix --staging" || true
 
 echo ""
 echo "=== Step 3: Scan (after fix) ==="
-$SSH_CMD "env FACTIII_ON_SERVER=1 $RUN && npx factiii scan --staging" || true
+$SSH_CMD "env FACTIII_ON_SERVER=1 $RUN && npx stack scan --staging" || true
 
 echo ""
 echo "=== Done ==="

@@ -100,7 +100,7 @@ export async function prCheck(options: PRCheckOptions = {}): Promise<PRCheckResu
 
   // On server: run builds directly and report
   if (process.env.GITHUB_ACTIONS === 'true' || process.env.FACTIII_ON_SERVER === 'true') {
-    // When SSH'd from workflow, we're run with cwd=repo (workflow does: cd $REPO_DIR && npx factiii pr-check)
+    // When SSH'd from workflow, we're run with cwd=repo (workflow does: cd $REPO_DIR && npx stack pr-check)
     const repoName = config.name ?? 'app';
     const defaultRepoDir = path.join(process.env.HOME ?? '', '.factiii', repoName);
     const repoDir = fs.existsSync(getStackConfigPath(process.cwd()))

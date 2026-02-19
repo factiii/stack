@@ -110,7 +110,7 @@ export function generateEnvTemplate(environment: string, devEnv: EnvVars): strin
 # Instructions:
 # 1. Replace all <FILL_IN> values with real ${environment} values
 # 2. Ensure all keys match .env.example
-# 3. Run: npx factiii (to validate)
+# 3. Run: npx stack (to validate)
 `;
 
   return template;
