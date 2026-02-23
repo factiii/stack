@@ -58,15 +58,15 @@ import type {
   CommandResult,
 } from '../../../types/index.js';
 import { loadRelevantPlugins } from '../../index.js';
-import GitHubWorkflowMonitor from '../../../utils/github-workflow-monitor.js';
-import { GitHubSecretsStore } from './github-secrets-store.js';
 import { findSshKeyForStage, sshRemoteFactiiiCommand } from '../../../utils/ssh-helper.js';
 
 // Import scanfix arrays
+import { bootstrapFixes } from './scanfix/bootstrap.js';
 import { configFixes } from './scanfix/config.js';
 import { githubCliFixes } from './scanfix/github-cli.js';
 import { workflowFixes } from './scanfix/workflows.js';
 import { secretsFixes } from './scanfix/secrets.js';
+import { envFileFixes } from './scanfix/env-files.js';
 
 // Import utility methods
 import * as detectionUtils from './utils/detection.js';
@@ -127,8 +127,11 @@ class FactiiiPipeline {
    * Return values:
    *   { reachable: true, via: 'local' } - Run fixes on this machine
    *   { reachable: true, via: 'ssh' } - SSH directly to the server
-   *   { reachable: true, via: 'workflow' } - Trigger workflow to run fixes
    *   { reachable: false, reason: '...' } - Cannot reach, show error
+   *
+   * Note: 'workflow' path was removed — deploy/fix/scan workflows are gone.
+   * SSH from dev machine is now the only remote execution path.
+   * GitHub Actions only runs CI (build + test), not deployment.
    *
    * For the Factiii pipeline:
    *   - dev: always local
@@ -136,8 +139,7 @@ class FactiiiPipeline {
    *   - staging/prod:
    *       - If GITHUB_ACTIONS=true → local (we're on the server)
    *       - If SSH key exists → ssh (direct SSH from dev machine)
-   *       - If GITHUB_TOKEN → workflow (fallback to GitHub Actions)
-   *       - Otherwise → not reachable
+   *       - Otherwise → not reachable (guide user to set up SSH keys)
    *
    * CRITICAL: When SSHing to a server, the command MUST include
    *   --staging or --prod to prevent infinite loops.
@@ -203,22 +205,16 @@ class FactiiiPipeline {
           }
         }
 
-        // Fallback: use GitHub workflow if GITHUB_TOKEN is available
-        if (process.env.GITHUB_TOKEN) {
-          return {
-            reachable: true,
-            via: 'workflow',
-          };
-        }
-
-        // No SSH key and no GITHUB_TOKEN
+        // No SSH key — cannot reach this stage
+        // Deployment workflows were removed; SSH is the only remote path.
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const osForPath = require('os');
         const expectedKeyPath = require('path').join(osForPath.homedir(), '.ssh', stage + '_deploy_key');
         return {
           reachable: false,
-          reason: 'No SSH key found at ' + expectedKeyPath + '. Run: npx stack secrets write-ssh-keys\n' +
-            '   Fallback: set GITHUB_TOKEN for GitHub Actions workflows.',
+          reason: 'No SSH key found at ' + expectedKeyPath + '.\n' +
+            '   Run: npx stack init (to set up SSH keys)\n' +
+            '   Or:  npx stack secrets set ' + stage.toUpperCase() + '_SSH && npx stack secrets write-ssh-keys',
         };
 
       default:
@@ -233,10 +229,12 @@ class FactiiiPipeline {
   // ============================================================
 
   static readonly fixes: Fix[] = [
+    ...bootstrapFixes,
     ...configFixes,
     ...githubCliFixes,
     ...workflowFixes,
     ...secretsFixes,
+    ...envFileFixes,
   ];
 
   // ============================================================
@@ -737,39 +735,6 @@ class FactiiiPipeline {
       };
     }
 
-    if (reach.via === 'workflow') {
-      // Fallback: trigger GitHub Actions workflow
-      // Only used when SSH keys are not available but GITHUB_TOKEN is
-      try {
-        const monitor = new GitHubWorkflowMonitor();
-        const result = await monitor.triggerAndWatch('factiii-deploy.yml', stage);
-        return {
-          success: result.success,
-          message: result.success ? 'Deployment complete' : undefined,
-          error: result.error,
-        };
-      } catch {
-        // Fall back to API-based trigger without live monitoring
-        console.log(`   Triggering ${stage} deployment via GitHub Actions...`);
-
-        try {
-          await FactiiiPipeline.triggerWorkflow('factiii-deploy.yml', {
-            environment: stage,
-          });
-
-          const repoInfo = GitHubSecretsStore.getRepoInfo();
-          if (repoInfo) {
-            console.log(`   Check: https://github.com/${repoInfo.owner}/${repoInfo.repo}/actions\n`);
-          }
-
-          return { success: true, message: 'Workflow triggered - check GitHub Actions for progress' };
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return { success: false, error: `Failed to trigger workflow: ${errorMessage}` };
-        }
-      }
-    }
-
     // via: 'local' - we can run directly (dev stage, or on-server in workflow)
     return this.runLocalDeploy(stage, options);
   }
@@ -797,20 +762,6 @@ class FactiiiPipeline {
       return { handled: true };
     }
 
-    if (reach.via === 'workflow') {
-      try {
-        const monitor = new GitHubWorkflowMonitor();
-        console.log('   Triggering ' + stage + ' scan via workflow...');
-        const result = await monitor.triggerAndWatch('factiii-scan.yml', stage);
-        if (!result.success) {
-          console.log('   [!] ' + stage + ' scan failed');
-        }
-      } catch {
-        console.log('   [!] Could not trigger workflow for ' + stage + ' scan');
-      }
-      return { handled: true };
-    }
-
     // via: 'local' - caller should run locally
     return { handled: false };
   }
@@ -834,20 +785,6 @@ class FactiiiPipeline {
       const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
       if (!sshResult.success) {
         console.log('   [!] ' + stage + ' fix failed: ' + sshResult.stderr);
-      }
-      return { handled: true };
-    }
-
-    if (reach.via === 'workflow') {
-      try {
-        const monitor = new GitHubWorkflowMonitor();
-        console.log('   Triggering ' + stage + ' fix via workflow...');
-        const result = await monitor.triggerAndWatch('factiii-fix.yml', stage);
-        if (!result.success) {
-          console.log('   [!] ' + stage + ' fix failed');
-        }
-      } catch {
-        console.log('   [!] Could not trigger workflow for ' + stage + ' fix');
       }
       return { handled: true };
     }

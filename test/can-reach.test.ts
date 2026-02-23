@@ -155,12 +155,12 @@ describe('canReach - staging/prod stages', () => {
     }
   });
 
-  test('falls back to workflow when no SSH key but GITHUB_TOKEN exists', () => {
+  test('unreachable when no SSH key even if GITHUB_TOKEN exists', () => {
     process.env.GITHUB_TOKEN = 'ghp_test_token';
     const result = FactiiiPipeline.canReach('staging', baseConfig);
-    expect(result.reachable).toBe(true);
-    if (result.reachable) {
-      expect(result.via).toBe('workflow');
+    expect(result.reachable).toBe(false);
+    if (!result.reachable) {
+      expect(result.reason).toContain('SSH key');
     }
   });
 
@@ -172,7 +172,7 @@ describe('canReach - staging/prod stages', () => {
     }
   });
 
-  test('prefers SSH over workflow when both available', () => {
+  test('SSH works regardless of GITHUB_TOKEN presence', () => {
     mockSshKey('staging_deploy_key');
     process.env.GITHUB_TOKEN = 'ghp_test_token';
     const result = FactiiiPipeline.canReach('staging', baseConfig);

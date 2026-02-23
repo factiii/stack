@@ -28,30 +28,14 @@ export async function generateWorkflows(rootDir: string): Promise<void> {
     fs.mkdirSync(workflowsDir, { recursive: true });
   }
 
-  // Copy workflow files and inject version
-  // Infrastructure management (manual dispatch):
-  //   - stack-deploy.yml: Manual deploy with --staging or --prod
-  //   - stack-fix.yml: Manual fix with matrix for all configured envs
-  //   - stack-scan.yml: Manual scan with matrix for all configured envs
-  //   - stack-undeploy.yml: Manual cleanup
-  // CI/CD (auto on push):
-  //   - stack-cicd-staging.yml: Auto-deploy on push to main
-  //   - stack-cicd-prod.yml: Auto-deploy on push to prod
+  // CI workflows (testing only - no SSH, no deployment):
+  //   - stack-ci.yml: Build + test on push/PR to main
+  //   - stack-cicd-prod.yml: Build + test on push to prod
+  // Deployment is handled via SSH from dev machine, not workflows.
   const workflows = [
-    'stack-deploy.yml',
-    'stack-fix.yml',
-    'stack-scan.yml',
-    'stack-undeploy.yml',
-    'stack-pr-check.yml',
-    'stack-cicd-staging.yml',
+    'stack-ci.yml',
     'stack-cicd-prod.yml',
-    'stack-command.yml',
   ];
-
-  // Only add dev-sync workflow in dev mode
-  if (process.env.DEV_MODE === 'true') {
-    workflows.push('stack-dev-sync.yml');
-  }
 
   for (const workflow of workflows) {
     const sourcePath = path.join(sourceDir, workflow);

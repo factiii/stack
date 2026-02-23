@@ -1,6 +1,8 @@
 /**
  * Configuration-related fixes for Factiii Pipeline plugin
- * Handles stack.yml file generation and validation
+ * Validates stack.yml content (EXAMPLE- values, etc.)
+ *
+ * Note: Missing stack.yml detection is in bootstrap.ts (runs first).
  */
 
 import * as fs from 'fs';
@@ -27,22 +29,6 @@ export const configFixes: Fix[] = [
       '      - ssl_email: your-email@domain.com\n' +
       '      - staging.domain: staging.yourdomain.com\n' +
       '      - prod.domain: yourdomain.com',
-  },
-  {
-    id: 'missing-stack-yml',
-    stage: 'dev',
-    severity: 'critical',
-    description: STACK_CONFIG_FILENAME + ' configuration file not found',
-    scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-      return !fs.existsSync(getStackConfigPath(rootDir));
-    },
-    fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-      const { generateFactiiiYml } = await import(
-        '../../../../generators/generate-stack-yml.js'
-      );
-      return generateFactiiiYml(rootDir, { force: false });
-    },
-    manualFix: 'Run: npx stack fix (will create ' + STACK_CONFIG_FILENAME + ' from plugin schemas)',
   },
 ];
 

@@ -5,7 +5,10 @@
  * environments are stored as top-level keys.
  */
 
+import * as fs from 'fs';
+import yaml from 'js-yaml';
 import type { FactiiiConfig, EnvironmentConfig } from '../types/index.js';
+import { getStackLocalPath } from '../constants/config-files.js';
 
 // ============================================================
 // CRITICAL: Config Environment Extraction
@@ -167,6 +170,34 @@ export function getUsedPlugins(config: FactiiiConfig): Set<string> {
  * @param name - Environment name to validate
  * @returns Error message if invalid, null if valid
  */
+/**
+ * Local config interface (stack.local.yml)
+ * Per-developer settings that are gitignored
+ */
+export interface LocalConfig {
+  dev_os?: 'mac' | 'windows' | 'ubuntu';
+}
+
+/**
+ * Load local config from stack.local.yml (or factiii.local.yml)
+ * Returns empty object if file doesn't exist
+ *
+ * @param rootDir - Root directory of the project
+ * @returns Parsed local config or empty object
+ */
+export function loadLocalConfig(rootDir: string): LocalConfig {
+  const localPath = getStackLocalPath(rootDir);
+  if (!fs.existsSync(localPath)) {
+    return {};
+  }
+  try {
+    const content = fs.readFileSync(localPath, 'utf8');
+    return (yaml.load(content) as LocalConfig) ?? {};
+  } catch {
+    return {};
+  }
+}
+
 export function validateEnvironmentName(name: string): string | null {
   // Check for reserved key conflicts
   if (RESERVED_CONFIG_KEYS.includes(name as (typeof RESERVED_CONFIG_KEYS)[number])) {

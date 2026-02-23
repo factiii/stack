@@ -9,6 +9,9 @@ export const STACK_CONFIG_FILENAME = 'stack.yml';
 /** Auto-detected config (was factiiiAuto.yml) */
 export const STACK_AUTO_FILENAME = 'stackAuto.yml';
 
+/** Local machine config (gitignored, per-developer) */
+export const STACK_LOCAL_FILENAME = 'stack.local.yml';
+
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -30,6 +33,17 @@ export function getStackAutoPath(rootDir: string): string {
   const primary = path.join(rootDir, STACK_AUTO_FILENAME);
   if (fs.existsSync(primary)) return primary;
   const legacy = path.join(rootDir, 'factiiiAuto.yml');
+  if (fs.existsSync(legacy)) return legacy;
+  return primary;
+}
+
+/**
+ * Resolve path to local config file. Prefers stack.local.yml, falls back to factiii.local.yml.
+ */
+export function getStackLocalPath(rootDir: string): string {
+  const primary = path.join(rootDir, STACK_LOCAL_FILENAME);
+  if (fs.existsSync(primary)) return primary;
+  const legacy = path.join(rootDir, 'factiii.local.yml');
   if (fs.existsSync(legacy)) return legacy;
   return primary;
 }

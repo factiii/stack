@@ -18,7 +18,7 @@ export const workflowFixes: Fix[] = [
     description: 'GitHub workflows not generated',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const workflowsDir = path.join(rootDir, '.github', 'workflows');
-      return !fs.existsSync(path.join(workflowsDir, 'stack-deploy.yml'));
+      return !fs.existsSync(path.join(workflowsDir, 'stack-ci.yml'));
     },
     fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       await generateWorkflowsUtil(rootDir);
@@ -36,7 +36,7 @@ export const workflowFixes: Fix[] = [
         rootDir,
         '.github',
         'workflows',
-        'stack-deploy.yml'
+        'stack-ci.yml'
       );
       if (!fs.existsSync(workflowPath)) return false;
 
@@ -69,25 +69,20 @@ export const workflowFixes: Fix[] = [
       const workflowsDir = path.join(rootDir, '.github', 'workflows');
       if (!fs.existsSync(workflowsDir)) return false;
 
-      // List of workflows we currently generate
+      // List of workflows we currently generate (CI testing only)
       const validWorkflows = [
-        'stack-deploy.yml',
-        'stack-fix.yml',
-        'stack-scan.yml',
-        'stack-undeploy.yml',
-        'stack-pr-check.yml',
-        'stack-command.yml',
-        'stack-cicd-staging.yml',
+        'stack-ci.yml',
         'stack-cicd-prod.yml',
-        'stack-dev-sync.yml', // Only in dev mode
       ];
 
-      // Find all stack-*.yml files
+      // Find all stack-*.yml and factiii-*.yml files (clean up legacy too)
       const files = fs.readdirSync(workflowsDir);
-      const stackFiles = files.filter((f) => f.startsWith('stack-') && f.endsWith('.yml'));
+      const managedFiles = files.filter(
+        (f) => (f.startsWith('stack-') || f.startsWith('factiii-')) && f.endsWith('.yml')
+      );
 
       // Check for orphaned files
-      const orphaned = stackFiles.filter((f) => !validWorkflows.includes(f));
+      const orphaned = managedFiles.filter((f) => !validWorkflows.includes(f));
 
       return orphaned.length > 0;
     },
@@ -95,20 +90,15 @@ export const workflowFixes: Fix[] = [
       const workflowsDir = path.join(rootDir, '.github', 'workflows');
 
       const validWorkflows = [
-        'stack-deploy.yml',
-        'stack-fix.yml',
-        'stack-scan.yml',
-        'stack-undeploy.yml',
-        'stack-pr-check.yml',
-        'stack-command.yml',
-        'stack-cicd-staging.yml',
+        'stack-ci.yml',
         'stack-cicd-prod.yml',
-        'stack-dev-sync.yml',
       ];
 
       const files = fs.readdirSync(workflowsDir);
-      const stackFiles = files.filter((f) => f.startsWith('stack-') && f.endsWith('.yml'));
-      const orphaned = stackFiles.filter((f) => !validWorkflows.includes(f));
+      const managedFiles = files.filter(
+        (f) => (f.startsWith('stack-') || f.startsWith('factiii-')) && f.endsWith('.yml')
+      );
+      const orphaned = managedFiles.filter((f) => !validWorkflows.includes(f));
 
       for (const file of orphaned) {
         const filePath = path.join(workflowsDir, file);

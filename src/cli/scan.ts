@@ -64,9 +64,9 @@ import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
 import { getStackConfigPath } from '../constants/config-files.js';
-import { loadRelevantPlugins } from '../plugins/index.js';
+import { loadRelevantPlugins, registry } from '../plugins/index.js';
 import type { FactiiiConfig, Stage, Fix, Reachability, ScanOptions, ScanProblems, ServerOS } from '../types/index.js';
-import { extractEnvironments } from '../utils/config-helpers.js';
+import { extractEnvironments, loadLocalConfig } from '../utils/config-helpers.js';
 
 interface PluginClass {
   id: string;
@@ -90,31 +90,77 @@ interface PipelinePluginInstance {
 }
 
 /**
- * Load relevant plugins based on config
+ * Load relevant plugins based on config.
+ * Returns null if no config exists (bootstrap needed).
  */
-async function loadPlugins(rootDir: string): Promise<PluginClass[]> {
+async function loadPlugins(rootDir: string): Promise<PluginClass[] | null> {
   const config = loadConfig(rootDir);
 
-  // If no config exists, tell user to run init
+  // If no config exists, return null to signal bootstrap mode
   if (!config || Object.keys(config).length === 0) {
     const configPath = getStackConfigPath(rootDir);
     if (fs.existsSync(configPath)) {
       const content = fs.readFileSync(configPath, 'utf8');
       if (!content || content.trim().length === 0) {
-        console.error('\n[ERROR] Config file is empty.');
-        console.error('   Run: npx stack init --force\n');
+        return null; // Empty config — needs bootstrap
       } else {
         console.error('\n[ERROR] Config contains no valid configuration.');
         console.error('   Check your YAML syntax or run: npx stack init --force\n');
+        process.exit(1);
       }
-    } else {
-      console.error('\n[ERROR] No stack.yml found.');
-      console.error('   Run: npx stack init\n');
     }
-    process.exit(1);
+    return null; // No config file — needs bootstrap
   }
 
   return (await loadRelevantPlugins(rootDir, config)) as unknown as PluginClass[];
+}
+
+/**
+ * Load only bootstrap plugins (factiii pipeline) when no config exists.
+ * The factiii pipeline always loads (shouldLoad = true) and its bootstrap
+ * fixes will create the config files.
+ */
+function loadBootstrapPlugins(): PluginClass[] {
+  const plugins: PluginClass[] = [];
+  const factiii = registry.pipelines['factiii'];
+  if (factiii) {
+    plugins.push(factiii as unknown as PluginClass);
+  }
+  return plugins;
+}
+
+/**
+ * Run bootstrap fixes to create config files.
+ * Only runs dev-stage bootstrap fixes (missing-stack-yml, missing-stack-auto-yml, etc.)
+ * in auto-fix mode so the re-run can proceed normally.
+ */
+async function runBootstrapFixes(plugins: PluginClass[], rootDir: string): Promise<void> {
+  const config = {} as FactiiiConfig;
+  const bootstrapFixIds = [
+    'missing-stack-yml',
+    'missing-stack-auto-yml',
+    'missing-stack-local-yml',
+    'gitignore-local-config',
+    'gitignore-env-staging',
+    'gitignore-env-prod',
+  ];
+
+  for (const plugin of plugins) {
+    for (const fix of plugin.fixes ?? []) {
+      if (fix.stage !== 'dev') continue;
+      if (!bootstrapFixIds.includes(fix.id)) continue;
+
+      try {
+        const hasProblem = await fix.scan(config, rootDir);
+        if (hasProblem && fix.fix) {
+          await fix.fix(config, rootDir);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log('  [!] Bootstrap error (' + fix.id + '): ' + msg);
+      }
+    }
+  }
 }
 
 /**
@@ -298,8 +344,9 @@ function displayProblems(
       console.log(statusLine);
     }
 
-    // Track unreachable stages for blockers section
+    // Show reason inline for unreachable stages
     if (!reach.reachable) {
+      console.log('           Reason: ' + reach.reason);
       unreachableStages.push({ stage, reason: reach.reason });
     }
   }
@@ -311,21 +358,34 @@ function displayProblems(
     console.log('-'.repeat(60) + '\n');
 
     for (const { stage, reason } of unreachableStages) {
-      console.log('[ERROR] ' + stage.toUpperCase() + ' unreachable: ' + reason);
+      console.log('[!] ' + stage.toUpperCase() + ' unreachable');
+      console.log('    Reason: ' + reason);
 
       // Provide smart hints based on the actual reason
-      if (reason.includes('vault_path')) {
-        console.log('   Hint: Add ansible config to stack.yml:');
-        console.log('         ansible:');
-        console.log('           vault_path: group_vars/all/vault.yml');
-        console.log('           vault_password_file: ~/.vault_pass');
-      } else if (reason.includes('Vault password')) {
-        console.log('   Hint: Create vault password file or set ANSIBLE_VAULT_PASSWORD env var');
-      } else if (reason.includes('SSH key')) {
-        console.log('   Hint: Run: npx stack secrets write-ssh-keys');
-      } else if (reason.includes('GITHUB_TOKEN')) {
-        console.log('   Hint: Run: export GITHUB_TOKEN=your_token');
+      const reasonLower = reason.toLowerCase();
+      if (reasonLower.includes('vault_path') || reasonLower.includes('ansible')) {
+        console.log('    Fix: Add ansible config to stack.yml:');
+        console.log('           ansible:');
+        console.log('             vault_path: group_vars/all/vault.yml');
+        console.log('             vault_password_file: ~/.vault_pass');
+        console.log('         Or run: npx stack init');
+      } else if (reasonLower.includes('vault password') || reasonLower.includes('vault_pass')) {
+        console.log('    Fix: Create vault password file:');
+        console.log('           echo "your-password" > ~/.vault_pass');
+        console.log('         Or run: npx stack init');
+      } else if (reasonLower.includes('ssh') || reasonLower.includes('deploy_key')) {
+        console.log('    Fix: Set up SSH key for ' + stage + ':');
+        console.log('           npx stack init              (guided setup)');
+        console.log('           npx stack secrets set ' + stage.toUpperCase() + '_SSH   (add key to vault)');
+        console.log('           npx stack secrets write-ssh-keys  (extract keys to ~/.ssh/)');
+      } else if (reasonLower.includes('github_token')) {
+        console.log('    Fix: export GITHUB_TOKEN=your_token');
+        console.log('         Or set up SSH keys instead (preferred):');
+        console.log('           npx stack init');
+      } else {
+        console.log('    Fix: npx stack init');
       }
+      console.log('');
     }
   }
 
@@ -407,9 +467,35 @@ function checkReachability(
 /**
  * Main scan function
  */
-export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
+export async function scan(options: ScanOptions = {}, _isRerun = false): Promise<ScanProblems> {
   const rootDir = options.rootDir ?? process.cwd();
+
+  // Bootstrap: if no config exists, create config files via bootstrap fixes
+  if (!_isRerun) {
+    const pluginsOrNull = await loadPlugins(rootDir);
+    if (pluginsOrNull === null) {
+      console.log('No stack.yml found. Setting up project...\n');
+      const bootstrapPlugins = loadBootstrapPlugins();
+      if (bootstrapPlugins.length === 0) {
+        console.error('\n[ERROR] No pipeline plugin available for bootstrap.');
+        console.error('   This should not happen. Reinstall @factiii/stack.\n');
+        process.exit(1);
+      }
+      await runBootstrapFixes(bootstrapPlugins, rootDir);
+      console.log('');
+      // Re-run scan now that config files exist
+      return scan(options, true);
+    }
+  }
+
   const config = loadConfig(rootDir);
+
+  // After bootstrap, if config still doesn't exist, give up
+  if (_isRerun && (!config || Object.keys(config).length === 0)) {
+    console.error('\n[ERROR] Bootstrap failed to create stack.yml.');
+    console.error('   Run: npx stack init\n');
+    process.exit(1);
+  }
 
   // If commit hash provided, verify we're scanning the right code
   if (options.commit) {
@@ -441,8 +527,8 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
   else if (options.prod) stages = ['prod'];
   else if (options.stages) stages = options.stages;
 
-  // Load all plugins
-  const plugins = await loadPlugins(rootDir);
+  // Load all plugins (guaranteed non-null after bootstrap check above)
+  const plugins = (await loadPlugins(rootDir))!;
 
   // Get all pipeline plugins to check reachability (multi-pipeline support)
   const pipelinePlugins = getAllPipelinePlugins(plugins);
@@ -508,6 +594,12 @@ export async function scan(options: ScanOptions = {}): Promise<ScanProblems> {
     } else if (name.startsWith('prod') || name === 'production') {
       stageToOS['prod'] = env.server as ServerOS | undefined;
     }
+  }
+
+  // Read dev OS from stack.local.yml for OS-specific dev-stage fix filtering
+  const localConfig = loadLocalConfig(rootDir);
+  if (localConfig.dev_os) {
+    stageToOS['dev'] = localConfig.dev_os as ServerOS;
   }
 
   for (const fix of allFixes) {
