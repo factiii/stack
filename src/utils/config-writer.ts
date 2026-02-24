@@ -12,7 +12,7 @@ import { getStackConfigPath } from '../constants/config-files.js';
 import type { FactiiiConfig } from '../types/index.js';
 
 /**
- * Update a nested value in stack.yml (or legacy factiii.yml)
+ * Update a nested value in stack.yml (or legacy stack.yml)
  *
  * @param rootDir - Project root directory
  * @param keyPath - Dot-separated path (e.g., 'prod.domain')

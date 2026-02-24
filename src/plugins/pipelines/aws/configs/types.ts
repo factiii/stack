@@ -11,7 +11,7 @@ import type { FactiiiConfig, Fix, DeployResult } from '../../../../types/index.j
  * Standard AWS Configuration Definition
  *
  * Each AWS config type (ec2, free-tier, etc.) must implement this interface.
- * Configs are selected based on `config.aws.config` value in factiii.yml.
+ * Configs are selected based on `config.aws.config` value in stack.yml.
  */
 export interface AWSConfigDef {
   /** Unique identifier for this config type */

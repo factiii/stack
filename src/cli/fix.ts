@@ -46,7 +46,7 @@ interface PipelinePluginInstance {
 }
 
 /**
- * Load config from stack.yml (or legacy factiii.yml)
+ * Load config from stack.yml (or legacy stack.yml)
  */
 function loadConfig(rootDir: string): FactiiiConfig {
   const configPath = getStackConfigPath(rootDir);

@@ -48,11 +48,11 @@ export function findSshKeyForStage(stage: string): string | null {
 }
 
 /**
- * Get the EnvironmentConfig for a given stage from factiii.yml config.
+ * Get the EnvironmentConfig for a given stage from stack.yml config.
  * Returns the first environment matching the stage.
  *
  * @param stage - The deployment stage (staging, prod)
- * @param config - Parsed factiii.yml config
+ * @param config - Parsed stack.yml config
  * @returns EnvironmentConfig with domain and ssh_user, or null
  */
 export function getEnvConfigForStage(
@@ -79,7 +79,7 @@ export function getEnvConfigForStage(
  * Used by scan.ts, fix.ts, and deployStage() when canReach returns via: 'ssh'.
  *
  * @param stage - Target stage (staging, prod)
- * @param config - Parsed factiii.yml config
+ * @param config - Parsed stack.yml config
  * @param command - The factiii CLI command to run (e.g., 'scan --staging', 'fix --prod')
  * @returns Object with success, stdout, and stderr
  */
@@ -113,7 +113,7 @@ export function sshRemoteFactiiiCommand(
     return {
       success: false,
       stdout: '',
-      stderr: 'No domain configured for stage: ' + stage + '. Check factiii.yml environments.',
+      stderr: 'No domain configured for stage: ' + stage + '. Check stack.yml environments.',
     };
   }
 

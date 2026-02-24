@@ -1,7 +1,7 @@
 /**
  * Configuration Types
  *
- * Types for factiii.yml and factiiiAuto.yml configuration files.
+ * Types for stack.yml and factiiiAuto.yml configuration files.
  */
 
 /**
@@ -40,7 +40,7 @@ export interface EnvironmentConfig {
 }
 
 /**
- * Main factiii.yml configuration
+ * Main stack.yml configuration
  *
  * Environments are stored as top-level keys. Any key that is NOT
  * in the reserved list (name, config_version, github_repo, etc.)

@@ -37,7 +37,7 @@ class PrismaTrpcPlugin {
   // Env vars this plugin requires (will be validated against .env.example)
   static readonly requiredEnvVars: string[] = ['DATABASE_URL'];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
     prisma: {
       schema_path: null, // Optional override

@@ -36,7 +36,7 @@
  *   - scanfix organized by concern, not environment - Fixes are grouped by what they check (config, workflows, secrets)
  *
  * **When each scanfix file is used:**
- *   - config.ts: When checking/generating factiii.yml
+ *   - config.ts: When checking/generating stack.yml
  *   - github-cli.ts: When checking GitHub CLI installation (dev)
  *   - workflows.ts: When checking/generating GitHub workflows (dev)
  *   - secrets.ts: When checking GitHub Secrets (secrets stage)
@@ -67,6 +67,7 @@ import { githubCliFixes } from './scanfix/github-cli.js';
 import { workflowFixes } from './scanfix/workflows.js';
 import { secretsFixes } from './scanfix/secrets.js';
 import { envFileFixes } from './scanfix/env-files.js';
+import { ansibleFixes } from './scanfix/ansible.js';
 
 // Import utility methods
 import * as detectionUtils from './utils/detection.js';
@@ -87,7 +88,7 @@ class FactiiiPipeline {
   // Env vars this plugin requires (none - pipeline doesn't need app env vars)
   static readonly requiredEnvVars: string[] = [];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
     // No user config - workflows are auto-generated
   };
@@ -113,7 +114,7 @@ class FactiiiPipeline {
    */
   static requiresFullRepo(environment: string): boolean {
     // Staging: needs full repo for local building from source
-    // Prod: pulls pre-built images from ECR, only needs factiii.yml + env file
+    // Prod: pulls pre-built images from ECR, only needs stack.yml + env file
     return environment === 'staging';
   }
 
@@ -156,7 +157,7 @@ class FactiiiPipeline {
         if (!config.ansible?.vault_path) {
           return {
             reachable: false,
-            reason: 'ansible.vault_path not configured in factiii.yml',
+            reason: 'ansible.vault_path not configured in stack.yml',
           };
         }
 
@@ -170,7 +171,7 @@ class FactiiiPipeline {
         if (!hasPasswordFile && !hasPasswordEnv) {
           return {
             reachable: false,
-            reason: 'Vault password required. Set ansible.vault_password_file in factiii.yml, or ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_PASSWORD_FILE env.',
+            reason: 'Vault password required. Set ansible.vault_password_file in stack.yml, or ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_PASSWORD_FILE env.',
           };
         }
 
@@ -231,6 +232,7 @@ class FactiiiPipeline {
   static readonly fixes: Fix[] = [
     ...bootstrapFixes,
     ...configFixes,
+    ...ansibleFixes,
     ...githubCliFixes,
     ...workflowFixes,
     ...secretsFixes,

@@ -27,7 +27,7 @@ interface TemplateCreationResult {
 
 /**
  * Generate .env.example template file content
- * @param config - Parsed factiii.yml configuration
+ * @param config - Parsed stack.yml configuration
  */
 export function generateEnvExampleTemplate(config: FactiiiConfig): string {
   const repoName = config.name ?? 'myapp';
@@ -119,7 +119,7 @@ export function generateEnvTemplate(environment: string, devEnv: EnvVars): strin
 /**
  * Create .env template files if they don't exist
  * @param rootDir - Repository root directory
- * @param config - Parsed factiii.yml configuration
+ * @param config - Parsed stack.yml configuration
  */
 export function createEnvTemplates(
   rootDir: string,
@@ -206,7 +206,7 @@ export function generateSecretsChecklist(): string {
    □ STAGING_ENVS   - Environment vars from .env.staging
    □ PROD_ENVS      - Environment vars from .env.prod
 
-   NOT SECRETS (in factiii.yml):
+   NOT SECRETS (in stack.yml):
    ───────────────────────────────────────────────────────
    ✓ environments.{env}.host - Server IP/hostname
    ✓ aws.access_key_id       - AWS access key ID

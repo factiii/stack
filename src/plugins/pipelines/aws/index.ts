@@ -110,7 +110,7 @@ class AWSPipeline {
   // Env vars this plugin requires
   static readonly requiredEnvVars: string[] = [];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
     aws: {
       config: 'ec2', // Options: ec2, free-tier, standard, enterprise
@@ -352,7 +352,7 @@ class AWSPipeline {
   constructor(config: FactiiiConfig) {
     this._config = config;
 
-    // Load the appropriate AWS config based on factiii.yml
+    // Load the appropriate AWS config based on stack.yml
     const configName = (config?.aws?.config as AWSConfigType) ?? 'ec2';
     this._awsConfig = AWSPipeline.configs[configName];
   }

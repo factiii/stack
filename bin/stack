@@ -36,11 +36,11 @@ program
     await init(options);
   });
 
-// Default action: show help when no subcommand provided
+// Default action: run scan when no subcommand provided (self-bootstrapping)
 program
-  .action((options, command) => {
+  .action(async (options, command) => {
     if (command.args.length === 0) {
-      program.help();
+      await scan({});
     }
   });
 

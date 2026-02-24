@@ -13,7 +13,7 @@ export const configFixes: Fix[] = [
     id: 'prod-domain-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'Production domain not configured in factiii.yml',
+    description: 'Production domain not configured in stack.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
@@ -26,13 +26,13 @@ export const configFixes: Fix[] = [
       return !environments.prod?.domain && !environments.production?.domain;
     },
     fix: null,
-    manualFix: 'Add prod.domain to factiii.yml',
+    manualFix: 'Add prod.domain to stack.yml',
   },
   {
     id: 'prod-aws-config-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'AWS configuration missing in factiii.yml',
+    description: 'AWS configuration missing in stack.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
@@ -46,7 +46,7 @@ export const configFixes: Fix[] = [
       return !prodEnv?.access_key_id || !prodEnv?.region;
     },
     fix: null,
-    manualFix: 'Add access_key_id and region to prod environment in factiii.yml',
+    manualFix: 'Add access_key_id and region to prod environment in stack.yml',
   },
   {
     id: 'prod-unreachable',

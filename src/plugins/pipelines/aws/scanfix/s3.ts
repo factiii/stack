@@ -130,7 +130,7 @@ export const s3Fixes: Fix[] = [
       const domain = prodEnv?.domain;
 
       if (!domain || domain.startsWith('EXAMPLE-')) {
-        console.log('   Set production domain in factiii.yml first');
+        console.log('   Set production domain in stack.yml first');
         return false;
       }
 

@@ -76,7 +76,7 @@ export const containerFixes: Fix[] = [
           // Generate YAML snippet
           const yamlSnippet = `container_exclusions:\n  - ${unmanaged.join('\n  - ')}`;
 
-          console.log('\n💡 To keep these containers running, add to factiii.yml:\n');
+          console.log('\n💡 To keep these containers running, add to stack.yml:\n');
           console.log(yamlSnippet);
         }
 

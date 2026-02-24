@@ -76,7 +76,7 @@ export const sesFixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const domain = getProdDomain(config);
       if (!domain) {
-        console.log('   Set production domain in factiii.yml first');
+        console.log('   Set production domain in stack.yml first');
         return false;
       }
 

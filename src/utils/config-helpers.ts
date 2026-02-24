@@ -1,7 +1,7 @@
 /**
  * Config Helpers
  *
- * Helper functions for working with factiii.yml config where
+ * Helper functions for working with stack.yml config where
  * environments are stored as top-level keys.
  */
 
@@ -44,7 +44,7 @@ export type Stage = 'dev' | 'secrets' | 'staging' | 'prod';
  * Extract environment configs from config object
  * Environments = any top-level key NOT in reserved list
  *
- * @param config - The factiii.yml config object
+ * @param config - The stack.yml config object
  * @returns Record of environment name to environment config
  */
 export function extractEnvironments(
@@ -95,7 +95,7 @@ export function getStageFromEnvironment(envName: string): Stage {
 /**
  * Get all environments that match a specific stage
  *
- * @param config - The factiii.yml config object
+ * @param config - The stack.yml config object
  * @param stage - Stage to filter by ('staging' | 'prod')
  * @returns Record of environment name to environment config for matching stage
  */
@@ -124,7 +124,7 @@ export function getEnvironmentsForStage(
  * Get used server plugins from config
  * Looks at all environments and returns unique server plugin names
  *
- * @param config - The factiii.yml config object
+ * @param config - The stack.yml config object
  * @returns Set of server plugin names used across all environments
  */
 export function getUsedServerPlugins(config: FactiiiConfig): Set<string> {
@@ -144,7 +144,7 @@ export function getUsedServerPlugins(config: FactiiiConfig): Set<string> {
  * Get used plugins from config
  * Looks at all environment plugin configs and returns unique plugin names
  *
- * @param config - The factiii.yml config object
+ * @param config - The stack.yml config object
  * @returns Set of plugin names used across all environments
  */
 export function getUsedPlugins(config: FactiiiConfig): Set<string> {

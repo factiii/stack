@@ -284,7 +284,7 @@ export const ec2Fixes: Fix[] = [
         );
         console.log('   Associated with instance: ' + instanceId);
 
-        // Auto-update factiii.yml with the new Elastic IP
+        // Auto-update stack.yml with the new Elastic IP
         const { updateConfigValue } = await import('../../../../utils/config-writer.js');
         const dir = rootDir || process.cwd();
         updateConfigValue(dir, 'prod.domain', publicIp);

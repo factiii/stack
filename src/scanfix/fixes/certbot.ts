@@ -60,8 +60,8 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
       }
 
       if (!sslEmail) {
-        console.log('   No ssl_email configured in factiii.yml');
-        console.log('   Add ssl_email: your@email.com to factiii.yml');
+        console.log('   No ssl_email configured in stack.yml');
+        console.log('   Add ssl_email: your@email.com to stack.yml');
         return false;
       }
 

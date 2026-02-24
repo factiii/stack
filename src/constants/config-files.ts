@@ -3,10 +3,10 @@
  * Single source of truth for stack.yml and stackAuto.yml.
  */
 
-/** User-editable stack config (was factiii.yml) */
+/** User-editable stack config (was stack.yml) */
 export const STACK_CONFIG_FILENAME = 'stack.yml';
 
-/** Auto-detected config (was factiiiAuto.yml) */
+/** Auto-detected config (was stackAuto.yml) */
 export const STACK_AUTO_FILENAME = 'stackAuto.yml';
 
 /** Local machine config (gitignored, per-developer) */
@@ -16,7 +16,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 /**
- * Resolve path to main config file. Prefers stack.yml, falls back to factiii.yml for backward compatibility.
+ * Resolve path to main config file. Prefers stack.yml, falls back to stack.yml for backward compatibility.
  */
 export function getStackConfigPath(rootDir: string): string {
   const primary = path.join(rootDir, STACK_CONFIG_FILENAME);

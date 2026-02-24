@@ -147,7 +147,7 @@ async function installDependencies(
 /**
  * Run certbot to obtain/renew SSL certificates using Docker
  * Called after nginx.conf is generated but before containers start
- * Collects all domains from all environments in factiii.yml and obtains certificates
+ * Collects all domains from all environments in stack.yml and obtains certificates
  * Uses standalone mode with Docker certbot (nginx must be stopped first)
  */
 async function runCertbot(
@@ -171,8 +171,8 @@ async function runCertbot(
 
   const sslEmail = config.ssl_email;
   if (!sslEmail || sslEmail.startsWith('EXAMPLE-')) {
-    console.log('      ⚠️  ssl_email not configured in factiii.yml, skipping SSL');
-    console.log('      Add ssl_email to factiii.yml to enable automatic SSL certificates');
+    console.log('      ⚠️  ssl_email not configured in stack.yml, skipping SSL');
+    console.log('      Add ssl_email to stack.yml to enable automatic SSL certificates');
     return;
   }
 

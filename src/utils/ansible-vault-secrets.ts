@@ -71,7 +71,7 @@ function getVaultPasswordFileForExec(config: AnsibleVaultSecretsConfig): string 
     return tmp;
   }
   throw new Error(
-    'Vault password required. Set ansible.vault_password_file in factiii.yml, or ANSIBLE_VAULT_PASSWORD_FILE / ANSIBLE_VAULT_PASSWORD env.'
+    'Vault password required. Set ansible.vault_password_file in stack.yml, or ANSIBLE_VAULT_PASSWORD_FILE / ANSIBLE_VAULT_PASSWORD env.'
   );
 }
 

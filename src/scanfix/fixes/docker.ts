@@ -30,7 +30,7 @@ export function createDockerInstallFix(stage: Stage, idPrefix?: string): Fix {
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       // For non-dev stages, check if environment is configured
       if (stage !== 'dev') {
-        // Environments are top-level keys in factiii.yml (not under config.environments)
+        // Environments are top-level keys in stack.yml (not under config.environments)
         const envConfig = stage === 'prod'
           ? ((config as Record<string, unknown>).prod ?? (config as Record<string, unknown>).production) as Record<string, unknown> | undefined
           : (config as Record<string, unknown>)[stage] as Record<string, unknown> | undefined;

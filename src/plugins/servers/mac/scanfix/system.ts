@@ -8,6 +8,32 @@ import type { Fix } from '../../../../types/index.js';
 
 export const systemFixes: Fix[] = [
   {
+    id: 'mac-homebrew-missing-dev',
+    stage: 'dev',
+    severity: 'critical',
+    description: 'Homebrew not installed (required for package management)',
+    scan: async (): Promise<boolean> => {
+      try {
+        execSync('which brew', { stdio: 'pipe' });
+        return false;
+      } catch {
+        return true;
+      }
+    },
+    fix: async (): Promise<boolean> => {
+      try {
+        execSync(
+          '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
+          { stdio: 'inherit' }
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    manualFix: 'Install Homebrew: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
+  },
+  {
     id: 'mac-homebrew-missing',
     stage: 'staging',
     severity: 'critical',

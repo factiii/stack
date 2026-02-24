@@ -62,7 +62,7 @@ export const configFixes: Fix[] = [
     id: 'staging-domain-missing',
     stage: 'staging',
     severity: 'critical',
-    description: 'Staging domain not configured in factiii.yml',
+    description: 'Staging domain not configured in stack.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -74,7 +74,7 @@ export const configFixes: Fix[] = [
       return !environments.staging?.domain;
     },
     fix: null,
-    manualFix: 'Add staging.domain to factiii.yml. Example:\n' +
+    manualFix: 'Add staging.domain to stack.yml. Example:\n' +
       '      staging:\n' +
       '        server: mac\n' +
       '        domain: staging.yourdomain.com\n' +

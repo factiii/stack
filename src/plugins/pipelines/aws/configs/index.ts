@@ -2,7 +2,7 @@
  * AWS Configs Index
  *
  * Exports all available AWS configuration types.
- * Configs are selected based on `config.aws.config` value in factiii.yml.
+ * Configs are selected based on `config.aws.config` value in stack.yml.
  *
  * Available configs:
  * - ec2: Basic EC2 instance

@@ -19,7 +19,9 @@ export const configFixes: Fix[] = [
       const configPath = getStackConfigPath(rootDir);
       if (!fs.existsSync(configPath)) return false;
       const content = fs.readFileSync(configPath, 'utf8');
-      return content.includes('EXAMPLE-');
+      // Only check non-comment lines (ignore # commented examples)
+      const activeLines = content.split('\n').filter(line => !line.trimStart().startsWith('#'));
+      return activeLines.some(line => line.includes('EXAMPLE-'));
     },
     fix: null,
     manualFix:

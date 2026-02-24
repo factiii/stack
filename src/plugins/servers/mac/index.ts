@@ -92,7 +92,7 @@ class MacPlugin {
   // Env vars this plugin requires
   static readonly requiredEnvVars: string[] = [];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
     // No user config needed - uses staging.host
     container_exclusions: 'array of container names to exclude from cleanup',

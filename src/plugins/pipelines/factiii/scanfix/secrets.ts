@@ -33,13 +33,13 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ansible-config',
     stage: 'secrets',
     severity: 'critical',
-    description: 'Ansible Vault not configured (ansible.vault_path missing in factiii.yml)',
+    description: 'Ansible Vault not configured (ansible.vault_path missing in stack.yml)',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       return !config.ansible?.vault_path;
     },
     fix: null,
     manualFix:
-      'Add ansible section to factiii.yml:\n' +
+      'Add ansible section to stack.yml:\n' +
       '  ansible:\n' +
       '    vault_path: group_vars/all/vault.yml\n' +
       '    vault_password_file: ~/.vault_pass  # optional',
@@ -168,7 +168,7 @@ export const secretsFixes: Fix[] = [
     },
     fix: null,
     manualFix:
-      'Create the vault password file specified in factiii.yml ansible.vault_password_file:\n' +
+      'Create the vault password file specified in stack.yml ansible.vault_password_file:\n' +
       '      macOS/Linux: echo "your-vault-password" > ~/.vault_pass && chmod 600 ~/.vault_pass\n' +
       '      Windows:     echo your-vault-password > %USERPROFILE%\\.vault_pass\n' +
       '      Or run: npx stack init (will guide you through vault setup)',
