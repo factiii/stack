@@ -311,7 +311,15 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   }
 
   console.log('-'.repeat(60));
-  console.log('TOTAL: Fixed: ' + result.fixed + ', Manual: ' + result.manual + ', Failed: ' + result.failed);
+  console.log(
+    'TOTAL: ' +
+      '✅ Fixed: ' +
+      result.fixed +
+      ', 📝 Manual: ' +
+      result.manual +
+      ', ❌ Failed: ' +
+      result.failed
+  );
 
   // Show next-step guidance after successful fix
   if (result.failed === 0 && result.manual === 0) {

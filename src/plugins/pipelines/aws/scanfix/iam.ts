@@ -166,7 +166,7 @@ export const iamFixes: Fix[] = [
     id: 'aws-iam-dev-user-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: 'IAM dev user not created (read-only access)',
+    description: '👤 IAM dev user not created (read-only access)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -228,7 +228,7 @@ export const iamFixes: Fix[] = [
     id: 'aws-iam-prod-user-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: 'IAM prod user not created (deployment access)',
+    description: '👤 IAM prod user not created (deployment access)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);

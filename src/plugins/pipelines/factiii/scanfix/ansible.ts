@@ -93,7 +93,7 @@ export const ansibleFixes: Fix[] = [
     id: 'ansible-not-installed',
     stage: 'dev',
     severity: 'warning',
-    description: 'Ansible not installed (needed for secrets management)',
+    description: '🔧 Ansible not installed (needed for secrets management)',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       return !isAnsibleInstalled();
     },

@@ -26,7 +26,7 @@ export const envFileFixes: Fix[] = [
     id: 'missing-env-example',
     stage: 'dev',
     severity: 'warning',
-    description: '.env.example not found (template for environment variables)',
+    description: '📄 .env.example not found (template for environment variables)',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       return !fs.existsSync(path.join(rootDir, '.env.example'));
     },
@@ -38,7 +38,7 @@ export const envFileFixes: Fix[] = [
     id: 'missing-env-staging',
     stage: 'staging',
     severity: 'critical',
-    description: '.env.staging not found',
+    description: '📄 .env.staging not found',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const envs = extractEnvironments(config);
       if (!envs.staging) return false; // staging not configured, skip
@@ -58,7 +58,7 @@ export const envFileFixes: Fix[] = [
     id: 'missing-env-prod',
     stage: 'prod',
     severity: 'critical',
-    description: '.env.prod not found',
+    description: '📄 .env.prod not found',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const envs = extractEnvironments(config);
       const hasProd = !!envs.prod || !!envs.production;
@@ -81,7 +81,7 @@ export const envFileFixes: Fix[] = [
     id: 'env-staging-missing-keys',
     stage: 'dev',
     severity: 'critical',
-    description: '.env.staging is missing keys from .env.example',
+    description: '🔑 .env.staging is missing keys from .env.example',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const envs = extractEnvironments(config);
       if (!envs.staging) return false;
@@ -105,7 +105,7 @@ export const envFileFixes: Fix[] = [
     id: 'env-prod-missing-keys',
     stage: 'dev',
     severity: 'critical',
-    description: '.env.prod is missing keys from .env.example',
+    description: '🔑 .env.prod is missing keys from .env.example',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const envs = extractEnvironments(config);
       const hasProd = !!envs.prod || !!envs.production;
@@ -202,7 +202,7 @@ export const envFileFixes: Fix[] = [
     id: 'env-staging-not-in-vault',
     stage: 'secrets',
     severity: 'warning',
-    description: '.env.staging not stored in Ansible Vault',
+    description: '🔐 .env.staging not stored in Ansible Vault',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       if (!config.ansible?.vault_path) return false;
 
@@ -252,7 +252,7 @@ export const envFileFixes: Fix[] = [
     id: 'env-prod-not-in-vault',
     stage: 'secrets',
     severity: 'warning',
-    description: '.env.prod not stored in Ansible Vault',
+    description: '🔐 .env.prod not stored in Ansible Vault',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       if (!config.ansible?.vault_path) return false;
 

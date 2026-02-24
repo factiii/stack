@@ -107,7 +107,7 @@ class WindowsPlugin {
       id: 'windows-winget-missing',
       stage: 'dev',
       severity: 'critical',
-      description: 'winget not available (required for package management)',
+      description: '📦 winget not available (required for package management)',
       scan: async (): Promise<boolean> => {
         try {
           execSync('winget --version', { stdio: 'pipe' });
@@ -123,7 +123,7 @@ class WindowsPlugin {
       id: 'windows-docker-missing',
       stage: 'dev',
       severity: 'warning',
-      description: 'Docker Desktop not installed',
+      description: '🐳 Docker Desktop not installed',
       scan: async (): Promise<boolean> => {
         try {
           execSync('docker --version', { stdio: 'pipe' });

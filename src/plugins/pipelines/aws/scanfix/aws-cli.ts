@@ -76,7 +76,7 @@ export const awsCliFixes: Fix[] = [
     id: 'aws-cli-not-installed-dev',
     stage: 'dev',
     severity: 'warning',
-    description: 'AWS CLI not installed (needed for ECR)',
+    description: '🔧 AWS CLI not installed (needed for ECR)',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       // Only check if AWS is configured
       if (!hasAwsPipeline(config)) return false;

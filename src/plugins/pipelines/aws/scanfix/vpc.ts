@@ -75,7 +75,7 @@ export const vpcFixes: Fix[] = [
     id: 'aws-vpc-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'AWS VPC not created for this project',
+    description: '🌐 AWS VPC not created for this project',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -120,7 +120,7 @@ export const vpcFixes: Fix[] = [
     id: 'aws-subnet-public-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'Public subnet not created (for EC2)',
+    description: '🌐 Public subnet not created (for EC2)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -172,7 +172,7 @@ export const vpcFixes: Fix[] = [
     id: 'aws-subnet-private-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'Private subnets not created (for RDS)',
+    description: '🌐 Private subnets not created (for RDS)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -232,7 +232,7 @@ export const vpcFixes: Fix[] = [
     id: 'aws-igw-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'Internet Gateway not attached to VPC',
+    description: '🌐 Internet Gateway not attached to VPC',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);

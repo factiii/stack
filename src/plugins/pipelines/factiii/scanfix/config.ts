@@ -14,7 +14,7 @@ export const configFixes: Fix[] = [
     id: 'example-values-in-config',
     stage: 'dev',
     severity: 'critical',
-    description: STACK_CONFIG_FILENAME + ' contains EXAMPLE- placeholder values that must be replaced',
+    description: '⚠️ ' + STACK_CONFIG_FILENAME + ' contains EXAMPLE- placeholder values that must be replaced',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const configPath = getStackConfigPath(rootDir);
       if (!fs.existsSync(configPath)) return false;

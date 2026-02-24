@@ -28,7 +28,7 @@ export const bootstrapFixes: Fix[] = [
     id: 'missing-stack-yml',
     stage: 'dev',
     severity: 'critical',
-    description: STACK_CONFIG_FILENAME + ' not found',
+    description: '📋 ' + STACK_CONFIG_FILENAME + ' not found',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       return !fs.existsSync(getStackConfigPath(rootDir));
     },
@@ -44,7 +44,7 @@ export const bootstrapFixes: Fix[] = [
     id: 'missing-stack-auto-yml',
     stage: 'dev',
     severity: 'critical',
-    description: STACK_AUTO_FILENAME + ' not found',
+    description: '📋 ' + STACK_AUTO_FILENAME + ' not found',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       return !fs.existsSync(getStackAutoPath(rootDir));
     },
@@ -60,7 +60,7 @@ export const bootstrapFixes: Fix[] = [
     id: 'missing-stack-local-yml',
     stage: 'dev',
     severity: 'warning',
-    description: STACK_LOCAL_FILENAME + ' not found (specifies your dev OS)',
+    description: '💻 ' + STACK_LOCAL_FILENAME + ' not found (specifies your dev OS)',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       return !fs.existsSync(getStackLocalPath(rootDir));
     },
@@ -87,7 +87,7 @@ export const bootstrapFixes: Fix[] = [
     id: 'gitignore-local-config',
     stage: 'dev',
     severity: 'info',
-    description: STACK_LOCAL_FILENAME + ' not in .gitignore',
+    description: '🙈 ' + STACK_LOCAL_FILENAME + ' not in .gitignore',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       // Only check if the file exists (no point gitignoring something that doesn't exist)
       if (!fs.existsSync(getStackLocalPath(rootDir))) return false;
@@ -105,7 +105,7 @@ export const bootstrapFixes: Fix[] = [
     id: 'gitignore-env-staging',
     stage: 'dev',
     severity: 'info',
-    description: '.env.staging not in .gitignore',
+    description: '🙈 .env.staging not in .gitignore',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const envPath = require('path').join(rootDir, '.env.staging');
       if (!fs.existsSync(envPath)) return false;
@@ -122,7 +122,7 @@ export const bootstrapFixes: Fix[] = [
     id: 'gitignore-env-prod',
     stage: 'dev',
     severity: 'info',
-    description: '.env.prod not in .gitignore',
+    description: '🙈 .env.prod not in .gitignore',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const envPath = require('path').join(rootDir, '.env.prod');
       if (!fs.existsSync(envPath)) return false;

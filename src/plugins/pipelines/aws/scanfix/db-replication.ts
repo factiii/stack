@@ -55,7 +55,7 @@ export const dbReplicationFixes: Fix[] = [
     id: 'aws-rds-ec2-pg-client-missing',
     stage: 'prod',
     severity: 'warning',
-    description: 'PostgreSQL client not installed on EC2 (needed for DB sync)',
+    description: '🔄 PostgreSQL client not installed on EC2 (needed for DB sync)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -103,7 +103,7 @@ export const dbReplicationFixes: Fix[] = [
     id: 'aws-rds-connectivity',
     stage: 'prod',
     severity: 'critical',
-    description: 'EC2 cannot connect to RDS (check security groups)',
+    description: '🔄 EC2 cannot connect to RDS (check security groups)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);

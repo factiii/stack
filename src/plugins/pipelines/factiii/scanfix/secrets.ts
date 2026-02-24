@@ -33,7 +33,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ansible-config',
     stage: 'secrets',
     severity: 'critical',
-    description: 'Ansible Vault not configured (ansible.vault_path missing in stack.yml)',
+    description: '🔐 Ansible Vault not configured (ansible.vault_path missing in stack.yml)',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       return !config.ansible?.vault_path;
     },
@@ -48,7 +48,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-staging-ssh',
     stage: 'secrets',
     severity: 'critical',
-    description: 'STAGING_SSH secret not found in Ansible Vault',
+    description: '🔑 STAGING_SSH secret not found in Ansible Vault',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -85,7 +85,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-prod-ssh',
     stage: 'secrets',
     severity: 'critical',
-    description: 'PROD_SSH secret not found in Ansible Vault',
+    description: '🔑 PROD_SSH secret not found in Ansible Vault',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -122,7 +122,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-aws-secret',
     stage: 'secrets',
     severity: 'warning',
-    description: 'AWS_SECRET_ACCESS_KEY not found in Ansible Vault (needed for ECR)',
+    description: '🔑 AWS_SECRET_ACCESS_KEY not found in Ansible Vault (needed for ECR)',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -158,7 +158,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-vault-password-file',
     stage: 'secrets',
     severity: 'critical',
-    description: 'Vault password file not found (required to decrypt secrets)',
+    description: '🔐 Vault password file not found (required to decrypt secrets)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!config.ansible?.vault_path) return false; // Will be caught by missing-ansible-config
       if (!config.ansible.vault_password_file) return false; // Not using password file
@@ -177,7 +177,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ssh-key-staging',
     stage: 'secrets',
     severity: 'critical',
-    description: 'SSH key file ' + path.join(os.homedir(), '.ssh', 'staging_deploy_key') + ' not found (required for staging access)',
+    description: '🔑 SSH key file ' + path.join(os.homedir(), '.ssh', 'staging_deploy_key') + ' not found (required for staging access)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -196,7 +196,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ssh-key-prod',
     stage: 'secrets',
     severity: 'critical',
-    description: 'SSH key file ' + path.join(os.homedir(), '.ssh', 'prod_deploy_key') + ' not found (required for prod access)',
+    description: '🔑 SSH key file ' + path.join(os.homedir(), '.ssh', 'prod_deploy_key') + ' not found (required for prod access)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);

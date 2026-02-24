@@ -111,7 +111,7 @@ export const rdsFixes: Fix[] = [
     id: 'aws-rds-subnet-group-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'RDS DB subnet group not created (needs 2 AZs)',
+    description: '🗃️ RDS DB subnet group not created (needs 2 AZs)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -152,7 +152,7 @@ export const rdsFixes: Fix[] = [
     id: 'aws-rds-instance-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'RDS PostgreSQL 15 instance not created (db.t3.micro)',
+    description: '🗃️ RDS PostgreSQL 15 instance not created (db.t3.micro)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -233,7 +233,7 @@ export const rdsFixes: Fix[] = [
     id: 'aws-rds-not-available',
     stage: 'prod',
     severity: 'warning',
-    description: 'RDS instance is not yet available (takes ~5-10 min)',
+    description: '⏳ RDS instance is not yet available (takes ~5-10 min)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -250,7 +250,7 @@ export const rdsFixes: Fix[] = [
     id: 'aws-rds-connection-test',
     stage: 'prod',
     severity: 'info',
-    description: 'Cannot verify RDS connectivity from EC2 (pg_isready not found)',
+    description: '🗃️ Cannot verify RDS connectivity from EC2 (pg_isready not found)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);

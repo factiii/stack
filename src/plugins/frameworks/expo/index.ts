@@ -125,7 +125,7 @@ class ExpoPlugin {
       id: 'expo-not-installed',
       stage: 'dev',
       severity: 'critical',
-      description: 'Expo SDK not found in package.json dependencies',
+      description: '📦 Expo SDK not found in package.json dependencies',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const pkgPath = path.join(rootDir, 'package.json');
         if (!fs.existsSync(pkgPath)) return true;
@@ -153,7 +153,7 @@ class ExpoPlugin {
       id: 'eas-cli-not-installed',
       stage: 'dev',
       severity: 'critical',
-      description: 'EAS CLI not installed (required for eas build)',
+      description: '🔧 EAS CLI not installed (required for eas build)',
       scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
         try {
           execSync('npx eas --version', { stdio: 'pipe' });
@@ -181,7 +181,7 @@ class ExpoPlugin {
       id: 'expo-app-config-missing',
       stage: 'dev',
       severity: 'critical',
-      description: 'Expo app config not found (app.json, app.config.js, or app.config.ts)',
+      description: '📋 Expo app config not found (app.json, app.config.js, or app.config.ts)',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         return !hasAppConfig(rootDir);
       },
@@ -202,7 +202,7 @@ class ExpoPlugin {
       id: 'expo-eas-json-missing',
       stage: 'dev',
       severity: 'critical',
-      description: 'eas.json not found (required for EAS Build configuration)',
+      description: '📋 eas.json not found (required for EAS Build configuration)',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         return !fs.existsSync(path.join(rootDir, 'eas.json'));
       },
@@ -221,7 +221,7 @@ class ExpoPlugin {
       id: 'expo-app-name-missing',
       stage: 'dev',
       severity: 'warning',
-      description: 'Expo app name or slug missing in app.json',
+      description: '📝 Expo app name or slug missing in app.json',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const appJson = readAppJson(rootDir);
         if (!appJson) return false; // Caught by expo-app-config-missing
@@ -240,7 +240,7 @@ class ExpoPlugin {
       id: 'expo-bundle-id-missing',
       stage: 'dev',
       severity: 'warning',
-      description: 'iOS bundleIdentifier not set in app.json (required for iOS builds)',
+      description: '🍎 iOS bundleIdentifier not set in app.json (required for iOS builds)',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const appJson = readAppJson(rootDir);
         if (!appJson) return false; // Caught by expo-app-config-missing
@@ -258,7 +258,7 @@ class ExpoPlugin {
       id: 'expo-package-name-missing',
       stage: 'dev',
       severity: 'warning',
-      description: 'Android package name not set in app.json (required for Android builds)',
+      description: '🤖 Android package name not set in app.json (required for Android builds)',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const appJson = readAppJson(rootDir);
         if (!appJson) return false; // Caught by expo-app-config-missing
@@ -280,7 +280,7 @@ class ExpoPlugin {
       id: 'expo-not-logged-in',
       stage: 'dev',
       severity: 'critical',
-      description: 'Not logged into Expo account (required for EAS Build)',
+      description: '🔑 Not logged into Expo account (required for EAS Build)',
       scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
         try {
           execSync('npx eas whoami', { stdio: 'pipe' });
@@ -313,7 +313,7 @@ class ExpoPlugin {
       id: 'expo-xcode-missing',
       stage: 'dev',
       severity: 'warning',
-      description: 'Xcode not installed (required for local iOS builds)',
+      description: '🍎 Xcode not installed (required for local iOS builds)',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const devOS = getDevOS(rootDir);
         if (devOS !== 'mac') return false; // Only check on macOS
@@ -337,7 +337,7 @@ class ExpoPlugin {
       id: 'expo-cocoapods-missing',
       stage: 'dev',
       severity: 'warning',
-      description: 'CocoaPods not installed (required for iOS builds)',
+      description: '🍎 CocoaPods not installed (required for iOS builds)',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const devOS = getDevOS(rootDir);
         if (devOS !== 'mac') return false; // Only check on macOS
@@ -371,7 +371,7 @@ class ExpoPlugin {
       id: 'expo-jdk-missing',
       stage: 'dev',
       severity: 'warning',
-      description: 'JDK 17+ not installed (required for Android builds)',
+      description: '☕ JDK 17+ not installed (required for Android builds)',
       scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
         try {
           const output = execSync('java -version 2>&1', {
@@ -417,7 +417,7 @@ class ExpoPlugin {
       id: 'expo-android-sdk-missing',
       stage: 'dev',
       severity: 'info',
-      description: 'ANDROID_HOME not set (Android SDK required for local Android builds)',
+      description: '🤖 ANDROID_HOME not set (Android SDK required for local Android builds)',
       scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
         const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
         if (!androidHome) return true;
@@ -442,7 +442,7 @@ class ExpoPlugin {
       id: 'expo-project-id-missing',
       stage: 'dev',
       severity: 'warning',
-      description: 'EAS project ID not configured (required for EAS Build)',
+      description: '🆔 EAS project ID not configured (required for EAS Build)',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const appJson = readAppJson(rootDir);
         if (!appJson) return false; // Caught by expo-app-config-missing

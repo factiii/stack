@@ -64,7 +64,7 @@ export const sesFixes: Fix[] = [
     id: 'aws-ses-domain-missing',
     stage: 'prod',
     severity: 'warning',
-    description: 'SES domain identity not verified for email',
+    description: '📧 SES domain identity not verified for email',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -116,7 +116,7 @@ export const sesFixes: Fix[] = [
     id: 'aws-ses-dkim-missing',
     stage: 'prod',
     severity: 'info',
-    description: 'SES DKIM not configured (improves email deliverability)',
+    description: '📧 SES DKIM not configured (improves email deliverability)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -162,7 +162,7 @@ export const sesFixes: Fix[] = [
     id: 'aws-ses-sandbox',
     stage: 'prod',
     severity: 'info',
-    description: 'SES is in sandbox mode (can only send to verified emails)',
+    description: '📧 SES is in sandbox mode (can only send to verified emails)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);

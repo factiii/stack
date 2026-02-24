@@ -50,7 +50,7 @@ export const s3Fixes: Fix[] = [
     id: 'aws-s3-bucket-missing',
     stage: 'prod',
     severity: 'warning',
-    description: 'S3 bucket not created for file storage',
+    description: '🪣 S3 bucket not created for file storage',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -108,7 +108,7 @@ export const s3Fixes: Fix[] = [
     id: 'aws-s3-cors-missing',
     stage: 'prod',
     severity: 'info',
-    description: 'S3 bucket CORS not configured for production domain',
+    description: '🪣 S3 bucket CORS not configured for production domain',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);

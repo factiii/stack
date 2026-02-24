@@ -111,7 +111,7 @@ export const ec2Fixes: Fix[] = [
     id: 'aws-keypair-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'EC2 key pair not created for SSH access',
+    description: '🖥️ EC2 key pair not created for SSH access',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -160,7 +160,7 @@ export const ec2Fixes: Fix[] = [
     id: 'aws-ec2-instance-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'EC2 instance not created (Ubuntu 22.04, t3.micro)',
+    description: '🖥️ EC2 instance not created (Ubuntu 22.04, t3.micro)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -248,7 +248,7 @@ export const ec2Fixes: Fix[] = [
     id: 'aws-ec2-elastic-ip',
     stage: 'prod',
     severity: 'warning',
-    description: 'Elastic IP not assigned to EC2 instance (IP changes on restart)',
+    description: '🖥️ Elastic IP not assigned to EC2 instance (IP changes on restart)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);

@@ -14,7 +14,7 @@ export const containerFixes: Fix[] = [
     id: 'staging-old-containers',
     stage: 'staging',
     severity: 'warning',
-    description: 'Unmanaged Docker containers found (not in docker-compose.yml)',
+    description: '🐳 Unmanaged Docker containers found (not in docker-compose.yml)',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const hasStagingEnv = config?.environments?.staging;
       if (!hasStagingEnv) return false;

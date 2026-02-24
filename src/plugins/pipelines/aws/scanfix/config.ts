@@ -13,7 +13,7 @@ export const configFixes: Fix[] = [
     id: 'prod-domain-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'Production domain not configured in stack.yml',
+    description: '🌐 Production domain not configured in stack.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
@@ -32,7 +32,7 @@ export const configFixes: Fix[] = [
     id: 'prod-aws-config-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'AWS configuration missing in stack.yml',
+    description: '☁️ AWS configuration missing in stack.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
@@ -52,7 +52,7 @@ export const configFixes: Fix[] = [
     id: 'prod-unreachable',
     stage: 'prod',
     severity: 'critical',
-    description: 'Cannot reach production server',
+    description: '🌐 Cannot reach production server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
@@ -79,7 +79,7 @@ export const configFixes: Fix[] = [
     id: 'prod-repo-not-cloned',
     stage: 'prod',
     severity: 'warning',
-    description: 'Repository not cloned on production server',
+    description: '📂 Repository not cloned on production server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       if (isOnServer()) return false;
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');

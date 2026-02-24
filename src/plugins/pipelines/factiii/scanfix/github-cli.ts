@@ -11,7 +11,7 @@ export const githubCliFixes: Fix[] = [
     id: 'gh-cli-not-installed',
     stage: 'dev',
     severity: 'info',
-    description: 'GitHub CLI not installed (recommended for deployment monitoring)',
+    description: '🔧 GitHub CLI not installed (recommended for deployment monitoring)',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       try {
         execSync('which gh', { stdio: 'pipe' });

@@ -52,7 +52,7 @@ export const securityGroupFixes: Fix[] = [
     id: 'aws-sg-ec2-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'EC2 security group not created (SSH, HTTP, HTTPS)',
+    description: '🛡️ EC2 security group not created (SSH, HTTP, HTTPS)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -118,7 +118,7 @@ export const securityGroupFixes: Fix[] = [
     id: 'aws-sg-rds-missing',
     stage: 'prod',
     severity: 'critical',
-    description: 'RDS security group not created (PostgreSQL from EC2 only)',
+    description: '🛡️ RDS security group not created (PostgreSQL from EC2 only)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -177,7 +177,7 @@ export const securityGroupFixes: Fix[] = [
     id: 'aws-sg-rds-mac-access',
     stage: 'prod',
     severity: 'info',
-    description: 'RDS security group does not allow Mac Mini staging access',
+    description: '🛡️ RDS security group does not allow Mac Mini staging access',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);

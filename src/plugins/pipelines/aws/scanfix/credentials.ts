@@ -198,7 +198,7 @@ export const credentialsFixes: Fix[] = [
     id: 'aws-account-not-setup',
     stage: 'dev',
     severity: 'critical',
-    description: 'AWS CLI not installed or not configured',
+    description: '☁️ AWS CLI not installed or not configured',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       // Only check if AWS pipeline is configured
       const awsConfig = getAwsConfig(config);
@@ -244,7 +244,7 @@ export const credentialsFixes: Fix[] = [
     id: 'aws-region-configured',
     stage: 'dev',
     severity: 'warning',
-    description: 'AWS region not configured in stack.yml',
+    description: '🌍 AWS region not configured in stack.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       // Only check if AWS pipeline is configured
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
@@ -269,7 +269,7 @@ export const credentialsFixes: Fix[] = [
     id: 'aws-credentials-missing',
     stage: 'secrets',
     severity: 'critical',
-    description: 'AWS credentials not available (env vars or Ansible Vault)',
+    description: '🔑 AWS credentials not available (env vars or Ansible Vault)',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       // Only check if AWS pipeline is configured
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
@@ -323,7 +323,7 @@ export const credentialsFixes: Fix[] = [
     id: 'aws-credentials-invalid',
     stage: 'secrets',
     severity: 'warning',
-    description: 'AWS credentials are invalid or expired',
+    description: '🔑 AWS credentials are invalid or expired',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       // Only check if AWS CLI is installed and credentials exist
       if (!isAwsCliInstalled()) return false;

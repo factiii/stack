@@ -38,7 +38,7 @@ export const ecrFixes: Fix[] = [
     id: 'aws-ecr-repo-missing',
     stage: 'prod',
     severity: 'warning',
-    description: 'ECR repository not created for container images',
+    description: '📦 ECR repository not created for container images',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -96,7 +96,7 @@ export const ecrFixes: Fix[] = [
     id: 'aws-ecr-login-test',
     stage: 'dev',
     severity: 'info',
-    description: 'ECR Docker login not working from dev machine',
+    description: '📦 ECR Docker login not working from dev machine',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
