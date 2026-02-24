@@ -142,6 +142,14 @@ try {
   // Plugin not available
 }
 
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ExpoPlugin = require('./frameworks/expo/index').default as PluginClass;
+  registry.frameworks['expo'] = ExpoPlugin;
+} catch {
+  // Plugin not available
+}
+
 // Addon plugins
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
