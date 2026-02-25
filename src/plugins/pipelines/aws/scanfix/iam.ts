@@ -4,35 +4,21 @@
  * Creates IAM users with scoped policies:
  * - Dev user: read-only access for development
  * - Prod user: full access for deployment
+ * Uses AWS SDK v3.
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig, getProjectName, isOnServer } from '../utils/aws-helpers.js';
-
-/**
- * Check if IAM user exists
- */
-function findIamUser(userName: string, region: string): boolean {
-  const result = awsExecSafe(
-    'aws iam get-user --user-name ' + userName,
-    region
-  );
-  return !!result && !result.includes('NoSuchEntity');
-}
-
-/**
- * Check if AWS is configured for this project
- */
-function isAwsConfigured(config: FactiiiConfig): boolean {
-  if (isOnServer()) return false;
-  if (config.aws) return true;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { extractEnvironments } = require('../../../../utils/config-helpers.js');
-  const environments = extractEnvironments(config);
-  return Object.values(environments).some(
-    (e: unknown) => (e as { pipeline?: string }).pipeline === 'aws'
-  );
-}
+import {
+  getAwsConfig,
+  getProjectName,
+  isAwsConfigured,
+  findIamUser,
+  getAwsAccountId,
+  getIAMClient,
+  CreateUserCommand,
+  PutUserPolicyCommand,
+  CreateAccessKeyCommand,
+} from '../utils/aws-helpers.js';
 
 /**
  * Generate dev IAM policy (read-only)
@@ -171,7 +157,7 @@ export const iamFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      return !findIamUser('factiii-' + projectName + '-dev', region);
+      return !(await findIamUser('factiii-' + projectName + '-dev', region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
@@ -179,35 +165,32 @@ export const iamFixes: Fix[] = [
       const userName = 'factiii-' + projectName + '-dev';
 
       try {
+        const iam = getIAMClient(region);
+
         // Get account ID for ARNs
-        const accountResult = awsExec(
-          'aws sts get-caller-identity --query Account --output text',
-          region
-        );
-        const accountId = accountResult.replace(/"/g, '').trim();
+        const accountId = await getAwsAccountId(region);
+        if (!accountId) {
+          console.log('   Could not get AWS account ID');
+          return false;
+        }
 
         // Create IAM user
-        awsExec('aws iam create-user --user-name ' + userName, region);
+        await iam.send(new CreateUserCommand({ UserName: userName }));
         console.log('   Created IAM user: ' + userName);
 
         // Create and attach inline policy
         const policy = getDevPolicy(projectName, region, accountId);
-        awsExec(
-          'aws iam put-user-policy --user-name ' + userName +
-          ' --policy-name factiii-' + projectName + '-dev-policy' +
-          " --policy-document '" + policy + "'",
-          region
-        );
+        await iam.send(new PutUserPolicyCommand({
+          UserName: userName,
+          PolicyName: 'factiii-' + projectName + '-dev-policy',
+          PolicyDocument: policy,
+        }));
         console.log('   Attached dev policy (read-only ECR, S3, EC2, RDS)');
 
         // Create access key
-        const keyResult = awsExec(
-          'aws iam create-access-key --user-name ' + userName,
-          region
-        );
-        const parsed = JSON.parse(keyResult);
-        const accessKeyId = parsed.AccessKey?.AccessKeyId;
-        const secretKey = parsed.AccessKey?.SecretAccessKey;
+        const keyResult = await iam.send(new CreateAccessKeyCommand({ UserName: userName }));
+        const accessKeyId = keyResult.AccessKey?.AccessKeyId;
+        const secretKey = keyResult.AccessKey?.SecretAccessKey;
 
         console.log('');
         console.log('   Dev credentials (save these!):');
@@ -233,7 +216,7 @@ export const iamFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      return !findIamUser('factiii-' + projectName + '-prod', region);
+      return !(await findIamUser('factiii-' + projectName + '-prod', region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
@@ -241,35 +224,32 @@ export const iamFixes: Fix[] = [
       const userName = 'factiii-' + projectName + '-prod';
 
       try {
+        const iam = getIAMClient(region);
+
         // Get account ID for ARNs
-        const accountResult = awsExec(
-          'aws sts get-caller-identity --query Account --output text',
-          region
-        );
-        const accountId = accountResult.replace(/"/g, '').trim();
+        const accountId = await getAwsAccountId(region);
+        if (!accountId) {
+          console.log('   Could not get AWS account ID');
+          return false;
+        }
 
         // Create IAM user
-        awsExec('aws iam create-user --user-name ' + userName, region);
+        await iam.send(new CreateUserCommand({ UserName: userName }));
         console.log('   Created IAM user: ' + userName);
 
         // Create and attach inline policy
         const policy = getProdPolicy(projectName, region, accountId);
-        awsExec(
-          'aws iam put-user-policy --user-name ' + userName +
-          ' --policy-name factiii-' + projectName + '-prod-policy' +
-          " --policy-document '" + policy + "'",
-          region
-        );
+        await iam.send(new PutUserPolicyCommand({
+          UserName: userName,
+          PolicyName: 'factiii-' + projectName + '-prod-policy',
+          PolicyDocument: policy,
+        }));
         console.log('   Attached prod policy (full ECR, S3, EC2, RDS, SES)');
 
         // Create access key
-        const keyResult = awsExec(
-          'aws iam create-access-key --user-name ' + userName,
-          region
-        );
-        const parsed = JSON.parse(keyResult);
-        const accessKeyId = parsed.AccessKey?.AccessKeyId;
-        const secretKey = parsed.AccessKey?.SecretAccessKey;
+        const keyResult = await iam.send(new CreateAccessKeyCommand({ UserName: userName }));
+        const accessKeyId = keyResult.AccessKey?.AccessKeyId;
+        const secretKey = keyResult.AccessKey?.SecretAccessKey;
 
         console.log('');
         console.log('   Prod credentials (save these!):');

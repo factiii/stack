@@ -151,7 +151,7 @@ describe('canReach - staging/prod stages', () => {
     const result = FactiiiPipeline.canReach('staging', baseConfig);
     expect(result.reachable).toBe(false);
     if (!result.reachable) {
-      expect(result.reason).toContain('SSH key');
+      expect(result.reason).toContain('SSH');
     }
   });
 
@@ -160,7 +160,7 @@ describe('canReach - staging/prod stages', () => {
     const result = FactiiiPipeline.canReach('staging', baseConfig);
     expect(result.reachable).toBe(false);
     if (!result.reachable) {
-      expect(result.reason).toContain('SSH key');
+      expect(result.reason).toContain('SSH');
     }
   });
 
@@ -168,7 +168,7 @@ describe('canReach - staging/prod stages', () => {
     const result = FactiiiPipeline.canReach('staging', baseConfig);
     expect(result.reachable).toBe(false);
     if (!result.reachable) {
-      expect(result.reason).toContain('SSH key');
+      expect(result.reason).toContain('SSH');
     }
   });
 

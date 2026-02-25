@@ -70,7 +70,16 @@ export const secretsFixes: Fix[] = [
       try {
         const value = await promptForSecret('STAGING_SSH', config);
         const result = await store.setSecret('STAGING_SSH', value);
-        return result.success;
+        if (!result.success) return false;
+
+        const sshDir = path.join(os.homedir(), '.ssh');
+        if (!fs.existsSync(sshDir)) {
+          fs.mkdirSync(sshDir, { mode: 0o700 });
+        }
+        const keyPath = path.join(sshDir, 'staging_deploy_key');
+        fs.writeFileSync(keyPath, value.trimEnd() + '\n', { mode: 0o600 });
+        console.log('      Wrote STAGING_SSH → ' + keyPath);
+        return true;
       } catch {
         return false;
       }
@@ -107,7 +116,16 @@ export const secretsFixes: Fix[] = [
       try {
         const value = await promptForSecret('PROD_SSH', config);
         const result = await store.setSecret('PROD_SSH', value);
-        return result.success;
+        if (!result.success) return false;
+
+        const sshDir = path.join(os.homedir(), '.ssh');
+        if (!fs.existsSync(sshDir)) {
+          fs.mkdirSync(sshDir, { mode: 0o700 });
+        }
+        const keyPath = path.join(sshDir, 'prod_deploy_key');
+        fs.writeFileSync(keyPath, value.trimEnd() + '\n', { mode: 0o600 });
+        console.log('      Wrote PROD_SSH → ' + keyPath);
+        return true;
       } catch {
         return false;
       }
@@ -177,18 +195,40 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ssh-key-staging',
     stage: 'secrets',
     severity: 'critical',
-    description: '🔑 SSH key file ' + path.join(os.homedir(), '.ssh', 'staging_deploy_key') + ' not found (required for staging access)',
+    description: '🔑 SSH_STAGING key file not on disk (required for staging access)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
 
-      // Only check if staging environment is defined
       if (!environments.staging) return false;
 
       const keyPath = path.join(os.homedir(), '.ssh', 'staging_deploy_key');
       return !fs.existsSync(keyPath);
     },
-    fix: null,
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      const store = getAnsibleStore(config, rootDir);
+      if (!store) return false;
+
+      try {
+        const key = await store.getSecret('STAGING_SSH');
+        if (!key) {
+          console.log('      STAGING_SSH not in vault yet — set it first: npx stack secrets set STAGING_SSH');
+          return false;
+        }
+
+        const sshDir = path.join(os.homedir(), '.ssh');
+        if (!fs.existsSync(sshDir)) {
+          fs.mkdirSync(sshDir, { mode: 0o700 });
+        }
+
+        const keyPath = path.join(sshDir, 'staging_deploy_key');
+        fs.writeFileSync(keyPath, key.trimEnd() + '\n', { mode: 0o600 });
+        console.log('      Wrote STAGING_SSH → ' + keyPath);
+        return true;
+      } catch {
+        return false;
+      }
+    },
     manualFix:
       'Extract SSH keys from vault: npx stack secrets write-ssh-keys',
   },
@@ -196,18 +236,40 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ssh-key-prod',
     stage: 'secrets',
     severity: 'critical',
-    description: '🔑 SSH key file ' + path.join(os.homedir(), '.ssh', 'prod_deploy_key') + ' not found (required for prod access)',
+    description: '🔑 SSH_PROD key file not on disk (required for prod access)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
 
-      // Only check if prod environment is defined
       if (!environments.prod) return false;
 
       const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
       return !fs.existsSync(keyPath);
     },
-    fix: null,
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      const store = getAnsibleStore(config, rootDir);
+      if (!store) return false;
+
+      try {
+        const key = await store.getSecret('PROD_SSH');
+        if (!key) {
+          console.log('      PROD_SSH not in vault yet — set it first: npx stack secrets set PROD_SSH');
+          return false;
+        }
+
+        const sshDir = path.join(os.homedir(), '.ssh');
+        if (!fs.existsSync(sshDir)) {
+          fs.mkdirSync(sshDir, { mode: 0o700 });
+        }
+
+        const keyPath = path.join(sshDir, 'prod_deploy_key');
+        fs.writeFileSync(keyPath, key.trimEnd() + '\n', { mode: 0o600 });
+        console.log('      Wrote PROD_SSH → ' + keyPath);
+        return true;
+      } catch {
+        return false;
+      }
+    },
     manualFix:
       'Extract SSH keys from vault: npx stack secrets write-ssh-keys',
   },

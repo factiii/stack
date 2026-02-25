@@ -52,7 +52,7 @@ For each stage, pipeline decides execution:
 | `stack.yml` | Manual settings | User |
 | `stackAuto.yml` | Auto-detected settings | Factiii (user can OVERRIDE) |
 
-**Required values:** Prefix with `EXAMPLE-` (blocks deployment until replaced)
+**Required values:** Prefix with `EXAMPLE_` (blocks deployment until replaced)
 **Override pattern:** `detected_value OVERRIDE custom_value`
 
 ## CLI Commands
@@ -152,7 +152,7 @@ Add protection comments:
 - Adding SSH calls inside scan/fix functions (pipeline handles this)
 - Running workflows without `GITHUB_ACTIONS=true --staging`/`--prod`
 - Putting server setup logic in workflow YML files
-- Forgetting `EXAMPLE-` prefix on required factiii.yml values
+- Forgetting `EXAMPLE_` prefix on required factiii.yml values
 - Deleting comments without understanding their purpose
 
 ## When User Asks To...

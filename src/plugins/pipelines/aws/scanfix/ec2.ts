@@ -4,107 +4,30 @@
  * Provisions EC2 key pair, instance, and Elastic IP.
  * Uses Ubuntu 22.04 AMI, t3.micro (free tier), public subnet.
  * Key pair private key is stored in Ansible Vault.
+ * Uses AWS SDK v3.
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig, getProjectName, isOnServer, tagSpec } from '../utils/aws-helpers.js';
-
-/**
- * Find VPC by factiii:project tag
- */
-function findVpc(projectName: string, region: string): string | null {
-  const result = awsExecSafe(
-    'aws ec2 describe-vpcs --filters "Name=tag:factiii:project,Values=' + projectName + '" --query "Vpcs[0].VpcId" --output text',
-    region
-  );
-  if (!result || result === 'None' || result === 'null') return null;
-  return result.replace(/"/g, '');
-}
-
-/**
- * Find subnet by tag and type
- */
-function findSubnet(projectName: string, region: string, type: string): string | null {
-  const result = awsExecSafe(
-    'aws ec2 describe-subnets --filters "Name=tag:factiii:project,Values=' + projectName + '" "Name=tag:factiii:subnet-type,Values=' + type + '" --query "Subnets[0].SubnetId" --output text',
-    region
-  );
-  if (!result || result === 'None' || result === 'null') return null;
-  return result.replace(/"/g, '');
-}
-
-/**
- * Find security group by name and VPC
- */
-function findSecurityGroup(groupName: string, vpcId: string, region: string): string | null {
-  const result = awsExecSafe(
-    'aws ec2 describe-security-groups --filters "Name=group-name,Values=' + groupName + '" "Name=vpc-id,Values=' + vpcId + '" --query "SecurityGroups[0].GroupId" --output text',
-    region
-  );
-  if (!result || result === 'None' || result === 'null') return null;
-  return result.replace(/"/g, '');
-}
-
-/**
- * Find EC2 key pair by name
- */
-function findKeyPair(keyName: string, region: string): boolean {
-  const result = awsExecSafe(
-    'aws ec2 describe-key-pairs --key-names ' + keyName + ' --query "KeyPairs[0].KeyPairId" --output text',
-    region
-  );
-  return !!result && result !== 'None' && result !== 'null';
-}
-
-/**
- * Find running EC2 instance by tag
- */
-function findInstance(projectName: string, region: string): string | null {
-  const result = awsExecSafe(
-    'aws ec2 describe-instances --filters "Name=tag:factiii:project,Values=' + projectName + '" "Name=instance-state-name,Values=running,stopped" --query "Reservations[0].Instances[0].InstanceId" --output text',
-    region
-  );
-  if (!result || result === 'None' || result === 'null') return null;
-  return result.replace(/"/g, '');
-}
-
-/**
- * Find Elastic IP associated with an instance
- */
-function findElasticIp(instanceId: string, region: string): string | null {
-  const result = awsExecSafe(
-    'aws ec2 describe-addresses --filters "Name=instance-id,Values=' + instanceId + '" --query "Addresses[0].PublicIp" --output text',
-    region
-  );
-  if (!result || result === 'None' || result === 'null') return null;
-  return result.replace(/"/g, '');
-}
-
-/**
- * Get latest Ubuntu 22.04 AMI for the region
- */
-function getUbuntuAmi(region: string): string | null {
-  const result = awsExecSafe(
-    'aws ec2 describe-images --owners 099720109477 --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" "Name=state,Values=available" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text',
-    region
-  );
-  if (!result || result === 'None' || result === 'null') return null;
-  return result.replace(/"/g, '');
-}
-
-/**
- * Check if AWS is configured for this project
- */
-function isAwsConfigured(config: FactiiiConfig): boolean {
-  if (isOnServer()) return false;
-  if (config.aws) return true;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { extractEnvironments } = require('../../../../utils/config-helpers.js');
-  const environments = extractEnvironments(config);
-  return Object.values(environments).some(
-    (e: unknown) => (e as { pipeline?: string }).pipeline === 'aws'
-  );
-}
+import {
+  getAwsConfig,
+  getProjectName,
+  isAwsConfigured,
+  findVpc,
+  findSubnet,
+  findSecurityGroup,
+  findKeyPair,
+  findInstance,
+  findElasticIp,
+  tagSpec,
+  getEC2Client,
+  CreateKeyPairCommand,
+  DescribeImagesCommand,
+  RunInstancesCommand,
+  waitUntilInstanceRunning,
+  DescribeInstancesCommand,
+  AllocateAddressCommand,
+  AssociateAddressCommand,
+} from '../utils/aws-helpers.js';
 
 export const ec2Fixes: Fix[] = [
   {
@@ -116,7 +39,7 @@ export const ec2Fixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      return !findKeyPair('factiii-' + projectName, region);
+      return !(await findKeyPair('factiii-' + projectName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
@@ -124,11 +47,14 @@ export const ec2Fixes: Fix[] = [
       const keyName = 'factiii-' + projectName;
 
       try {
+        const ec2 = getEC2Client(region);
+
         // Create key pair — AWS returns the private key material
-        const result = awsExec(
-          'aws ec2 create-key-pair --key-name ' + keyName + ' --key-type ed25519 --query "KeyMaterial" --output text',
-          region
-        );
+        const result = await ec2.send(new CreateKeyPairCommand({
+          KeyName: keyName,
+          KeyType: 'ed25519',
+        }));
+        const privateKey = result.KeyMaterial;
 
         // Save private key to ~/.ssh/prod_deploy_key
         const os = await import('os');
@@ -139,11 +65,10 @@ export const ec2Fixes: Fix[] = [
           fs.mkdirSync(sshDir, { mode: 0o700 });
         }
         const keyPath = path.join(sshDir, 'prod_deploy_key');
-        fs.writeFileSync(keyPath, result + '\n', { mode: 0o600 });
+        fs.writeFileSync(keyPath, privateKey + '\n', { mode: 0o600 });
         console.log('   Created key pair: ' + keyName);
         console.log('   Private key saved to: ' + keyPath);
 
-        // Store in Ansible Vault if configured
         if (config.ansible?.vault_path) {
           console.log('   TIP: Add this key to Ansible Vault with: npx stack secrets edit');
         }
@@ -165,38 +90,50 @@ export const ec2Fixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      return !findInstance(projectName, region);
+      return !(await findInstance(projectName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region);
       if (!vpcId) {
         console.log('   VPC must be created first');
         return false;
       }
 
-      const publicSubnet = findSubnet(projectName, region, 'public');
+      const publicSubnet = await findSubnet(projectName, region, 'public');
       if (!publicSubnet) {
         console.log('   Public subnet must be created first');
         return false;
       }
 
-      const ec2SgId = findSecurityGroup('factiii-' + projectName + '-ec2', vpcId, region);
+      const ec2SgId = await findSecurityGroup('factiii-' + projectName + '-ec2', vpcId, region);
       if (!ec2SgId) {
         console.log('   EC2 security group must be created first');
         return false;
       }
 
       const keyName = 'factiii-' + projectName;
-      if (!findKeyPair(keyName, region)) {
+      if (!(await findKeyPair(keyName, region))) {
         console.log('   Key pair must be created first');
         return false;
       }
 
       try {
+        const ec2 = getEC2Client(region);
+
         // Get latest Ubuntu 22.04 AMI
-        const amiId = getUbuntuAmi(region);
+        const amiResult = await ec2.send(new DescribeImagesCommand({
+          Owners: ['099720109477'],
+          Filters: [
+            { Name: 'name', Values: ['ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*'] },
+            { Name: 'state', Values: ['available'] },
+          ],
+        }));
+        const images = (amiResult.Images ?? []).sort((a, b) =>
+          (b.CreationDate ?? '').localeCompare(a.CreationDate ?? '')
+        );
+        const amiId = images[0]?.ImageId;
         if (!amiId) {
           console.log('   Failed to find Ubuntu 22.04 AMI for region ' + region);
           return false;
@@ -204,35 +141,34 @@ export const ec2Fixes: Fix[] = [
         console.log('   Using AMI: ' + amiId);
 
         // Launch instance
-        const instanceResult = awsExec(
-          'aws ec2 run-instances' +
-          ' --image-id ' + amiId +
-          ' --instance-type t3.micro' +
-          ' --key-name ' + keyName +
-          ' --security-group-ids ' + ec2SgId +
-          ' --subnet-id ' + publicSubnet +
-          ' --count 1' +
-          ' ' + tagSpec('instance', projectName),
-          region
-        );
-        const instanceId = JSON.parse(instanceResult).Instances[0].InstanceId;
+        const instanceResult = await ec2.send(new RunInstancesCommand({
+          ImageId: amiId,
+          InstanceType: 't3.micro',
+          KeyName: keyName,
+          SecurityGroupIds: [ec2SgId],
+          SubnetId: publicSubnet,
+          MinCount: 1,
+          MaxCount: 1,
+          TagSpecifications: [tagSpec('instance', projectName)],
+        }));
+        const instanceId = instanceResult.Instances?.[0]?.InstanceId;
         console.log('   Launched EC2 instance: ' + instanceId);
         console.log('   Instance type: t3.micro (free tier eligible)');
         console.log('   Waiting for instance to be running...');
 
         // Wait for instance to be running
-        awsExec(
-          'aws ec2 wait instance-running --instance-ids ' + instanceId,
-          region
+        await waitUntilInstanceRunning(
+          { client: ec2, maxWaitTime: 300 },
+          { InstanceIds: [instanceId!] }
         );
 
         // Get public IP
-        const ipResult = awsExecSafe(
-          'aws ec2 describe-instances --instance-ids ' + instanceId + ' --query "Reservations[0].Instances[0].PublicIpAddress" --output text',
-          region
-        );
-        if (ipResult && ipResult !== 'None') {
-          console.log('   Public IP: ' + ipResult.replace(/"/g, ''));
+        const descResult = await ec2.send(new DescribeInstancesCommand({
+          InstanceIds: [instanceId!],
+        }));
+        const publicIp = descResult.Reservations?.[0]?.Instances?.[0]?.PublicIpAddress;
+        if (publicIp) {
+          console.log('   Public IP: ' + publicIp);
           console.log('   NOTE: This IP will change on restart. Run fix again for Elastic IP.');
         }
 
@@ -253,41 +189,42 @@ export const ec2Fixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const instanceId = findInstance(projectName, region);
-      if (!instanceId) return false; // Instance must exist first
-      return !findElasticIp(instanceId, region);
+      const instanceId = await findInstance(projectName, region);
+      if (!instanceId) return false;
+      return !(await findElasticIp(instanceId, region));
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const instanceId = findInstance(projectName, region);
+      const instanceId = await findInstance(projectName, region);
       if (!instanceId) {
         console.log('   EC2 instance must be created first');
         return false;
       }
 
       try {
+        const ec2 = getEC2Client(region);
+
         // Allocate Elastic IP
-        const eipResult = awsExec(
-          'aws ec2 allocate-address --domain vpc ' + tagSpec('elastic-ip', projectName),
-          region
-        );
-        const parsed = JSON.parse(eipResult);
-        const allocationId = parsed.AllocationId;
-        const publicIp = parsed.PublicIp;
+        const eipResult = await ec2.send(new AllocateAddressCommand({
+          Domain: 'vpc',
+          TagSpecifications: [tagSpec('elastic-ip', projectName)],
+        }));
+        const allocationId = eipResult.AllocationId;
+        const publicIp = eipResult.PublicIp;
         console.log('   Allocated Elastic IP: ' + publicIp);
 
         // Associate with instance
-        awsExec(
-          'aws ec2 associate-address --allocation-id ' + allocationId + ' --instance-id ' + instanceId,
-          region
-        );
+        await ec2.send(new AssociateAddressCommand({
+          AllocationId: allocationId,
+          InstanceId: instanceId,
+        }));
         console.log('   Associated with instance: ' + instanceId);
 
-        // Auto-update stack.yml with the new Elastic IP
+        // Auto-update stack.yml
         const { updateConfigValue } = await import('../../../../utils/config-writer.js');
         const dir = rootDir || process.cwd();
-        updateConfigValue(dir, 'prod.domain', publicIp);
+        updateConfigValue(dir, 'prod.domain', publicIp!);
         updateConfigValue(dir, 'prod.ssh_user', 'ubuntu');
 
         return true;

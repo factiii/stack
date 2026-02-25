@@ -16,7 +16,7 @@ npx stack init
 # - stackAuto.yml (auto-detected config)
 # - .github/workflows/ (CI/CD workflows)
 
-# Edit stack.yml to replace EXAMPLE- values
+# Edit stack.yml to replace EXAMPLE_ values
 # Then run:
 npx stack scan    # Check for issues
 npx stack fix     # Auto-fix issues

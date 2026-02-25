@@ -86,10 +86,10 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
     // ============================================================
     // RESERVED CONFIG FIELDS
     // ============================================================
-    name: 'EXAMPLE-your-repo-name',
+    name: 'EXAMPLE_your-repo-name',
     config_version: '0.1.0',
-    github_repo: 'EXAMPLE-username/repo-name',
-    ssl_email: 'EXAMPLE-admin@yourdomain.com',
+    github_repo: 'EXAMPLE_username/repo-name',
+    ssl_email: 'EXAMPLE_admin@yourdomain.com',
     pipeline: 'factiii',  // Pipeline plugin (e.g., factiii for GitHub Actions)
 
     // Ansible Vault configuration (for secrets)
@@ -103,25 +103,25 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
     // ============================================================
     staging: {
       server: 'mac',  // Server OS type (mac, ubuntu, windows, amazon-linux)
-      domain: 'EXAMPLE-staging.yourdomain.com',  // Used for nginx AND SSH
+      domain: 'EXAMPLE_staging.yourdomain.com',  // Used for nginx AND SSH
       env_file: '.env.staging',
     },
 
     prod: {
       server: 'ubuntu',  // Server OS type
       pipeline: 'aws',   // Use AWS pipeline for deployment
-      domain: 'EXAMPLE-yourdomain.com',  // Used for nginx AND SSH
+      domain: 'EXAMPLE_yourdomain.com',  // Used for nginx AND SSH
 
       // AWS-specific config (when server: aws)
       config: 'free-tier', // Options: ec2, free-tier, standard, enterprise
-      access_key_id: 'EXAMPLE-AKIAXXXXXXXX',
+      access_key_id: 'EXAMPLE_AKIAXXXXXXXX',
       region: 'us-east-1',
 
       // Plugin configs for this environment
       plugins: {
         ecr: {
-          ecr_registry: 'EXAMPLE-123456789012.dkr.ecr.us-east-1.amazonaws.com',
-          ecr_repository: 'EXAMPLE-repo-name',
+          ecr_registry: 'EXAMPLE_123456789012.dkr.ecr.us-east-1.amazonaws.com',
+          ecr_repository: 'EXAMPLE_repo-name',
         },
       },
     },
@@ -159,7 +159,7 @@ export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = 
 #   pipeline: aws
 #   domain: app2.yourdomain.com
 #   config: free-tier
-#   access_key_id: EXAMPLE-AKIAXXXXXXXX
+#   access_key_id: EXAMPLE_AKIAXXXXXXXX
 #   region: us-west-2
 
 # ============================================================
@@ -201,20 +201,28 @@ export function generateFactiiiYml(rootDir: string, options: GenerateOptions = {
   fs.writeFileSync(outputPath, content);
 
   console.log('[OK] Created ' + STACK_CONFIG_FILENAME);
-  console.log('\nNEXT STEPS:\n');
-  console.log('  1. Configure your project:');
-  console.log('     [ ] Replace all EXAMPLE- values in ' + STACK_CONFIG_FILENAME);
-  console.log('         - name, github_repo, ssl_email, domains\n');
-  console.log('  2. Set up secrets (requires ansible-vault):');
-  console.log('     [ ] Generate SSH key:  ssh-keygen -t ed25519 -f ~/.ssh/staging_deploy_key');
-  console.log('     [ ] Store in vault:    npx stack secrets set STAGING_SSH');
-  console.log('     [ ] Add public key to server: ssh-copy-id -i ~/.ssh/staging_deploy_key.pub user@host\n');
-  console.log('  3. Validate and fix:');
-  console.log('     [ ] npx stack scan          (check for issues)');
-  console.log('     [ ] npx stack fix           (auto-fix what it can)\n');
-  console.log('  4. Deploy:');
+  console.log('');
+  console.log('     This is the configuration file for everything.');
+  console.log('');
+  console.log('NEXT STEPS:');
+  console.log('');
+  console.log('  1. Update this file:');
+  console.log('     [ ] Replace all EXAMPLE_ values in ' + STACK_CONFIG_FILENAME);
+  console.log('         (ssl_email, staging.domain, prod.domain)');
+  console.log('');
+  console.log('  2. Set up secrets:');
+  console.log('     [ ] npx stack init        (vault + SSH keys + credentials)');
+  console.log('');
+  console.log('  3. Scan for issues:');
+  console.log('     [ ] npx stack scan        (read-only check - changes nothing)');
+  console.log('');
+  console.log('  4. Auto-fix issues:');
+  console.log('     [ ] npx stack fix         (installs tools, creates configs)');
+  console.log('');
+  console.log('  5. Deploy:');
   console.log('     [ ] npx stack deploy --staging --dry-run   (preview)');
-  console.log('     [ ] npx stack deploy --staging             (deploy)\n');
+  console.log('     [ ] npx stack deploy --staging             (deploy)');
+  console.log('');
 
   return true;
 }
@@ -263,7 +271,7 @@ function detectServerOS(): 'mac' | 'ubuntu' | 'windows' {
 /**
  * Generate a smart stack.yml by auto-detecting project configuration.
  * Auto-detects: name, github_repo, pipeline, staging/prod, frameworks.
- * Uses EXAMPLE- prefix for values that cannot be auto-detected (domains, ssl_email).
+ * Uses EXAMPLE_ prefix for values that cannot be auto-detected (domains, ssl_email).
  */
 export function generateSmartStackYml(rootDir: string): boolean {
   const outputPath = path.join(rootDir, STACK_CONFIG_FILENAME);
@@ -281,7 +289,7 @@ export function generateSmartStackYml(rootDir: string): boolean {
   const name = (pkgName ?? dirName).replace(/[^a-z0-9-]/gi, '-').toLowerCase();
 
   // Detect github repo
-  const githubRepo = detectGithubRepo(rootDir) ?? 'EXAMPLE-username/' + name;
+  const githubRepo = detectGithubRepo(rootDir) ?? 'EXAMPLE_username/' + name;
 
   // Detect server OS for staging
   const devOS = detectServerOS();
@@ -291,8 +299,8 @@ export function generateSmartStackYml(rootDir: string): boolean {
   const config: Record<string, unknown> = {
     name,
     config_version: '0.1.0',
-    github_repo: githubRepo.startsWith('EXAMPLE-') ? githubRepo : githubRepo,
-    ssl_email: 'EXAMPLE-admin@yourdomain.com',
+    github_repo: githubRepo.startsWith('EXAMPLE_') ? githubRepo : githubRepo,
+    ssl_email: 'EXAMPLE_admin@yourdomain.com',
     pipeline: 'factiii',
 
     ansible: {
@@ -302,13 +310,13 @@ export function generateSmartStackYml(rootDir: string): boolean {
 
     staging: {
       server: stagingServer,
-      domain: 'EXAMPLE-staging.yourdomain.com',
+      domain: 'EXAMPLE_staging.yourdomain.com',
       env_file: '.env.staging',
     },
 
     prod: {
       server: 'ubuntu',
-      domain: 'EXAMPLE-yourdomain.com',
+      domain: 'EXAMPLE_yourdomain.com',
       env_file: '.env.prod',
     },
   };
@@ -324,7 +332,7 @@ export function generateSmartStackYml(rootDir: string): boolean {
   const sections: string[] = [];
 
   sections.push('# Generated by @factiii/stack');
-  sections.push('# Replace all EXAMPLE- values with your actual configuration');
+  sections.push('# Replace all EXAMPLE_ values with your actual configuration');
   sections.push('');
 
   // Dump main config
@@ -341,10 +349,29 @@ export function generateSmartStackYml(rootDir: string): boolean {
   sections.push('# ============================================================');
   sections.push('# NEXT STEPS');
   sections.push('# ============================================================');
-  sections.push('# 1. Replace all EXAMPLE- values (name, github_repo, ssl_email, domains)');
-  sections.push('# 2. Run: npx stack init    (set up vault and secrets)');
-  sections.push('# 3. Run: npx stack         (scan for issues)');
-  sections.push('# 4. Run: npx stack fix     (auto-fix what it can)');
+  sections.push('#');
+  sections.push('# 1. UPDATE THIS FILE');
+  sections.push('#    Replace all values marked EXAMPLE_ with your actual values:');
+  sections.push('#    - ssl_email: your real email for SSL certificates');
+  sections.push('#    - staging.domain: your staging domain');
+  sections.push('#    - prod.domain: your production domain');
+  sections.push('#');
+  sections.push('# 2. SET UP SECRETS');
+  sections.push('#    npx stack init           -> creates vault, prompts for SSH keys & credentials');
+  sections.push('#');
+  sections.push('# 3. SCAN FOR ISSUES');
+  sections.push('#    npx stack scan           -> checks everything, reports what is missing (changes nothing)');
+  sections.push('#');
+  sections.push('# 4. AUTO-FIX ISSUES');
+  sections.push('#    npx stack fix            -> installs tools, creates config files, fixes what it can');
+  sections.push('#                                (does NOT touch docker/nginx - those are handled by deploy)');
+  sections.push('#');
+  sections.push('# 5. DEPLOY');
+  sections.push('#    npx stack deploy --staging --dry-run   -> preview what will happen');
+  sections.push('#    npx stack deploy --staging             -> deploy to staging');
+  sections.push('#    npx stack deploy --prod                -> deploy to production');
+  sections.push('#');
+  sections.push('# ============================================================');
   sections.push('');
 
   const finalContent = sections.join('\n');

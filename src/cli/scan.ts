@@ -470,32 +470,23 @@ function checkReachability(
 export async function scan(options: ScanOptions = {}, _isRerun = false): Promise<ScanProblems> {
   const rootDir = options.rootDir ?? process.cwd();
 
-  // Bootstrap: if no config exists, create config files via bootstrap fixes
-  if (!_isRerun) {
-    const pluginsOrNull = await loadPlugins(rootDir);
-    if (pluginsOrNull === null) {
-      console.log('No stack.yml found. Setting up project...\n');
-      const bootstrapPlugins = loadBootstrapPlugins();
-      if (bootstrapPlugins.length === 0) {
-        console.error('\n[ERROR] No pipeline plugin available for bootstrap.');
-        console.error('   This should not happen. Reinstall @factiii/stack.\n');
-        process.exit(1);
-      }
-      await runBootstrapFixes(bootstrapPlugins, rootDir);
-      console.log('');
-      // Re-run scan now that config files exist
-      return scan(options, true);
-    }
+  // ============================================================
+  // Scan NEVER modifies files. If no config, tell user to init.
+  // ============================================================
+  const pluginsOrNull = await loadPlugins(rootDir);
+  if (pluginsOrNull === null) {
+    console.log('');
+    console.log('  No stack.yml found.');
+    console.log('');
+    console.log('  Run: npx stack init');
+    console.log('');
+    console.log('  This will scan your codebase, create stack.yml with');
+    console.log('  EXAMPLE_ values, and set up vault/secrets.');
+    console.log('');
+    return { dev: [], secrets: [], staging: [], prod: [] };
   }
 
   const config = loadConfig(rootDir);
-
-  // After bootstrap, if config still doesn't exist, give up
-  if (_isRerun && (!config || Object.keys(config).length === 0)) {
-    console.error('\n[ERROR] Bootstrap failed to create stack.yml.');
-    console.error('   Run: npx stack init\n');
-    process.exit(1);
-  }
 
   // If commit hash provided, verify we're scanning the right code
   if (options.commit) {

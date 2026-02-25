@@ -186,7 +186,7 @@ async function runCertbot(
   // Collect all domains that need certificates
   const domains: string[] = [];
   for (const env of Object.values(environments)) {
-    if (env.domain && !env.domain.startsWith('EXAMPLE-')) {
+    if (env.domain && !env.domain.startsWith('EXAMPLE_')) {
       domains.push(env.domain);
     }
   }
@@ -197,7 +197,7 @@ async function runCertbot(
   }
 
   const sslEmail = config.ssl_email;
-  if (!sslEmail || sslEmail.startsWith('EXAMPLE-')) {
+  if (!sslEmail || sslEmail.startsWith('EXAMPLE_')) {
     console.log('      ⚠️  ssl_email not configured in stack.yml, skipping SSL');
     console.log('      Add ssl_email to stack.yml to enable automatic SSL certificates');
     return;

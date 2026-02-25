@@ -4,93 +4,23 @@
  * Provisions RDS PostgreSQL 15 instance (db.t3.micro free tier).
  * Creates DB subnet group from private subnets, launches instance with RDS SG.
  * Stores DATABASE_URL in Ansible Vault.
+ * Uses AWS SDK v3.
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig, getProjectName, isOnServer } from '../utils/aws-helpers.js';
-
-/**
- * Find VPC by factiii:project tag
- */
-function findVpc(projectName: string, region: string): string | null {
-  const result = awsExecSafe(
-    'aws ec2 describe-vpcs --filters "Name=tag:factiii:project,Values=' + projectName + '" --query "Vpcs[0].VpcId" --output text',
-    region
-  );
-  if (!result || result === 'None' || result === 'null') return null;
-  return result.replace(/"/g, '');
-}
-
-/**
- * Find all private subnets
- */
-function findPrivateSubnets(projectName: string, region: string): string[] {
-  const result = awsExecSafe(
-    'aws ec2 describe-subnets --filters "Name=tag:factiii:project,Values=' + projectName + '" "Name=tag:factiii:subnet-type,Values=private" --query "Subnets[*].SubnetId" --output text',
-    region
-  );
-  if (!result || result === 'None' || result === 'null') return [];
-  return result.split(/\s+/).filter(Boolean);
-}
-
-/**
- * Find security group by name and VPC
- */
-function findSecurityGroup(groupName: string, vpcId: string, region: string): string | null {
-  const result = awsExecSafe(
-    'aws ec2 describe-security-groups --filters "Name=group-name,Values=' + groupName + '" "Name=vpc-id,Values=' + vpcId + '" --query "SecurityGroups[0].GroupId" --output text',
-    region
-  );
-  if (!result || result === 'None' || result === 'null') return null;
-  return result.replace(/"/g, '');
-}
-
-/**
- * Check if DB subnet group exists
- */
-function findDbSubnetGroup(groupName: string, region: string): boolean {
-  const result = awsExecSafe(
-    'aws rds describe-db-subnet-groups --db-subnet-group-name ' + groupName + ' --query "DBSubnetGroups[0].DBSubnetGroupName" --output text',
-    region
-  );
-  return !!result && result !== 'None' && result !== 'null';
-}
-
-/**
- * Find RDS instance by identifier
- */
-function findRdsInstance(dbInstanceId: string, region: string): { status: string; endpoint: string | null } | null {
-  const result = awsExecSafe(
-    'aws rds describe-db-instances --db-instance-identifier ' + dbInstanceId,
-    region
-  );
-  if (!result) return null;
-  try {
-    const parsed = JSON.parse(result);
-    const instance = parsed.DBInstances?.[0];
-    if (!instance) return null;
-    return {
-      status: instance.DBInstanceStatus,
-      endpoint: instance.Endpoint?.Address ?? null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Check if AWS is configured for this project
- */
-function isAwsConfigured(config: FactiiiConfig): boolean {
-  if (isOnServer()) return false;
-  if (config.aws) return true;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { extractEnvironments } = require('../../../../utils/config-helpers.js');
-  const environments = extractEnvironments(config);
-  return Object.values(environments).some(
-    (e: unknown) => (e as { pipeline?: string }).pipeline === 'aws'
-  );
-}
+import {
+  getAwsConfig,
+  getProjectName,
+  isAwsConfigured,
+  findVpc,
+  findPrivateSubnets,
+  findSecurityGroup,
+  findDbSubnetGroup,
+  findRdsInstance,
+  getRDSClient,
+  CreateDBSubnetGroupCommand,
+  CreateDBInstanceCommand,
+} from '../utils/aws-helpers.js';
 
 /**
  * Generate a random password for RDS
@@ -116,28 +46,28 @@ export const rdsFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const privateSubnets = findPrivateSubnets(projectName, region);
-      if (privateSubnets.length < 2) return false; // Private subnets must exist first
-      return !findDbSubnetGroup('factiii-' + projectName, region);
+      const privateSubnets = await findPrivateSubnets(projectName, region);
+      if (privateSubnets.length < 2) return false;
+      return !(await findDbSubnetGroup('factiii-' + projectName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const privateSubnets = findPrivateSubnets(projectName, region);
+      const privateSubnets = await findPrivateSubnets(projectName, region);
       if (privateSubnets.length < 2) {
         console.log('   Need at least 2 private subnets first');
         return false;
       }
 
       try {
+        const rds = getRDSClient(region);
         const groupName = 'factiii-' + projectName;
-        awsExec(
-          'aws rds create-db-subnet-group' +
-          ' --db-subnet-group-name ' + groupName +
-          ' --db-subnet-group-description "Factiii DB subnet group for ' + projectName + '"' +
-          ' --subnet-ids ' + privateSubnets.join(' '),
-          region
-        );
+
+        await rds.send(new CreateDBSubnetGroupCommand({
+          DBSubnetGroupName: groupName,
+          DBSubnetGroupDescription: 'Factiii DB subnet group for ' + projectName,
+          SubnetIds: privateSubnets,
+        }));
         console.log('   Created DB subnet group: ' + groupName);
         console.log('   Using subnets: ' + privateSubnets.join(', '));
         return true;
@@ -158,52 +88,51 @@ export const rdsFixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const dbId = 'factiii-' + projectName + '-db';
-      return !findRdsInstance(dbId, region);
+      return !(await findRdsInstance(dbId, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region);
       if (!vpcId) {
         console.log('   VPC must be created first');
         return false;
       }
 
       const subnetGroupName = 'factiii-' + projectName;
-      if (!findDbSubnetGroup(subnetGroupName, region)) {
+      if (!(await findDbSubnetGroup(subnetGroupName, region))) {
         console.log('   DB subnet group must be created first');
         return false;
       }
 
-      const rdsSgId = findSecurityGroup('factiii-' + projectName + '-rds', vpcId, region);
+      const rdsSgId = await findSecurityGroup('factiii-' + projectName + '-rds', vpcId, region);
       if (!rdsSgId) {
         console.log('   RDS security group must be created first');
         return false;
       }
 
       try {
+        const rds = getRDSClient(region);
         const dbId = 'factiii-' + projectName + '-db';
         const dbName = projectName.replace(/[^a-zA-Z0-9]/g, '');
         const masterUser = 'factiii';
         const masterPassword = generateRdsPassword();
 
-        awsExec(
-          'aws rds create-db-instance' +
-          ' --db-instance-identifier ' + dbId +
-          ' --db-instance-class db.t3.micro' +
-          ' --engine postgres' +
-          ' --engine-version 15' +
-          ' --allocated-storage 20' +
-          ' --master-username ' + masterUser +
-          ' --master-user-password ' + masterPassword +
-          ' --db-name ' + dbName +
-          ' --db-subnet-group-name ' + subnetGroupName +
-          ' --vpc-security-group-ids ' + rdsSgId +
-          ' --no-publicly-accessible' +
-          ' --storage-type gp2' +
-          ' --backup-retention-period 1',
-          region
-        );
+        await rds.send(new CreateDBInstanceCommand({
+          DBInstanceIdentifier: dbId,
+          DBInstanceClass: 'db.t3.micro',
+          Engine: 'postgres',
+          EngineVersion: '15',
+          AllocatedStorage: 20,
+          MasterUsername: masterUser,
+          MasterUserPassword: masterPassword,
+          DBName: dbName,
+          DBSubnetGroupName: subnetGroupName,
+          VpcSecurityGroupIds: [rdsSgId],
+          PubliclyAccessible: false,
+          StorageType: 'gp2',
+          BackupRetentionPeriod: 1,
+        }));
 
         console.log('   Creating RDS instance: ' + dbId);
         console.log('   Engine: PostgreSQL 15');
@@ -239,8 +168,8 @@ export const rdsFixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const dbId = 'factiii-' + projectName + '-db';
-      const instance = findRdsInstance(dbId, region);
-      if (!instance) return false; // No instance yet
+      const instance = await findRdsInstance(dbId, region);
+      if (!instance) return false;
       return instance.status !== 'available';
     },
     fix: null,
@@ -256,11 +185,9 @@ export const rdsFixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const dbId = 'factiii-' + projectName + '-db';
-      const instance = findRdsInstance(dbId, region);
+      const instance = await findRdsInstance(dbId, region);
       if (!instance || instance.status !== 'available' || !instance.endpoint) return false;
 
-      // Check if pg_isready is available on EC2 via SSH
-      // This scan runs on the dev machine, so we check via SSH
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { extractEnvironments } = require('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -273,7 +200,7 @@ export const rdsFixes: Fix[] = [
         const result = await sshExec(prodEnv, 'which pg_isready 2>/dev/null && pg_isready -h ' + instance.endpoint + ' -p 5432 2>&1 || echo "pg_isready not found"');
         return result.includes('pg_isready not found') || result.includes('no response');
       } catch {
-        return false; // Can't SSH — skip this check
+        return false;
       }
     },
     fix: null,

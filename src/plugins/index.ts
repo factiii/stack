@@ -159,6 +159,14 @@ try {
   // Plugin not available
 }
 
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const OpenClawAddon = require('./addons/openclaw/index').default as PluginClass;
+  registry.addons['openclaw'] = OpenClawAddon;
+} catch {
+  // Plugin not available
+}
+
 // ============================================================
 // REGISTRATION FUNCTIONS
 // ============================================================

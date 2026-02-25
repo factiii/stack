@@ -156,7 +156,7 @@ async function runLocalFixes(
           }
 
           if (success) {
-            console.log('  [OK] Fixed: ' + problem.description);
+            console.log('  ✅ Fixed: ' + problem.description);
             result.fixed++;
             result.fixes.push({
               id: problem.id,
@@ -165,7 +165,7 @@ async function runLocalFixes(
               description: problem.description,
             });
           } else {
-            console.log('  [ERROR] Failed to fix: ' + problem.description);
+            console.log('  ❌ Failed to fix: ' + problem.description);
             result.failed++;
             result.fixes.push({
               id: problem.id,
@@ -176,7 +176,7 @@ async function runLocalFixes(
           }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          console.log('  [ERROR] Error fixing ' + problem.id + ': ' + errorMessage);
+          console.log('  ❌ Error fixing ' + problem.id + ': ' + errorMessage);
           result.failed++;
           result.fixes.push({
             id: problem.id,
@@ -187,7 +187,7 @@ async function runLocalFixes(
           });
         }
       } else {
-        console.log('  [man] Manual fix required: ' + problem.description);
+        console.log('  📝 Manual fix required: ' + problem.description);
         console.log('      -> ' + problem.manualFix);
         result.manual++;
         result.fixes.push({
@@ -293,14 +293,14 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
       // Show each fix with its status and details
       for (const fix of stageFixes) {
         if (fix.status === 'fixed') {
-          console.log('  [OK] Fixed: ' + (fix.description || fix.id));
+          console.log('  ✅ Fixed: ' + (fix.description || fix.id));
         } else if (fix.status === 'manual') {
-          console.log('  [man] Manual: ' + (fix.description || fix.id));
+          console.log('  📝 Manual: ' + (fix.description || fix.id));
           if (fix.manualFix) {
             console.log('    -> ' + fix.manualFix);
           }
         } else if (fix.status === 'failed') {
-          console.log('  [ERROR] Failed: ' + (fix.description || fix.id));
+          console.log('  ❌ Failed: ' + (fix.description || fix.id));
           if (fix.error) {
             console.log('      Error: ' + fix.error);
           }
@@ -329,15 +329,15 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
       console.log('============================================================');
       console.log('✅ Infrastructure ready!');
       if (stages.includes('prod')) {
-        console.log('   Next step:  npx factiii deploy --prod');
+        console.log('   Next step:  npx stack deploy --prod');
       } else if (stages.includes('staging')) {
-        console.log('   Next step:  npx factiii deploy --staging');
+        console.log('   Next step:  npx stack deploy --staging');
       }
       console.log('============================================================');
     }
   } else if (result.manual > 0 && result.failed === 0) {
     console.log('');
-    console.log('⚠️  Resolve manual fixes above, then re-run: npx factiii fix');
+    console.log('⚠️  Resolve manual fixes above, then re-run: npx stack fix');
   }
 
   // Exit with error if any fixes failed

@@ -3,47 +3,22 @@
  *
  * Provisions S3 bucket with encryption and blocked public access.
  * Configures CORS for the production domain.
+ * Uses AWS SDK v3.
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig, getProjectName, isOnServer } from '../utils/aws-helpers.js';
-
-/**
- * Check if S3 bucket exists
- */
-function findBucket(bucketName: string, region: string): boolean {
-  const result = awsExecSafe(
-    'aws s3api head-bucket --bucket ' + bucketName,
-    region
-  );
-  // head-bucket returns empty on success, throws on failure
-  return result !== null;
-}
-
-/**
- * Check if CORS is configured on bucket
- */
-function hasCors(bucketName: string, region: string): boolean {
-  const result = awsExecSafe(
-    'aws s3api get-bucket-cors --bucket ' + bucketName,
-    region
-  );
-  return !!result && result !== 'null';
-}
-
-/**
- * Check if AWS is configured for this project
- */
-function isAwsConfigured(config: FactiiiConfig): boolean {
-  if (isOnServer()) return false;
-  if (config.aws) return true;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { extractEnvironments } = require('../../../../utils/config-helpers.js');
-  const environments = extractEnvironments(config);
-  return Object.values(environments).some(
-    (e: unknown) => (e as { pipeline?: string }).pipeline === 'aws'
-  );
-}
+import {
+  getAwsConfig,
+  getProjectName,
+  isAwsConfigured,
+  findBucket,
+  hasCors,
+  getS3Client,
+  CreateBucketCommand,
+  PutPublicAccessBlockCommand,
+  PutBucketEncryptionCommand,
+  PutBucketCorsCommand,
+} from '../utils/aws-helpers.js';
 
 export const s3Fixes: Fix[] = [
   {
@@ -56,7 +31,7 @@ export const s3Fixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const bucketName = 'factiii-' + projectName;
-      return !findBucket(bucketName, region);
+      return !(await findBucket(bucketName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
@@ -64,36 +39,42 @@ export const s3Fixes: Fix[] = [
       const bucketName = 'factiii-' + projectName;
 
       try {
+        const s3 = getS3Client(region);
+
         // Create bucket (us-east-1 doesn't need LocationConstraint)
         if (region === 'us-east-1') {
-          awsExec(
-            'aws s3api create-bucket --bucket ' + bucketName,
-            region
-          );
+          await s3.send(new CreateBucketCommand({ Bucket: bucketName }));
         } else {
-          awsExec(
-            'aws s3api create-bucket --bucket ' + bucketName +
-            ' --create-bucket-configuration LocationConstraint=' + region,
-            region
-          );
+          await s3.send(new CreateBucketCommand({
+            Bucket: bucketName,
+            CreateBucketConfiguration: { LocationConstraint: region as any },
+          }));
         }
         console.log('   Created S3 bucket: ' + bucketName);
 
         // Block all public access
-        awsExec(
-          'aws s3api put-public-access-block --bucket ' + bucketName +
-          ' --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true',
-          region
-        );
+        await s3.send(new PutPublicAccessBlockCommand({
+          Bucket: bucketName,
+          PublicAccessBlockConfiguration: {
+            BlockPublicAcls: true,
+            IgnorePublicAcls: true,
+            BlockPublicPolicy: true,
+            RestrictPublicBuckets: true,
+          },
+        }));
         console.log('   Blocked all public access');
 
         // Enable server-side encryption (AES-256)
-        awsExec(
-          'aws s3api put-bucket-encryption --bucket ' + bucketName +
-          ' --server-side-encryption-configuration ' +
-          '"{\\\"Rules\\\":[{\\\"ApplyServerSideEncryptionByDefault\\\":{\\\"SSEAlgorithm\\\":\\\"AES256\\\"}}]}"',
-          region
-        );
+        await s3.send(new PutBucketEncryptionCommand({
+          Bucket: bucketName,
+          ServerSideEncryptionConfiguration: {
+            Rules: [{
+              ApplyServerSideEncryptionByDefault: {
+                SSEAlgorithm: 'AES256',
+              },
+            }],
+          },
+        }));
         console.log('   Enabled AES-256 encryption');
 
         return true;
@@ -114,41 +95,39 @@ export const s3Fixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const bucketName = 'factiii-' + projectName;
-      if (!findBucket(bucketName, region)) return false;
-      return !hasCors(bucketName, region);
+      if (!(await findBucket(bucketName, region))) return false;
+      return !(await hasCors(bucketName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const bucketName = 'factiii-' + projectName;
 
-      // Get production domain for CORS
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { extractEnvironments } = require('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
       const prodEnv = environments.prod ?? environments.production;
       const domain = prodEnv?.domain;
 
-      if (!domain || domain.startsWith('EXAMPLE-')) {
+      if (!domain || domain.startsWith('EXAMPLE_')) {
         console.log('   Set production domain in stack.yml first');
         return false;
       }
 
       try {
-        const corsConfig = JSON.stringify({
-          CORSRules: [{
-            AllowedHeaders: ['*'],
-            AllowedMethods: ['GET', 'PUT', 'POST', 'DELETE'],
-            AllowedOrigins: ['https://' + domain],
-            MaxAgeSeconds: 3600,
-          }],
-        });
+        const s3 = getS3Client(region);
 
-        awsExec(
-          'aws s3api put-bucket-cors --bucket ' + bucketName +
-          " --cors-configuration '" + corsConfig + "'",
-          region
-        );
+        await s3.send(new PutBucketCorsCommand({
+          Bucket: bucketName,
+          CORSConfiguration: {
+            CORSRules: [{
+              AllowedHeaders: ['*'],
+              AllowedMethods: ['GET', 'PUT', 'POST', 'DELETE'],
+              AllowedOrigins: ['https://' + domain],
+              MaxAgeSeconds: 3600,
+            }],
+          },
+        }));
         console.log('   Configured CORS for https://' + domain);
         return true;
       } catch (e) {

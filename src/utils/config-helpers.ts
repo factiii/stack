@@ -176,6 +176,9 @@ export function getUsedPlugins(config: FactiiiConfig): Set<string> {
  */
 export interface LocalConfig {
   dev_os?: 'mac' | 'windows' | 'ubuntu';
+  openclaw?: {
+    model?: string;
+  };
 }
 
 /**

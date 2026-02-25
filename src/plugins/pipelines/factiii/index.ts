@@ -69,6 +69,21 @@ import { secretsFixes } from './scanfix/secrets.js';
 import { envFileFixes } from './scanfix/env-files.js';
 import { ansibleFixes } from './scanfix/ansible.js';
 
+// Import AWS scanfix arrays (AWS provisioning runs as part of factiii pipeline)
+import { awsCliFixes } from '../aws/scanfix/aws-cli.js';
+import { configFixes as awsConfigFixes } from '../aws/scanfix/config.js';
+import { credentialsFixes } from '../aws/scanfix/credentials.js';
+import { vpcFixes } from '../aws/scanfix/vpc.js';
+import { securityGroupFixes } from '../aws/scanfix/security-groups.js';
+import { ec2Fixes } from '../aws/scanfix/ec2.js';
+import { rdsFixes } from '../aws/scanfix/rds.js';
+import { s3Fixes } from '../aws/scanfix/s3.js';
+import { ecrFixes } from '../aws/scanfix/ecr.js';
+import { sesFixes } from '../aws/scanfix/ses.js';
+import { iamFixes } from '../aws/scanfix/iam.js';
+import { dbReplicationFixes } from '../aws/scanfix/db-replication.js';
+import { sshBridgeFixes } from '../aws/scanfix/ssh-bridge.js';
+
 // Import utility methods
 import * as detectionUtils from './utils/detection.js';
 import * as workflowUtils from './utils/workflows.js';
@@ -179,18 +194,6 @@ class FactiiiPipeline {
 
       case 'staging':
       case 'prod':
-        // Skip environments owned by another pipeline (e.g. AWS)
-        {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
-          const envs = getEnvironmentsForStage(config, stage);
-          const envValues = Object.values(envs) as EnvironmentConfig[];
-          const firstEnv = envValues[0];
-          if (firstEnv && envValues.every((e: EnvironmentConfig) => e.pipeline && e.pipeline !== 'factiii')) {
-            return { reachable: false, reason: 'Handled by ' + (firstEnv.pipeline ?? 'other') + ' pipeline' };
-          }
-        }
-
         // If GITHUB_ACTIONS is set, we're running inside a workflow on the server
         // Return 'local' so fixes run directly without triggering another workflow
         if (process.env.GITHUB_ACTIONS || process.env.FACTIII_ON_SERVER) {
@@ -206,17 +209,32 @@ class FactiiiPipeline {
           }
         }
 
-        // No SSH key — cannot reach this stage
-        // Deployment workflows were removed; SSH is the only remote path.
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const osForPath = require('os');
-        const expectedKeyPath = require('path').join(osForPath.homedir(), '.ssh', stage + '_deploy_key');
-        return {
-          reachable: false,
-          reason: 'No SSH key found at ' + expectedKeyPath + '.\n' +
-            '   Run: npx stack init (to set up SSH keys)\n' +
-            '   Or:  npx stack secrets set ' + stage.toUpperCase() + '_SSH && npx stack secrets write-ssh-keys',
-        };
+        // If AWS config exists, allow local provisioning (no server needed yet)
+        // AWS scanfixes run on the dev machine to provision infrastructure
+        {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
+          const envs = getEnvironmentsForStage(config, stage);
+          const envValues = Object.values(envs) as EnvironmentConfig[];
+          const hasAws = envValues.some((e: EnvironmentConfig) =>
+            e.pipeline === 'aws' || !!e.access_key_id || !!e.config
+          );
+          if (hasAws) {
+            return { reachable: true, via: 'local' };
+          }
+        }
+
+        // No SSH key, no AWS — cannot reach this stage
+        {
+          const sshLabel = stage === 'staging' ? 'SSH_STAGING' : 'SSH_PROD';
+          const vaultName = stage === 'staging' ? 'STAGING_SSH' : 'PROD_SSH';
+          return {
+            reachable: false,
+            reason: sshLabel + ' not found (no key at ~/.ssh/' + stage + '_deploy_key).\n' +
+              '   Run: npx stack fix --secrets   (stores key in vault + writes to disk)\n' +
+              '   Or:  npx stack secrets set ' + vaultName + ' && npx stack secrets write-ssh-keys',
+          };
+        }
 
       default:
         return { reachable: false, reason: `Unknown stage: ${stage}` };
@@ -237,6 +255,20 @@ class FactiiiPipeline {
     ...workflowFixes,
     ...secretsFixes,
     ...envFileFixes,
+    // AWS infrastructure provisioning (guarded by isAwsConfigured())
+    ...awsCliFixes,
+    ...awsConfigFixes,
+    ...credentialsFixes,
+    ...vpcFixes,
+    ...securityGroupFixes,
+    ...ec2Fixes,
+    ...rdsFixes,
+    ...s3Fixes,
+    ...ecrFixes,
+    ...sesFixes,
+    ...iamFixes,
+    ...dbReplicationFixes,
+    ...sshBridgeFixes,
   ];
 
   // ============================================================
@@ -345,13 +377,139 @@ class FactiiiPipeline {
     }
   }
 
+  /**
+   * Change the Ansible Vault password for the configured vault file.
+   *
+   * This runs locally on the dev machine (secrets stage) and uses:
+   *   ansible-vault rekey <vault_path> --vault-password-file <old> --new-vault-password-file <new>
+   *
+   * It then overwrites the configured vault_password_file with the new password
+   * so future commands use the updated password.
+   */
+  static async changeVaultPassword(config: FactiiiConfig, rootDir: string): Promise<CommandResult> {
+    try {
+      if (!config.ansible?.vault_path || !config.ansible.vault_password_file) {
+        return {
+          success: false,
+          error:
+            'ansible.vault_path and ansible.vault_password_file must be set in stack.yml before changing the vault password.',
+        };
+      }
+
+      // Lazy-load prompts to avoid circular imports
+      const { promptSingleLine } = await import('../../../utils/secret-prompts.js');
+
+      // Resolve vault path and password file
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const os = require('os') as typeof import('os');
+      const vaultPathRaw = config.ansible.vault_path.replace(/^~/, os.homedir());
+      const passwordFileRaw = config.ansible.vault_password_file.replace(/^~/, os.homedir());
+
+      const vaultPath = path.isAbsolute(vaultPathRaw)
+        ? vaultPathRaw
+        : path.join(rootDir, vaultPathRaw);
+      const passwordFile = path.isAbsolute(passwordFileRaw)
+        ? passwordFileRaw
+        : path.join(rootDir, passwordFileRaw);
+
+      if (!fs.existsSync(vaultPath)) {
+        return {
+          success: false,
+          error: 'Vault file not found at ' + vaultPath,
+        };
+      }
+      if (!fs.existsSync(passwordFile)) {
+        return {
+          success: false,
+          error:
+            'Vault password file not found at ' +
+            passwordFile +
+            '. Update ansible.vault_password_file or create the file first.',
+        };
+      }
+
+      // Ensure ansible-vault is available
+      try {
+        execSync('ansible-vault --version', { stdio: 'pipe' });
+      } catch {
+        return {
+          success: false,
+          error: 'ansible-vault CLI not found. Install Ansible to change the vault password.',
+        };
+      }
+
+      console.log('\n🔐 Change Ansible Vault password');
+      console.log('   Vault file: ' + vaultPath + '\n');
+
+      const newPassword = await promptSingleLine('   New vault password: ', { hidden: true });
+      const confirmPassword = await promptSingleLine('   Confirm new password: ', { hidden: true });
+
+      if (!newPassword || newPassword.trim().length === 0) {
+        return { success: false, error: 'New password cannot be empty.' };
+      }
+      if (newPassword !== confirmPassword) {
+        return { success: false, error: 'Passwords do not match.' };
+      }
+
+      // Write new password to a temporary file for rekey
+      const tmpNewPass = path.join(os.tmpdir(), `factiii-vault-pass-new-${Date.now()}`);
+      fs.writeFileSync(tmpNewPass, newPassword.trim() + '\n', { encoding: 'utf8' });
+
+      try {
+        const escapedVaultPath = vaultPath.replace(/"/g, '\\"');
+        const escapedOldPassFile = passwordFile.replace(/"/g, '\\"');
+        const escapedNewPassFile = tmpNewPass.replace(/"/g, '\\"');
+
+        console.log('\nRekeying vault...');
+        execSync(
+          `ansible-vault rekey "${escapedVaultPath}" ` +
+            `--vault-password-file "${escapedOldPassFile}" ` +
+            `--new-vault-password-file "${escapedNewPassFile}"`,
+          {
+            cwd: rootDir,
+            stdio: 'inherit',
+          }
+        );
+
+        // Overwrite the configured password file with the new password
+        fs.writeFileSync(passwordFile, newPassword.trim() + '\n', {
+          encoding: 'utf8',
+          mode: 0o600,
+        });
+
+        console.log('\n✅ Vault password updated successfully.');
+        console.log('   Updated vault file: ' + vaultPath);
+        console.log('   Updated password file: ' + passwordFile + '\n');
+
+        return { success: true, message: 'Vault password updated successfully.' };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return {
+          success: false,
+          error: 'Ansible Vault rekey failed: ' + msg,
+        };
+      } finally {
+        try {
+          if (fs.existsSync(tmpNewPass)) {
+            fs.unlinkSync(tmpNewPass);
+          }
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { success: false, error: msg };
+    }
+  }
+
   static readonly commands: PluginCommand[] = [
     // ────────────────────────────────────────────────────────────
     // DATABASE COMMANDS
     // ────────────────────────────────────────────────────────────
     {
       name: 'seed',
-      description: 'Seed the database with initial data (dev/staging only)',
+      description: 'Seed database with initial data via db:seed script (dev/staging only)',
       category: 'db',
       stages: ['dev', 'staging'], // No prod - destructive
       prodSafety: 'destructive',
@@ -372,7 +530,7 @@ class FactiiiPipeline {
     },
     {
       name: 'migrate',
-      description: 'Run pending database migrations',
+      description: 'Apply pending Prisma migrations to the database',
       category: 'db',
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'caution',
@@ -387,7 +545,7 @@ class FactiiiPipeline {
     },
     {
       name: 'reset',
-      description: 'Reset database and re-run all migrations (dev/staging only)',
+      description: 'Drop all tables and re-run migrations from scratch (DATA LOSS, dev/staging only)',
       category: 'db',
       stages: ['dev', 'staging'], // No prod - destructive
       prodSafety: 'destructive',
@@ -402,7 +560,7 @@ class FactiiiPipeline {
     },
     {
       name: 'status',
-      description: 'Check migration status',
+      description: 'Show pending and applied Prisma migration status',
       category: 'db',
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'safe',
@@ -421,7 +579,7 @@ class FactiiiPipeline {
     // ────────────────────────────────────────────────────────────
     {
       name: 'logs',
-      description: 'View container logs',
+      description: 'Stream or tail Docker container logs',
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',
@@ -447,8 +605,18 @@ class FactiiiPipeline {
       },
     },
     {
+      name: 'change-vault-password',
+      description: 'Change the Ansible Vault encryption password (runs locally)',
+      category: 'ops',
+      stages: ['secrets'],
+      prodSafety: 'safe',
+      execute: async (_stage, _options, config, rootDir): Promise<CommandResult> => {
+        return await FactiiiPipeline.changeVaultPassword(config, rootDir);
+      },
+    },
+    {
       name: 'restart',
-      description: 'Restart application containers',
+      description: 'Restart Docker containers without rebuilding',
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'caution',
@@ -472,7 +640,7 @@ class FactiiiPipeline {
     },
     {
       name: 'shell',
-      description: 'Open a shell in the application container',
+      description: 'Open an interactive shell (/bin/sh) inside the app container',
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'caution',
@@ -489,7 +657,7 @@ class FactiiiPipeline {
     },
     {
       name: 'status',
-      description: 'Show container status',
+      description: 'Show running/stopped status of all Docker containers',
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',
@@ -513,7 +681,7 @@ class FactiiiPipeline {
     // ────────────────────────────────────────────────────────────
     {
       name: 'create',
-      description: 'Create a database backup',
+      description: 'Export database to a SQL dump file via pg_dump',
       category: 'backup',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',
@@ -544,7 +712,7 @@ class FactiiiPipeline {
     },
     {
       name: 'restore',
-      description: 'Restore database from backup (DATA LOSS!)',
+      description: 'Import a SQL dump file into the database (overwrites existing data!)',
       category: 'backup',
       stages: ['staging', 'prod'],
       prodSafety: 'destructive',
@@ -578,7 +746,7 @@ class FactiiiPipeline {
     },
     {
       name: 'health',
-      description: 'Check application and database health',
+      description: 'Check if containers are running and database is reachable',
       category: 'backup',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',

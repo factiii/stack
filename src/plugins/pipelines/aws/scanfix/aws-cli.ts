@@ -1,11 +1,12 @@
 /**
  * AWS CLI fixes for AWS plugin
- * Handles AWS CLI installation for dev environment
+ *
+ * AWS CLI is still needed for ECR Docker login (aws ecr get-login-password).
+ * All other AWS operations now use the AWS SDK.
  */
 
 import { execSync } from 'child_process';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { isAwsCliInstalled } from '../utils/aws-helpers.js';
 
 /**
  * Check if any environment uses AWS pipeline
@@ -22,6 +23,18 @@ function hasAwsPipeline(config: FactiiiConfig): boolean {
 }
 
 /**
+ * Check if AWS CLI is installed
+ */
+function isAwsCliInstalled(): boolean {
+  try {
+    execSync('aws --version', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Auto-install AWS CLI based on platform
  */
 function installAwsCli(): boolean {
@@ -35,7 +48,6 @@ function installAwsCli(): boolean {
     }
 
     if (platform === 'linux') {
-      // Try apt first (Ubuntu/Debian)
       try {
         execSync('which apt-get', { stdio: 'pipe' });
         console.log('   Installing AWS CLI via apt...');
@@ -45,7 +57,6 @@ function installAwsCli(): boolean {
         // Not apt-based, use AWS installer
       }
 
-      // Fallback: AWS official installer
       console.log('   Installing AWS CLI via official installer...');
       execSync(
         'curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"' +
@@ -76,9 +87,8 @@ export const awsCliFixes: Fix[] = [
     id: 'aws-cli-not-installed-dev',
     stage: 'dev',
     severity: 'warning',
-    description: '🔧 AWS CLI not installed (needed for ECR)',
+    description: '🔧 AWS CLI not installed (needed for ECR Docker login)',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      // Only check if AWS is configured
       if (!hasAwsPipeline(config)) return false;
       return !isAwsCliInstalled();
     },

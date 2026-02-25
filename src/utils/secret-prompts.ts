@@ -161,16 +161,40 @@ export function validateSecretFormat(
 }
 
 /**
- * Prompt for single-line input
+ * Prompt for single-line input.
+ * When options.hidden is true, user input is not echoed to the terminal.
  */
-export function promptSingleLine(prompt: string): Promise<string> {
+export function promptSingleLine(
+  prompt: string,
+  options?: { hidden?: boolean }
+): Promise<string> {
+  const hidden = options?.hidden === true;
+
   return new Promise((resolve) => {
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
-    });
+    }) as readline.Interface & { stdoutMuted?: boolean; _writeToOutput?: (str: string) => void };
+
+    if (hidden) {
+      rl.stdoutMuted = true;
+      const originalWrite = rl._writeToOutput?.bind(rl);
+      rl._writeToOutput = function (stringToWrite: string): void {
+        // Always show the prompt text, but mask subsequent characters
+        if (this.stdoutMuted) {
+          // When readline reprints the prompt+input, replace user input with asterisks
+          const masked = stringToWrite.replace(/.(?=.$)/g, '*');
+          (this as any).output.write(masked);
+        } else if (originalWrite) {
+          originalWrite(stringToWrite);
+        } else {
+          (this as any).output.write(stringToWrite);
+        }
+      };
+    }
 
     rl.question(prompt, (answer) => {
+      rl.stdoutMuted = false;
       rl.close();
       resolve(answer.trim());
     });
@@ -241,9 +265,11 @@ export async function promptForSecret(
 
     // Prompt based on type
     if (metadata.type === 'ssh_key') {
+      // SSH keys are pasted multi-line; we don't echo them elsewhere or log them.
       value = await promptMultiLine('');
     } else {
-      value = await promptSingleLine('   > ');
+      // Non-SSH secrets (AWS_SECRET_ACCESS_KEY, generic GitHub secrets, etc.) are hidden while typing.
+      value = await promptSingleLine('   > ', { hidden: true });
     }
 
     // Validate
@@ -369,10 +395,10 @@ export async function promptForEnvSecret(
   let attempts = 0;
   const maxAttempts = 3;
 
-  while (!isValid && attempts < maxAttempts) {
+    while (!isValid && attempts < maxAttempts) {
     attempts++;
 
-    value = await promptSingleLine('   > ');
+    value = await promptSingleLine('   > ', { hidden: true });
 
     if (value && value.trim().length > 0) {
       isValid = true;

@@ -31,7 +31,7 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
         ? ((config as Record<string, unknown>).production as Record<string, unknown> | undefined)?.domain as string | undefined
         : ((config as Record<string, unknown>)[envKey] as Record<string, unknown> | undefined)?.domain as string | undefined;
 
-      if (!domain || domain.startsWith('EXAMPLE-')) return false;
+      if (!domain || domain.startsWith('EXAMPLE_')) return false;
 
       // Skip SSL for IP addresses (certs only work with domain names)
       if (/^\d+\.\d+\.\d+\.\d+$/.test(domain)) return false;

@@ -1,26 +1,26 @@
-name: EXAMPLE-your-repo-name
+name: EXAMPLE_your-repo-name
 config_version: 0.1.0
-github_repo: EXAMPLE-username/repo-name
-ssl_email: EXAMPLE-admin@yourdomain.com
+github_repo: factiii/stack
+ssl_email: EXAMPLE_admin@yourdomain.com
 pipeline: factiii
 ansible:
   vault_path: group_vars/all/vault.yml
   vault_password_file: ~/.vault_pass
 staging:
   server: mac
-  domain: EXAMPLE-staging.yourdomain.com
+  domain: EXAMPLE_staging.yourdomain.com
   env_file: .env.staging
 prod:
   server: ubuntu
   pipeline: aws
-  domain: EXAMPLE-yourdomain.com
+  domain: EXAMPLE_yourdomain.com
   config: free-tier
-  access_key_id: EXAMPLE-AKIAXXXXXXXX
+  access_key_id: EXAMPLE_AKIAXXXXXXXX
   region: us-east-1
   plugins:
     ecr:
-      ecr_registry: EXAMPLE-123456789012.dkr.ecr.us-east-1.amazonaws.com
-      ecr_repository: EXAMPLE-repo-name
+      ecr_registry: EXAMPLE_123456789012.dkr.ecr.us-east-1.amazonaws.com
+      ecr_repository: EXAMPLE_repo-name
 
 # ============================================================
 # ADDITIONAL ENVIRONMENTS
@@ -40,7 +40,7 @@ prod:
 #   pipeline: aws
 #   domain: app2.yourdomain.com
 #   config: free-tier
-#   access_key_id: EXAMPLE-AKIAXXXXXXXX
+#   access_key_id: EXAMPLE_AKIAXXXXXXXX
 #   region: us-west-2
 
 # ============================================================

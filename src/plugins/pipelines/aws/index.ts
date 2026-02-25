@@ -114,7 +114,7 @@ class AWSPipeline {
   static readonly configSchema: Record<string, unknown> = {
     aws: {
       config: 'ec2', // Options: ec2, free-tier, standard, enterprise
-      access_key_id: 'EXAMPLE-AKIAXXXXXXXX',
+      access_key_id: 'EXAMPLE_AKIAXXXXXXXX',
       region: 'us-east-1',
     },
   };
@@ -252,12 +252,12 @@ class AWSPipeline {
           return { reachable: true, via: 'local' };
         }
 
-        // Check if the server actually exists (domain is set and not EXAMPLE-)
+        // Check if the server actually exists (domain is set and not EXAMPLE_)
         // If no real domain, SSH is pointless — run provisioning locally via AWS CLI
         {
           const firstEnvForStage = envValues[0];
           const domain = firstEnvForStage?.domain;
-          const hasRealDomain = domain && !domain.startsWith('EXAMPLE-');
+          const hasRealDomain = domain && !domain.startsWith('EXAMPLE_');
 
           if (hasRealDomain) {
             // Server exists — check for SSH key (direct SSH from dev machine)

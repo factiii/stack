@@ -1,98 +1,174 @@
 /**
  * AWS Helper Utilities
  *
- * Shared functions for AWS CLI operations used across all AWS scanfix files.
- * All functions use AWS CLI via execSync (no SDK dependency).
+ * Shared functions for AWS SDK operations used across all AWS scanfix files.
+ * Uses AWS SDK v3 clients instead of AWS CLI.
  */
 
-import { execSync } from 'child_process';
+import {
+  EC2Client,
+  DescribeVpcsCommand,
+  DescribeSubnetsCommand,
+  DescribeSecurityGroupsCommand,
+  DescribeInstancesCommand,
+  DescribeKeyPairsCommand,
+  DescribeAddressesCommand,
+  DescribeInternetGatewaysCommand,
+  DescribeAvailabilityZonesCommand,
+  DescribeImagesCommand,
+  CreateVpcCommand,
+  ModifyVpcAttributeCommand,
+  CreateSubnetCommand,
+  ModifySubnetAttributeCommand,
+  CreateInternetGatewayCommand,
+  AttachInternetGatewayCommand,
+  CreateRouteTableCommand,
+  CreateRouteCommand,
+  AssociateRouteTableCommand,
+  CreateSecurityGroupCommand,
+  AuthorizeSecurityGroupIngressCommand,
+  CreateKeyPairCommand,
+  RunInstancesCommand,
+  AllocateAddressCommand,
+  AssociateAddressCommand,
+  type Tag,
+  type TagSpecification,
+  type Filter,
+  waitUntilInstanceRunning,
+} from '@aws-sdk/client-ec2';
+import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
+import {
+  IAMClient,
+  GetUserCommand,
+  CreateUserCommand,
+  PutUserPolicyCommand,
+  CreateAccessKeyCommand,
+} from '@aws-sdk/client-iam';
+import {
+  RDSClient,
+  DescribeDBSubnetGroupsCommand,
+  CreateDBSubnetGroupCommand,
+  DescribeDBInstancesCommand,
+  CreateDBInstanceCommand,
+} from '@aws-sdk/client-rds';
+import {
+  S3Client,
+  HeadBucketCommand,
+  CreateBucketCommand,
+  PutPublicAccessBlockCommand,
+  PutBucketEncryptionCommand,
+  GetBucketCorsCommand,
+  PutBucketCorsCommand,
+} from '@aws-sdk/client-s3';
+import {
+  ECRClient,
+  DescribeRepositoriesCommand,
+  CreateRepositoryCommand,
+  PutLifecyclePolicyCommand,
+  GetAuthorizationTokenCommand,
+} from '@aws-sdk/client-ecr';
+import {
+  SESClient,
+  VerifyDomainIdentityCommand,
+  GetIdentityVerificationAttributesCommand,
+  VerifyDomainDkimCommand,
+  GetIdentityDkimAttributesCommand,
+  GetSendQuotaCommand,
+} from '@aws-sdk/client-ses';
 import type { FactiiiConfig, EnvironmentConfig } from '../../../../types/index.js';
 
-/**
- * Execute an AWS CLI command with region injection
- * Returns the stdout as a trimmed string
- * Throws on failure
- */
-export function awsExec(cmd: string, region?: string): string {
-  const regionFlag = region ? ' --region ' + region : '';
-  // Only add --output json if command doesn't already specify output format
-  const outputFlag = cmd.includes('--output ') ? '' : ' --output json';
-  const fullCmd = cmd + regionFlag + outputFlag;
-  try {
-    return execSync(fullCmd, {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    throw new Error('AWS CLI failed: ' + msg);
+// ============================================================
+// CLIENT FACTORIES — cached per region
+// ============================================================
+
+const clientCache: Record<string, unknown> = {};
+
+function getCachedClient<T>(ClientClass: new (config: { region: string }) => T, region: string): T {
+  const key = ClientClass.name + ':' + region;
+  if (!clientCache[key]) {
+    clientCache[key] = new ClientClass({ region });
   }
+  return clientCache[key] as T;
 }
 
-/**
- * Execute an AWS CLI command, returning null on failure instead of throwing
- */
-export function awsExecSafe(cmd: string, region?: string): string | null {
-  try {
-    return awsExec(cmd, region);
-  } catch {
-    return null;
-  }
+export function getEC2Client(region: string): EC2Client {
+  return getCachedClient(EC2Client, region);
 }
 
-/**
- * Find an AWS resource by its factiii:project tag
- * Returns the resource data as parsed JSON, or null if not found
- */
-export function findResourceByTag(
-  describeCmd: string,
-  projectName: string,
-  region: string
-): unknown | null {
-  try {
-    const result = awsExec(
-      describeCmd + ' --filters "Name=tag:factiii:project,Values=' + projectName + '"',
-      region
-    );
-    const parsed = JSON.parse(result);
-    return parsed;
-  } catch {
-    return null;
-  }
+export function getSTSClient(region: string): STSClient {
+  return getCachedClient(STSClient, region);
 }
 
+export function getIAMClient(region: string): IAMClient {
+  return getCachedClient(IAMClient, region);
+}
+
+export function getRDSClient(region: string): RDSClient {
+  return getCachedClient(RDSClient, region);
+}
+
+export function getS3Client(region: string): S3Client {
+  return getCachedClient(S3Client, region);
+}
+
+export function getECRClient(region: string): ECRClient {
+  return getCachedClient(ECRClient, region);
+}
+
+export function getSESClient(region: string): SESClient {
+  return getCachedClient(SESClient, region);
+}
+
+// ============================================================
+// TAGGING HELPERS
+// ============================================================
+
 /**
- * Generate --tag-specifications string for AWS resource creation
- * Tags resources with factiii:project={name} and factiii:managed=true
- * Uses JSON format to avoid shell parsing issues with colons in tag keys
+ * Build standard tags array for AWS resources
  */
-export function tagSpec(resourceType: string, projectName: string, extraTags?: Record<string, string>): string {
-  const tags: Array<{ Key: string; Value: string }> = [
+export function buildTags(projectName: string, extraTags?: Record<string, string>): Tag[] {
+  const tags: Tag[] = [
     { Key: 'factiii:project', Value: projectName },
     { Key: 'factiii:managed', Value: 'true' },
     { Key: 'Name', Value: 'factiii-' + projectName },
   ];
-
   if (extraTags) {
     for (const [key, value] of Object.entries(extraTags)) {
       tags.push({ Key: key, Value: value });
     }
   }
-
-  const spec = JSON.stringify([{ ResourceType: resourceType, Tags: tags }]);
-  return "--tag-specifications '" + spec + "'";
+  return tags;
 }
 
 /**
+ * Build TagSpecification for resource creation
+ */
+export function tagSpec(resourceType: string, projectName: string, extraTags?: Record<string, string>): TagSpecification {
+  return {
+    ResourceType: resourceType as TagSpecification['ResourceType'],
+    Tags: buildTags(projectName, extraTags),
+  };
+}
+
+/**
+ * Build a filter for factiii:project tag
+ */
+export function projectFilter(projectName: string): Filter {
+  return { Name: 'tag:factiii:project', Values: [projectName] };
+}
+
+// ============================================================
+// CONFIG HELPERS
+// ============================================================
+
+/**
  * Extract AWS configuration from a FactiiiConfig
- * Checks both top-level config.aws and per-environment aws settings
  */
 export function getAwsConfig(config: FactiiiConfig): {
   region: string;
   configType: string;
   accessKeyId?: string;
 } {
-  // Check top-level aws config first
   const topLevel = config.aws as Record<string, unknown> | undefined;
   if (topLevel) {
     return {
@@ -102,7 +178,6 @@ export function getAwsConfig(config: FactiiiConfig): {
     };
   }
 
-  // Check per-environment configs
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { extractEnvironments } = require('../../../../utils/config-helpers.js');
   const environments = extractEnvironments(config) as Record<string, EnvironmentConfig>;
@@ -116,25 +191,225 @@ export function getAwsConfig(config: FactiiiConfig): {
     }
   }
 
-  // Default
   return { region: 'us-east-1', configType: 'ec2' };
 }
 
 /**
- * Check if AWS provisioning should run
- * AWS provisioning (VPC, EC2, RDS, etc.) only runs from the dev machine.
- * When on the server (FACTIII_ON_SERVER=true), skip provisioning — only server-level fixes run.
+ * Check if running on server (skip AWS provisioning)
  */
 export function isOnServer(): boolean {
   return process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true';
 }
 
 /**
- * Check if AWS CLI is installed and accessible
+ * Get project name for tagging
  */
-export function isAwsCliInstalled(): boolean {
+export function getProjectName(config: FactiiiConfig): string {
+  return config.name ?? 'app';
+}
+
+/**
+ * Get AWS account ID via STS
+ */
+export async function getAwsAccountId(region: string): Promise<string | null> {
   try {
-    execSync('aws --version', { stdio: 'pipe' });
+    const sts = getSTSClient(region);
+    const result = await sts.send(new GetCallerIdentityCommand({}));
+    return result.Account ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// SHARED RESOURCE LOOKUP HELPERS
+// ============================================================
+
+/**
+ * Find VPC by factiii:project tag
+ */
+export async function findVpc(projectName: string, region: string): Promise<string | null> {
+  try {
+    const ec2 = getEC2Client(region);
+    const result = await ec2.send(new DescribeVpcsCommand({
+      Filters: [projectFilter(projectName)],
+    }));
+    return result.Vpcs?.[0]?.VpcId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find subnet by tag and type
+ */
+export async function findSubnet(projectName: string, region: string, type: string): Promise<string | null> {
+  try {
+    const ec2 = getEC2Client(region);
+    const result = await ec2.send(new DescribeSubnetsCommand({
+      Filters: [
+        projectFilter(projectName),
+        { Name: 'tag:factiii:subnet-type', Values: [type] },
+      ],
+    }));
+    return result.Subnets?.[0]?.SubnetId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find all private subnets
+ */
+export async function findPrivateSubnets(projectName: string, region: string): Promise<string[]> {
+  try {
+    const ec2 = getEC2Client(region);
+    const result = await ec2.send(new DescribeSubnetsCommand({
+      Filters: [
+        projectFilter(projectName),
+        { Name: 'tag:factiii:subnet-type', Values: ['private'] },
+      ],
+    }));
+    return (result.Subnets ?? []).map(s => s.SubnetId!).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Find security group by name and VPC
+ */
+export async function findSecurityGroup(groupName: string, vpcId: string, region: string): Promise<string | null> {
+  try {
+    const ec2 = getEC2Client(region);
+    const result = await ec2.send(new DescribeSecurityGroupsCommand({
+      Filters: [
+        { Name: 'group-name', Values: [groupName] },
+        { Name: 'vpc-id', Values: [vpcId] },
+      ],
+    }));
+    return result.SecurityGroups?.[0]?.GroupId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find EC2 key pair by name
+ */
+export async function findKeyPair(keyName: string, region: string): Promise<boolean> {
+  try {
+    const ec2 = getEC2Client(region);
+    const result = await ec2.send(new DescribeKeyPairsCommand({
+      KeyNames: [keyName],
+    }));
+    return (result.KeyPairs?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find running/stopped EC2 instance by tag
+ */
+export async function findInstance(projectName: string, region: string): Promise<string | null> {
+  try {
+    const ec2 = getEC2Client(region);
+    const result = await ec2.send(new DescribeInstancesCommand({
+      Filters: [
+        projectFilter(projectName),
+        { Name: 'instance-state-name', Values: ['running', 'stopped'] },
+      ],
+    }));
+    return result.Reservations?.[0]?.Instances?.[0]?.InstanceId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find Elastic IP associated with an instance
+ */
+export async function findElasticIp(instanceId: string, region: string): Promise<string | null> {
+  try {
+    const ec2 = getEC2Client(region);
+    const result = await ec2.send(new DescribeAddressesCommand({
+      Filters: [{ Name: 'instance-id', Values: [instanceId] }],
+    }));
+    return result.Addresses?.[0]?.PublicIp ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find internet gateway attached to VPC
+ */
+export async function findIgw(vpcId: string, region: string): Promise<string | null> {
+  try {
+    const ec2 = getEC2Client(region);
+    const result = await ec2.send(new DescribeInternetGatewaysCommand({
+      Filters: [{ Name: 'attachment.vpc-id', Values: [vpcId] }],
+    }));
+    return result.InternetGateways?.[0]?.InternetGatewayId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find DB subnet group
+ */
+export async function findDbSubnetGroup(groupName: string, region: string): Promise<boolean> {
+  try {
+    const rds = getRDSClient(region);
+    const result = await rds.send(new DescribeDBSubnetGroupsCommand({
+      DBSubnetGroupName: groupName,
+    }));
+    return (result.DBSubnetGroups?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find RDS instance by identifier
+ */
+export async function findRdsInstance(dbInstanceId: string, region: string): Promise<{ status: string; endpoint: string | null } | null> {
+  try {
+    const rds = getRDSClient(region);
+    const result = await rds.send(new DescribeDBInstancesCommand({
+      DBInstanceIdentifier: dbInstanceId,
+    }));
+    const instance = result.DBInstances?.[0];
+    if (!instance) return null;
+    return {
+      status: instance.DBInstanceStatus ?? 'unknown',
+      endpoint: instance.Endpoint?.Address ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find RDS instance endpoint
+ */
+export async function findRdsEndpoint(projectName: string, region: string): Promise<string | null> {
+  const dbId = 'factiii-' + projectName + '-db';
+  const instance = await findRdsInstance(dbId, region);
+  return instance?.endpoint ?? null;
+}
+
+/**
+ * Check if ECR repository exists
+ */
+export async function findEcrRepo(repoName: string, region: string): Promise<boolean> {
+  try {
+    const ecr = getECRClient(region);
+    await ecr.send(new DescribeRepositoriesCommand({
+      repositoryNames: [repoName],
+    }));
     return true;
   } catch {
     return false;
@@ -142,22 +417,156 @@ export function isAwsCliInstalled(): boolean {
 }
 
 /**
- * Check if AWS credentials are configured and valid
- * Returns the account ID if valid, null otherwise
+ * Check if S3 bucket exists
  */
-export function getAwsAccountId(region?: string): string | null {
+export async function findBucket(bucketName: string, region: string): Promise<boolean> {
   try {
-    const result = awsExec('aws sts get-caller-identity --query Account --output text', region);
-    // The output text mode returns without JSON wrapping
-    return result.replace(/"/g, '').trim() || null;
+    const s3 = getS3Client(region);
+    await s3.send(new HeadBucketCommand({ Bucket: bucketName }));
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
 /**
- * Get the project name for tagging (from config.name)
+ * Check if IAM user exists
  */
-export function getProjectName(config: FactiiiConfig): string {
-  return config.name ?? 'app';
+export async function findIamUser(userName: string, region: string): Promise<boolean> {
+  try {
+    const iam = getIAMClient(region);
+    await iam.send(new GetUserCommand({ UserName: userName }));
+    return true;
+  } catch {
+    return false;
+  }
 }
+
+/**
+ * Check if domain is verified in SES
+ */
+export async function isDomainVerified(domain: string, region: string): Promise<boolean> {
+  try {
+    const ses = getSESClient(region);
+    const result = await ses.send(new GetIdentityVerificationAttributesCommand({
+      Identities: [domain],
+    }));
+    return result.VerificationAttributes?.[domain]?.VerificationStatus === 'Success';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if DKIM is configured for domain
+ */
+export async function hasDkim(domain: string, region: string): Promise<boolean> {
+  try {
+    const ses = getSESClient(region);
+    const result = await ses.send(new GetIdentityDkimAttributesCommand({
+      Identities: [domain],
+    }));
+    return result.DkimAttributes?.[domain]?.DkimEnabled === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if S3 bucket has CORS configured
+ */
+export async function hasCors(bucketName: string, region: string): Promise<boolean> {
+  try {
+    const s3 = getS3Client(region);
+    const result = await s3.send(new GetBucketCorsCommand({ Bucket: bucketName }));
+    return (result.CORSRules?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if AWS is configured for this project (shared guard)
+ */
+export function isAwsConfigured(config: FactiiiConfig): boolean {
+  if (isOnServer()) return false;
+  if (config.aws) return true;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { extractEnvironments } = require('../../../../utils/config-helpers.js');
+  const environments = extractEnvironments(config);
+  return Object.values(environments).some((e: unknown) => {
+    const env = e as { pipeline?: string; access_key_id?: string; config?: string };
+    return env.pipeline === 'aws' || !!env.access_key_id ||
+      (!!env.config && ['ec2', 'free-tier', 'standard', 'enterprise'].includes(env.config));
+  });
+}
+
+// ============================================================
+// RE-EXPORTS for SDK commands used directly in scanfix files
+// ============================================================
+
+export {
+  // EC2
+  EC2Client,
+  DescribeVpcsCommand,
+  DescribeSubnetsCommand,
+  DescribeSecurityGroupsCommand,
+  DescribeInstancesCommand,
+  DescribeKeyPairsCommand,
+  DescribeAddressesCommand,
+  DescribeInternetGatewaysCommand,
+  DescribeAvailabilityZonesCommand,
+  DescribeImagesCommand,
+  CreateVpcCommand,
+  ModifyVpcAttributeCommand,
+  CreateSubnetCommand,
+  ModifySubnetAttributeCommand,
+  CreateInternetGatewayCommand,
+  AttachInternetGatewayCommand,
+  CreateRouteTableCommand,
+  CreateRouteCommand,
+  AssociateRouteTableCommand,
+  CreateSecurityGroupCommand,
+  AuthorizeSecurityGroupIngressCommand,
+  CreateKeyPairCommand,
+  RunInstancesCommand,
+  AllocateAddressCommand,
+  AssociateAddressCommand,
+  waitUntilInstanceRunning,
+  // STS
+  STSClient,
+  GetCallerIdentityCommand,
+  // IAM
+  IAMClient,
+  GetUserCommand,
+  CreateUserCommand,
+  PutUserPolicyCommand,
+  CreateAccessKeyCommand,
+  // RDS
+  RDSClient,
+  DescribeDBSubnetGroupsCommand,
+  CreateDBSubnetGroupCommand,
+  DescribeDBInstancesCommand,
+  CreateDBInstanceCommand,
+  // S3
+  S3Client,
+  HeadBucketCommand,
+  CreateBucketCommand,
+  PutPublicAccessBlockCommand,
+  PutBucketEncryptionCommand,
+  GetBucketCorsCommand,
+  PutBucketCorsCommand,
+  // ECR
+  ECRClient,
+  DescribeRepositoriesCommand,
+  CreateRepositoryCommand,
+  PutLifecyclePolicyCommand,
+  GetAuthorizationTokenCommand,
+  // SES
+  SESClient,
+  VerifyDomainIdentityCommand,
+  GetIdentityVerificationAttributesCommand,
+  VerifyDomainDkimCommand,
+  GetIdentityDkimAttributesCommand,
+  GetSendQuotaCommand,
+};

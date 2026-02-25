@@ -228,18 +228,30 @@ export async function init(options: InitOptions = {}): Promise<void> {
   const configPath = getStackConfigPath(rootDir);
   const isFirstRun = !fs.existsSync(configPath);
 
-  // If --force, regenerate stack.yml from template
+  // ============================================================
+  // Step 1: Create stack.yml (scan codebase + generate template)
+  // ============================================================
   if (options.force) {
     console.log('Regenerating ' + STACK_CONFIG_FILENAME + '...\n');
     generateFactiiiYml(rootDir, { force: true });
   } else if (isFirstRun) {
-    // No stack.yml — tell user to run npx stack (which bootstraps via scanfixes)
-    console.log('No ' + STACK_CONFIG_FILENAME + ' found.');
-    console.log('Run `npx stack` to auto-detect your project and create config files.\n');
-    console.log('Or run `npx stack init --force` to generate from template.\n');
+    console.log('Scanning codebase...\n');
+    const { generateSmartStackYml } = await import('../generators/generate-stack-yml.js');
+    const created = generateSmartStackYml(rootDir);
+    if (created) {
+      console.log('');
+      console.log('  ' + STACK_CONFIG_FILENAME + ' is the configuration for everything.');
+      console.log('  Update the vars marked with EXAMPLE_ before proceeding.');
+      console.log('');
+    }
+  } else {
+    console.log('[OK] ' + STACK_CONFIG_FILENAME + ' already exists');
+    console.log('     (use --force to regenerate)\n');
   }
 
-  // Interactive vault and secrets setup
+  // ============================================================
+  // Step 2: Interactive vault and secrets setup
+  // ============================================================
   await setupVaultAndSecrets(rootDir);
 }
 
@@ -284,8 +296,8 @@ async function setupVaultAndSecrets(rootDir: string): Promise<void> {
     const setupVault = await confirm('Set up Ansible Vault for secrets now?', true);
 
     if (setupVault) {
-      console.log('\n  Create a vault password (keep this safe - you need it to access secrets):');
-      const vaultPassword = await promptSingleLine('  Vault password: ');
+        console.log('\n  Create a vault password (keep this safe - you need it to access secrets):');
+        const vaultPassword = await promptSingleLine('  Vault password: ', { hidden: true });
 
       if (vaultPassword && vaultPassword.trim().length > 0) {
         fs.writeFileSync(vaultPassFile, vaultPassword.trim(), 'utf8');

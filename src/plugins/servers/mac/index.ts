@@ -120,7 +120,7 @@ class MacPlugin {
       }
 
       // Load if staging environment has local/private IP or staging domain
-      if (name.startsWith('staging') && env.domain && !env.domain.startsWith('EXAMPLE-')) {
+      if (name.startsWith('staging') && env.domain && !env.domain.startsWith('EXAMPLE_')) {
         const isLocal =
           /^192\.168\./.test(env.domain) ||
           /^10\./.test(env.domain) ||
