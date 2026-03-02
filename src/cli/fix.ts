@@ -198,8 +198,8 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   let stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
   if (options.dev) stages = ['dev'];
   else if (options.secrets) stages = ['secrets'];
-  else if (options.staging) stages = ['staging'];
-  else if (options.prod) stages = ['prod'];
+  else if (options.staging) stages = ['dev', 'secrets', 'staging'];
+  else if (options.prod) stages = ['dev', 'secrets', 'prod'];
   else if (options.stages) stages = options.stages;
 
   // Load all plugins to check reachability

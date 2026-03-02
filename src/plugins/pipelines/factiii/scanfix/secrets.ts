@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 import { promptForSecret, promptSingleLine } from '../../../../utils/secret-prompts.js';
@@ -104,6 +105,82 @@ export const secretsFixes: Fix[] = [
       if (!store) return false;
 
       try {
+        // Check if AWS is configured for this project
+        const { isAwsConfigured, getAwsConfig, getAwsAccountId, getProjectName, findKeyPair, getEC2Client, CreateKeyPairCommand } =
+          await import('../../aws/utils/aws-helpers.js');
+
+        if (isAwsConfigured(config)) {
+          const { region } = getAwsConfig(config);
+          const projectName = getProjectName(config);
+
+          // Ensure AWS credentials are working
+          let accountId = await getAwsAccountId(region);
+          if (!accountId) {
+            console.log('');
+            console.log('      ============================================================');
+            console.log('      AWS credentials not configured.');
+            console.log('      Login with your AWS root account or an IAM admin user.');
+            console.log('      ============================================================');
+            console.log('');
+            console.log('      Running: aws configure');
+            console.log('      (Enter your Access Key ID, Secret Access Key, and region)');
+            console.log('');
+
+            try {
+              execSync('aws configure', { stdio: 'inherit' });
+            } catch {
+              console.log('      aws configure failed');
+              return false;
+            }
+
+            accountId = await getAwsAccountId(region);
+            if (!accountId) {
+              console.log('      AWS credentials still invalid after configuration.');
+              return false;
+            }
+            console.log('      [OK] AWS login successful (account: ' + accountId + ')');
+          }
+
+          // Check if key pair already exists
+          const keyName = 'factiii-' + projectName;
+          if (await findKeyPair(keyName, region)) {
+            // Key pair exists but we can't retrieve the private key from AWS
+            console.log('      EC2 key pair "' + keyName + '" already exists in AWS.');
+            console.log('      AWS does not store the private key after creation.');
+            console.log('      Falling back to manual entry...');
+            console.log('');
+          } else {
+            // Create new key pair — AWS returns the private key material
+            console.log('      Creating EC2 key pair: ' + keyName);
+            const ec2 = getEC2Client(region);
+            const keyResult = await ec2.send(new CreateKeyPairCommand({
+              KeyName: keyName,
+              KeyType: 'ed25519',
+            }));
+            const privateKey = keyResult.KeyMaterial;
+            if (privateKey) {
+              // Store in vault
+              const vaultResult = await store.setSecret('PROD_SSH', privateKey);
+              if (!vaultResult.success) {
+                console.log('      Failed to store PROD_SSH in vault');
+                return false;
+              }
+              console.log('      [OK] Stored PROD_SSH in Ansible Vault');
+
+              // Write to disk
+              const sshDir = path.join(os.homedir(), '.ssh');
+              if (!fs.existsSync(sshDir)) {
+                fs.mkdirSync(sshDir, { mode: 0o700 });
+              }
+              const keyPath = path.join(sshDir, 'prod_deploy_key');
+              fs.writeFileSync(keyPath, privateKey.trimEnd() + '\n', { mode: 0o600 });
+              console.log('      [OK] Wrote PROD_SSH → ' + keyPath);
+              return true;
+            }
+          }
+        }
+
+        // Fallback: manual prompt (non-AWS projects or key pair already exists)
         const value = await promptForSecret('PROD_SSH', config);
         const result = await store.setSecret('PROD_SSH', value);
         if (!result.success) return false;

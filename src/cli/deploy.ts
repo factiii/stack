@@ -224,7 +224,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     console.log('[OK] All pre-deploy checks passed!\n');
   }
 
-  // Hint: if vault has env vars for this stage but --secrets wasn't passed
+  // Auto-deploy secrets from vault if available
   if (!options.deploySecrets && (stage === 'staging' || stage === 'prod') && config.ansible?.vault_path) {
     try {
       const vaultPath = path.resolve(rootDir, config.ansible.vault_path);
@@ -240,8 +240,14 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
         });
         const keys = await store.listEnvironmentSecretKeys(stage);
         if (keys.length > 0) {
-          console.log('[INFO] Vault has ' + keys.length + ' secrets for ' + stage + '.');
-          console.log('       To deploy them: npx stack deploy --secrets deploy --' + stage + '\n');
+          console.log('[INFO] Deploying ' + keys.length + ' secrets to ' + stage + '...\n');
+          const secretsResult = await deploySecrets(stage, { rootDir });
+          if (secretsResult.success) {
+            console.log('[OK] Secrets deployed\n');
+          } else {
+            console.log('[!] Secrets deployment failed: ' + (secretsResult.error ?? 'Unknown'));
+            console.log('    Continuing with app deployment...\n');
+          }
         }
       }
     } catch {

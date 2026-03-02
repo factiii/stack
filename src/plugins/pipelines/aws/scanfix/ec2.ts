@@ -69,8 +69,21 @@ export const ec2Fixes: Fix[] = [
         console.log('   Created key pair: ' + keyName);
         console.log('   Private key saved to: ' + keyPath);
 
+        // Auto-store in Ansible Vault
         if (config.ansible?.vault_path) {
-          console.log('   TIP: Add this key to Ansible Vault with: npx stack deploy --secrets edit');
+          try {
+            const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+            const vault = new AnsibleVaultSecrets({
+              vault_path: config.ansible.vault_path,
+              vault_password_file: config.ansible.vault_password_file,
+            });
+            const vaultResult = await vault.setSecret('PROD_SSH', privateKey!);
+            if (vaultResult.success) {
+              console.log('   [OK] Stored PROD_SSH in Ansible Vault');
+            }
+          } catch {
+            console.log('   TIP: Store key in vault: npx stack deploy --secrets set PROD_SSH');
+          }
         }
 
         return true;
