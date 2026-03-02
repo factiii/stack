@@ -4,12 +4,13 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
-import { extractEnvironments } from '../../../utils/config-helpers.js';
+import { extractEnvironments, getStageFromEnvironment } from '../../../utils/config-helpers.js';
 import { generateDockerCompose, generateNginx, scanRepos, loadConfigs } from '../../../scripts/index.js';
 import { reportCommitStatus } from '../../../utils/github-status.js';
 import type {
@@ -17,14 +18,20 @@ import type {
   EnvironmentConfig,
   DeployResult,
   EnsureServerReadyOptions,
+  Stage,
 } from '../../../types/index.js';
 
+// Module-level state for SSH auth context (set by exported functions before SSH calls)
+let _sshStage: Stage | undefined;
+let _sshConfig: FactiiiConfig | undefined;
+let _sshRootDir: string | undefined;
 
 /**
  * Execute a command on a remote server via SSH
+ * Uses module-level stage/config for password auth fallback
  */
 async function sshExecCommand(envConfig: EnvironmentConfig, command: string): Promise<string> {
-  return await sshExec(envConfig, command);
+  return await sshExec(envConfig, command, _sshStage, _sshConfig, _sshRootDir);
 }
 
 /**
@@ -159,7 +166,7 @@ async function runCertbot(
   // Collect all domains that need certificates
   const domains: string[] = [];
   for (const env of Object.values(environments)) {
-    if (env.domain && !env.domain.startsWith('EXAMPLE_')) {
+    if (env.domain && !env.domain.toUpperCase().startsWith('EXAMPLE')) {
       domains.push(env.domain);
     }
   }
@@ -170,7 +177,7 @@ async function runCertbot(
   }
 
   const sslEmail = config.ssl_email;
-  if (!sslEmail || sslEmail.startsWith('EXAMPLE_')) {
+  if (!sslEmail || sslEmail.toUpperCase().startsWith('EXAMPLE')) {
     console.log('      ⚠️  ssl_email not configured in stack.yml, skipping SSL');
     console.log('      Add ssl_email to stack.yml to enable automatic SSL certificates');
     return;
@@ -309,7 +316,7 @@ async function writeEnvFile(
 
   if (isOnServer) {
     // We're on the server - write directly
-    const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '/Users/jon');
+    const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? os.homedir());
     const envFilePath = path.join(expandedRepoDir, envFileName);
     
     console.log(`   📝 Writing ${envFileName} (${envVars.length} variables)...`);
@@ -342,10 +349,10 @@ async function createEnvFromStaging(
 ): Promise<void> {
   const isOnServer = process.env.GITHUB_ACTIONS === 'true';
   const stagingEnvPath = isOnServer
-    ? path.join(repoDir.replace('~', process.env.HOME ?? '/Users/jon'), '.env.staging')
+    ? path.join(repoDir.replace('~', process.env.HOME ?? os.homedir()), '.env.staging')
     : `${repoDir}/.env.staging`;
   const envPath = isOnServer
-    ? path.join(repoDir.replace('~', process.env.HOME ?? '/Users/jon'), '.env')
+    ? path.join(repoDir.replace('~', process.env.HOME ?? os.homedir()), '.env')
     : `${repoDir}/.env`;
 
   // Read .env.staging
@@ -409,6 +416,10 @@ export async function ensureServerReady(
   if (!environment.startsWith('staging') && !environment.startsWith('stage-')) {
     return { success: true, message: 'macOS server only handles staging environments' };
   }
+
+  // Set module-level SSH auth context for password fallback
+  try { _sshStage = getStageFromEnvironment(environment); } catch { /* ignore */ }
+  _sshConfig = config;
 
   // Get environment config (supports both v1.x and v2.0.0+ formats)
   const environments = extractEnvironments(config);
@@ -505,7 +516,7 @@ async function addPostgresServiceForStaging(
   // Read .env.staging to get DATABASE_URL
   let databaseUrl: string | null = null;
   if (isOnServer) {
-    const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '/Users/jon');
+    const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? os.homedir());
     const envFilePath = path.join(expandedRepoDir, '.env.staging');
     if (fs.existsSync(envFilePath)) {
       const envContent = fs.readFileSync(envFilePath, 'utf8');
@@ -539,7 +550,7 @@ async function addPostgresServiceForStaging(
   }
 
   const factiiiDir = isOnServer
-    ? path.join(process.env.HOME ?? '/Users/jon', '.factiii')
+    ? path.join(process.env.HOME ?? os.homedir(), '.factiii')
     : '~/.factiii';
   const composePath = isOnServer
     ? path.join(factiiiDir, 'docker-compose.yml')
@@ -624,7 +635,7 @@ async function updateComposeForStagingImage(
 
   if (isOnServer) {
     // We're on the server - read and update directly
-    const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+    const factiiiDir = path.join(process.env.HOME ?? os.homedir(), '.factiii');
     const composePath = path.join(factiiiDir, 'docker-compose.yml');
 
     if (!fs.existsSync(composePath)) {
@@ -880,6 +891,10 @@ export async function deployStaging(
   config: FactiiiConfig,
   environment: string = 'staging'
 ): Promise<DeployResult> {
+  // Set module-level SSH auth context for password fallback
+  try { _sshStage = getStageFromEnvironment(environment); } catch { /* ignore */ }
+  _sshConfig = config;
+
   // Get environment config (supports both v1.x and v2.0.0+ formats)
   const environments = extractEnvironments(config);
   const envConfig = environments[environment];
@@ -911,8 +926,8 @@ export async function deployStaging(
 
     if (isOnServer) {
       // We're on the server - run commands directly
-      const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
-      const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '/Users/jon');
+      const factiiiDir = path.join(process.env.HOME ?? os.homedir(), '.factiii');
+      const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? os.homedir());
 
       // Step 1: Regenerate unified docker-compose.yml
       console.log('   🔄 Regenerating unified docker-compose.yml...');

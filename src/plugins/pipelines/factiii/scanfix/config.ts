@@ -21,7 +21,7 @@ export const configFixes: Fix[] = [
       const content = fs.readFileSync(configPath, 'utf8');
       // Only check non-comment lines (ignore # commented examples)
       const activeLines = content.split('\n').filter(line => !line.trimStart().startsWith('#'));
-      return activeLines.some(line => line.includes('EXAMPLE_'));
+      return activeLines.some(line => line.toUpperCase().includes('EXAMPLE_'));
     },
     fix: null,
     manualFix:

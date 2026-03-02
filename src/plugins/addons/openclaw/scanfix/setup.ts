@@ -31,17 +31,21 @@ const DEFAULT_MODEL = 'qwen2.5-coder:7b';
 function getOpenClawConfig(config: FactiiiConfig, rootDir: string): { model: string } {
   const defaults = { model: DEFAULT_MODEL };
 
-  // Check stack.yml
-  const globalConf = (config as Record<string, unknown>).openclaw as
-    | { model?: string }
-    | undefined;
+  // Check stack.yml (supports openclaw: true shorthand)
+  const rawGlobal = (config as Record<string, unknown>).openclaw;
+  const globalConf = (typeof rawGlobal === 'object' && rawGlobal !== null)
+    ? rawGlobal as { model?: string }
+    : undefined;
 
-  // Check stack.local.yml
+  // Check stack.local.yml (supports openclaw: true shorthand)
   let localConf: { model?: string } | undefined;
   try {
     const { loadLocalConfig } = require('../../../../utils/config-helpers.js');
     const local = loadLocalConfig(rootDir);
-    localConf = (local as Record<string, unknown>).openclaw as { model?: string } | undefined;
+    const rawLocal = (local as Record<string, unknown>).openclaw;
+    localConf = (typeof rawLocal === 'object' && rawLocal !== null)
+      ? rawLocal as { model?: string }
+      : undefined;
   } catch {
     // No local config
   }
@@ -416,22 +420,51 @@ export const openclawFixes: Fix[] = [
     stage: 'dev',
     os: 'mac' as ServerOS,
     severity: 'warning',
-    description: 'OpenClaw is not configured inside the Tart VM',
-    scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+    description: 'OpenClaw is not configured to use local Ollama model inside the Tart VM',
+    scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const ip = getReadyVmIp();
       if (!ip) return false;
       if (!isInstalledInVm(ip, 'openclaw')) return false;
       try {
         sshVm(ip, 'test -f ~/.openclaw/openclaw.json');
-        return false; // Config exists, no issue
+        // Config exists — check if it points to the correct model
+        const content = sshVm(ip, 'cat ~/.openclaw/openclaw.json');
+        const model = getModelName(config, rootDir);
+        return !content.includes(model);
       } catch {
         return true; // Config missing
       }
     },
-    fix: null,
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      const ip = getReadyVmIp();
+      if (!ip) return false;
+      const model = getModelName(config, rootDir);
+      try {
+        // Create config directory
+        sshVm(ip, 'mkdir -p ~/.openclaw');
+        // Write OpenClaw config pointing to local Ollama
+        const configJson = JSON.stringify({
+          provider: 'ollama',
+          model: model,
+          baseUrl: 'http://localhost:11434',
+        }, null, 2);
+        // Escape double quotes for SSH command
+        const escaped = configJson.replace(/"/g, '\\"');
+        execSync(
+          'ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 admin@' + ip +
+            " 'echo \"" + escaped + "\" > ~/.openclaw/openclaw.json'",
+          { stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000 }
+        );
+        console.log('   Configured OpenClaw to use Ollama model: ' + model);
+        console.log('   Config written to ~/.openclaw/openclaw.json inside VM');
+        return true;
+      } catch (e) {
+        console.log('   Failed to write config: ' + (e instanceof Error ? e.message : String(e)));
+        return false;
+      }
+    },
     manualFix:
-      'SSH into VM and run the onboarding wizard:\n' +
-      '      ssh admin@$(tart ip <vm-name>)\n' +
-      '      openclaw onboard --install-daemon',
+      'SSH into VM and create ~/.openclaw/openclaw.json with:\n' +
+      '      { "provider": "ollama", "model": "' + DEFAULT_MODEL + '", "baseUrl": "http://localhost:11434" }',
   },
 ];

@@ -28,7 +28,7 @@ function getProdDomain(config: FactiiiConfig): string | null {
   const environments = extractEnvironments(config);
   const prodEnv = environments.prod ?? environments.production;
   const domain = prodEnv?.domain;
-  if (!domain || domain.startsWith('EXAMPLE_')) return null;
+  if (!domain || domain.toUpperCase().startsWith('EXAMPLE')) return null;
   return domain;
 }
 

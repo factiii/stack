@@ -4,12 +4,8 @@
  * Removes deployment from specified environment
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import yaml from 'js-yaml';
-
-import { getStackConfigPath } from '../constants/config-files.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
+import { loadConfig } from '../utils/config-helpers.js';
 import type { FactiiiConfig, UndeployOptions, DeployResult } from '../types/index.js';
 
 interface PluginClass {
@@ -20,25 +16,6 @@ interface PluginClass {
 
 interface PluginInstance {
   undeploy(config: FactiiiConfig, environment: string): Promise<DeployResult>;
-}
-
-/**
- * Load config from stack.yml (or legacy stack.yml)
- */
-function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = getStackConfigPath(rootDir);
-
-  if (!fs.existsSync(configPath)) {
-    return {} as FactiiiConfig;
-  }
-
-  try {
-    return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('[!] Error parsing config: ' + errorMessage);
-    return {} as FactiiiConfig;
-  }
 }
 
 export async function undeploy(environment: string, options: UndeployOptions = {}): Promise<DeployResult> {

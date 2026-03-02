@@ -174,27 +174,26 @@ export function promptSingleLine(
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
-    }) as readline.Interface & { stdoutMuted?: boolean; _writeToOutput?: (str: string) => void };
+    });
 
     if (hidden) {
-      rl.stdoutMuted = true;
-      const originalWrite = rl._writeToOutput?.bind(rl);
-      rl._writeToOutput = function (stringToWrite: string): void {
-        // Always show the prompt text, but mask subsequent characters
-        if (this.stdoutMuted) {
-          // When readline reprints the prompt+input, replace user input with asterisks
-          const masked = stringToWrite.replace(/.(?=.$)/g, '*');
-          (this as any).output.write(masked);
-        } else if (originalWrite) {
-          originalWrite(stringToWrite);
-        } else {
-          (this as any).output.write(stringToWrite);
+      // Show the prompt text, then suppress all echoed input
+      let promptShown = false;
+      (rl as any)._writeToOutput = function (stringToWrite: string): void {
+        if (!promptShown) {
+          // First write is the prompt itself — show it
+          (rl as any).output.write(stringToWrite);
+          promptShown = true;
         }
+        // Subsequent writes (user keystrokes) are suppressed
       };
     }
 
     rl.question(prompt, (answer) => {
-      rl.stdoutMuted = false;
+      if (hidden) {
+        // Move to next line since Enter wasn't echoed
+        (rl as any).output.write('\n');
+      }
       rl.close();
       resolve(answer.trim());
     });
@@ -203,27 +202,32 @@ export function promptSingleLine(
 
 /**
  * Prompt for multi-line input (for SSH keys)
+ * Hides input from terminal to protect sensitive data like private keys.
+ * User sees "[hidden] Pasting..." while entering, then a confirmation line count.
  */
 export function promptMultiLine(prompt: string): Promise<string> {
   return new Promise((resolve) => {
-    console.log(prompt);
+    if (prompt) console.log(prompt);
+    console.log('   [hidden] Paste your key, then press Enter on a blank line to finish:');
 
     const lines: string[] = [];
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
-      terminal: false,
     });
 
-    // Set stdin to raw mode to detect blank lines
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
-    }
+    // Suppress echoed input by overriding readline's internal write method.
+    // This prevents the OS terminal driver from displaying pasted key content.
+    // We keep terminal mode (default) so readline handles line events properly.
+    (rl as any)._writeToOutput = function () {
+      // Suppress all echoed input — prompt was already printed above
+    };
 
     rl.on('line', (line) => {
       // Empty line signals end of input
       if (line.trim() === '' && lines.length > 0) {
         rl.close();
+        console.log('   [hidden] Received ' + lines.length + ' lines');
         resolve(lines.join('\n'));
       } else {
         lines.push(line);

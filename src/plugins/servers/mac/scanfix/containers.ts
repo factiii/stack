@@ -4,6 +4,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
@@ -21,7 +22,7 @@ export const containerFixes: Fix[] = [
 
       try {
         // 1. Generate configs first to know what SHOULD be running
-        const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+        const factiiiDir = path.join(process.env.HOME ?? os.homedir(), '.factiii');
         const infraDir = path.join(factiiiDir, 'infrastructure');
         const generateScript = path.join(infraDir, 'dist', 'scripts', 'generate-all.js');
 
@@ -88,7 +89,7 @@ export const containerFixes: Fix[] = [
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       try {
         // Same logic as scan to find unmanaged containers
-        const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+        const factiiiDir = path.join(process.env.HOME ?? os.homedir(), '.factiii');
         const infraDir = path.join(factiiiDir, 'infrastructure');
         const generateScript = path.join(infraDir, 'dist', 'scripts', 'generate-all.js');
 

@@ -157,8 +157,27 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
     console.log('   Access Key ID:     ' + newAccessKeyId);
     console.log('   Account:           ' + verifyId);
     console.log('   Region:            ' + region);
-    console.log('');
-    console.log('   TIP: Store the secret key in Ansible Vault: npx stack secrets set AWS_SECRET_ACCESS_KEY');
+
+    // Auto-store in Ansible Vault if configured
+    if (config.ansible?.vault_path) {
+      try {
+        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+        const vault = new AnsibleVaultSecrets({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+        });
+        const keyResult2 = await vault.setSecret('AWS_SECRET_ACCESS_KEY', newSecretKey);
+        const idResult = await vault.setSecret('AWS_ACCESS_KEY_ID', newAccessKeyId);
+        if (keyResult2.success && idResult.success) {
+          console.log('   [OK] Stored AWS credentials in Ansible Vault');
+        }
+      } catch {
+        console.log('   TIP: Store the secret key in Ansible Vault: npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY');
+      }
+    } else {
+      console.log('');
+      console.log('   TIP: Store the secret key in Ansible Vault: npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY');
+    }
 
     return true;
   } catch (e) {
@@ -180,7 +199,7 @@ export const credentialsFixes: Fix[] = [
         const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
         const environments = extractEnvironments(config);
         const hasAwsEnv = Object.values(environments).some(
-          (e: { pipeline?: string }) => e.pipeline === 'aws'
+          (e: { access_key_id?: string; config?: string }) => !!e.access_key_id || !!e.config
         );
         if (!hasAwsEnv) return false;
       }
@@ -218,7 +237,7 @@ export const credentialsFixes: Fix[] = [
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
       const hasAwsEnv = Object.values(environments).some(
-        (e: { pipeline?: string }) => e.pipeline === 'aws'
+        (e: { access_key_id?: string; config?: string }) => !!e.access_key_id || !!e.config
       );
       if (!hasAwsEnv && !config.aws) return false;
 
@@ -237,7 +256,7 @@ export const credentialsFixes: Fix[] = [
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
       const hasAwsEnv = Object.values(environments).some(
-        (e: { pipeline?: string }) => e.pipeline === 'aws'
+        (e: { access_key_id?: string; config?: string }) => !!e.access_key_id || !!e.config
       );
       if (!hasAwsEnv && !config.aws) return false;
 
@@ -252,8 +271,8 @@ export const credentialsFixes: Fix[] = [
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,
           });
-          const result = await vault.checkSecrets(['aws_access_key_id', 'aws_secret_access_key']);
-          if (result.status?.aws_access_key_id && result.status?.aws_secret_access_key) {
+          const result = await vault.checkSecrets(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']);
+          if (result.status?.AWS_ACCESS_KEY_ID && result.status?.AWS_SECRET_ACCESS_KEY) {
             return false;
           }
         } catch {
@@ -263,7 +282,54 @@ export const credentialsFixes: Fix[] = [
 
       return true;
     },
-    fix: null,
+    fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (!config.ansible?.vault_path) {
+        console.log('   Ansible Vault not configured — cannot auto-store credentials');
+        return false;
+      }
+
+      try {
+        // Read from ~/.aws/credentials (set by aws configure)
+        const os = await import('os');
+        const awsCredsPath = path.join(os.homedir(), '.aws', 'credentials');
+        if (!fs.existsSync(awsCredsPath)) {
+          console.log('   ~/.aws/credentials not found — run "aws configure" first');
+          return false;
+        }
+
+        const content = fs.readFileSync(awsCredsPath, 'utf8');
+        const keyIdMatch = content.match(/aws_access_key_id\s*=\s*(.+)/);
+        const secretMatch = content.match(/aws_secret_access_key\s*=\s*(.+)/);
+
+        if (!keyIdMatch || !keyIdMatch[1] || !secretMatch || !secretMatch[1]) {
+          console.log('   Could not read credentials from ~/.aws/credentials');
+          return false;
+        }
+
+        const accessKeyId = keyIdMatch[1].trim();
+        const secretKey = secretMatch[1].trim();
+
+        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+        const vault = new AnsibleVaultSecrets({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+        });
+
+        const r1 = await vault.setSecret('AWS_ACCESS_KEY_ID', accessKeyId);
+        const r2 = await vault.setSecret('AWS_SECRET_ACCESS_KEY', secretKey);
+
+        if (r1.success && r2.success) {
+          console.log('   [OK] Stored AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY in Ansible Vault');
+          return true;
+        }
+
+        console.log('   Failed to store in vault');
+        return false;
+      } catch (e) {
+        console.log('   Error: ' + (e instanceof Error ? e.message : String(e)));
+        return false;
+      }
+    },
     manualFix: [
       'Configure AWS credentials via one of:',
       '',
@@ -271,12 +337,12 @@ export const credentialsFixes: Fix[] = [
       '    export AWS_ACCESS_KEY_ID=AKIA...',
       '    export AWS_SECRET_ACCESS_KEY=...',
       '',
-      '  Option B: AWS CLI configuration',
-      '    aws configure',
+      '  Option B: AWS CLI + auto-store in vault',
+      '    aws configure    (then run: npx stack fix --secrets)',
       '',
-      '  Option C: Ansible Vault (recommended)',
-      '    Add aws_access_key_id and aws_secret_access_key to your vault file',
-      '    npx stack secrets edit',
+      '  Option C: Ansible Vault (manual)',
+      '    npx stack deploy --secrets set AWS_ACCESS_KEY_ID',
+      '    npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY',
     ].join('\n'),
   },
   {
@@ -291,11 +357,14 @@ export const credentialsFixes: Fix[] = [
         // Only flag if we have credentials configured (env vars or aws configure)
         if (process.env.AWS_ACCESS_KEY_ID) return true;
         try {
-          const result = execSync('aws configure get aws_access_key_id 2>nul || echo ""', {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-          }).trim();
-          return result.length > 0;
+          // Check ~/.aws/credentials directly (no AWS CLI needed)
+          const os = await import('os');
+          const credPath = path.join(os.homedir(), '.aws', 'credentials');
+          if (fs.existsSync(credPath)) {
+            const content = fs.readFileSync(credPath, 'utf8');
+            return /aws_access_key_id\s*=\s*\S+/.test(content);
+          }
+          return false;
         } catch {
           return false;
         }

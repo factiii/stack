@@ -4,6 +4,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
@@ -126,7 +127,7 @@ export const configFixes: Fix[] = [
 
       // Executed locally - SSH handled by CLI wrapper
       try {
-        const repoPath = path.join(process.env.HOME ?? '/Users/jon', '.factiii', repoName, '.git');
+        const repoPath = path.join(process.env.HOME ?? os.homedir(), '.factiii', repoName, '.git');
         return !fs.existsSync(repoPath);
       } catch {
         return true;

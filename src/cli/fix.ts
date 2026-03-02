@@ -12,18 +12,16 @@
  *
  * Key points:
  * - This file asks pipeline plugin canReach(stage) for each stage
- * - Pipeline decides if stage runs locally or via workflow/SSH
- * - When running on server, pipeline workflow specifies --staging/--prod
+ * - Pipeline decides if stage runs locally or via SSH
+ * - When running on server (FACTIII_ON_SERVER=true), runs locally
  * ============================================================
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import yaml from 'js-yaml';
-
-import { getStackConfigPath } from '../constants/config-files.js';
 import { scan } from './scan.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
+import { loadConfig } from '../utils/config-helpers.js';
 import type { FactiiiConfig, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
 
 interface PluginClass {
@@ -43,25 +41,6 @@ interface PipelinePluginClass {
 
 interface PipelinePluginInstance {
   fixStage(stage: Stage, options: Record<string, unknown>): Promise<{ handled: boolean }>;
-}
-
-/**
- * Load config from stack.yml (or legacy stack.yml)
- */
-function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = getStackConfigPath(rootDir);
-
-  if (!fs.existsSync(configPath)) {
-    return {} as FactiiiConfig;
-  }
-
-  try {
-    return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('[!] Error parsing config: ' + errorMessage);
-    return {} as FactiiiConfig;
-  }
 }
 
 /**
@@ -87,15 +66,20 @@ function checkReachability(
   stage: Stage,
   config: FactiiiConfig
 ): Reachability {
+  let defaultPipelineReason = '';
   let lastReason = 'No pipeline plugin loaded';
   for (const plugin of pipelinePlugins) {
     if (typeof plugin.canReach === 'function') {
       const result = plugin.canReach(stage, config);
       if (result.reachable) return result;
-      lastReason = result.reason ?? 'Unreachable';
+      const reason = result.reason ?? 'Unreachable';
+      if (plugin.id === (config.pipeline ?? 'factiii')) {
+        defaultPipelineReason = reason;
+      }
+      lastReason = reason;
     }
   }
-  return { reachable: false, reason: lastReason };
+  return { reachable: false, reason: defaultPipelineReason || lastReason };
 }
 
 /**

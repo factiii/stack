@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import yaml from 'js-yaml';
 import type { FactiiiConfig, EnvironmentConfig } from '../types/index.js';
-import { getStackLocalPath } from '../constants/config-files.js';
+import { getStackConfigPath, getStackAutoPath, getStackLocalPath } from '../constants/config-files.js';
 
 // ============================================================
 // CRITICAL: Config Environment Extraction
@@ -33,6 +33,7 @@ export const RESERVED_CONFIG_KEYS = [
   'container_exclusions',
   'trusted_plugins',
   'ansible',  // Ansible Vault configuration (not an environment)
+  'env_match_exceptions',  // Keys allowed to match across .env.example and staging/prod
 ] as const;
 
 /**
@@ -176,7 +177,7 @@ export function getUsedPlugins(config: FactiiiConfig): Set<string> {
  */
 export interface LocalConfig {
   dev_os?: 'mac' | 'windows' | 'ubuntu';
-  openclaw?: {
+  openclaw?: boolean | {
     model?: string;
   };
 }
@@ -199,6 +200,56 @@ export function loadLocalConfig(rootDir: string): LocalConfig {
   } catch {
     return {};
   }
+}
+
+/**
+ * Load merged config from stack.yml + stackAuto.yml
+ * stack.yml values take priority over stackAuto.yml
+ *
+ * @param rootDir - Root directory of the project
+ * @returns Merged config or empty object if no config exists
+ */
+export function loadConfig(rootDir: string): FactiiiConfig {
+  const configPath = getStackConfigPath(rootDir);
+  let config: FactiiiConfig = {} as FactiiiConfig;
+
+  // Load stack.yml (user config)
+  if (fs.existsSync(configPath)) {
+    try {
+      config = (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error('[!] Error parsing config: ' + errorMessage);
+      return {} as FactiiiConfig;
+    }
+  }
+
+  // Merge stackAuto.yml (auto-detected defaults, stack.yml wins)
+  const autoPath = getStackAutoPath(rootDir);
+  if (fs.existsSync(autoPath)) {
+    try {
+      const autoConfig = (yaml.load(fs.readFileSync(autoPath, 'utf8')) as Record<string, unknown>) ?? {};
+      for (const [key, value] of Object.entries(autoConfig)) {
+        if (!(key in config)) {
+          // stackAuto.yml provides defaults that stack.yml can override
+          (config as Record<string, unknown>)[key] = value;
+        } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          // Deep merge objects (e.g., ansible section)
+          const existing = (config as Record<string, unknown>)[key];
+          if (typeof existing === 'object' && existing !== null && !Array.isArray(existing)) {
+            (config as Record<string, unknown>)[key] = {
+              ...(value as Record<string, unknown>),
+              ...(existing as Record<string, unknown>),
+            };
+          }
+        }
+      }
+    } catch {
+      // stackAuto.yml parse error — ignore, stack.yml is sufficient
+    }
+  }
+
+  return config;
 }
 
 export function validateEnvironmentName(name: string): string | null {

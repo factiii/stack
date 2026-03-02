@@ -39,7 +39,7 @@ export const dbReplicationFixes: Fix[] = [
       if (!endpoint) return false;
 
       const prodEnv = getProdEnv(config);
-      if (!prodEnv?.domain || prodEnv.domain.startsWith('EXAMPLE_')) return false;
+      if (!prodEnv?.domain || prodEnv.domain.toUpperCase().startsWith('EXAMPLE')) return false;
 
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -85,7 +85,7 @@ export const dbReplicationFixes: Fix[] = [
       if (!endpoint) return false;
 
       const prodEnv = getProdEnv(config);
-      if (!prodEnv?.domain || prodEnv.domain.startsWith('EXAMPLE_')) return false;
+      if (!prodEnv?.domain || prodEnv.domain.toUpperCase().startsWith('EXAMPLE')) return false;
 
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports

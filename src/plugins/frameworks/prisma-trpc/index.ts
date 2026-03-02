@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
@@ -539,7 +540,7 @@ class PrismaTrpcPlugin {
     }
     const repos = scanRepos();
 
-    const factiiiDir = process.env.FACTIII_DIR ?? path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+    const factiiiDir = process.env.FACTIII_DIR ?? path.join(process.env.HOME ?? os.homedir(), '.factiii');
     const composePath = path.join(factiiiDir, 'docker-compose.yml');
 
     // Collect all exposed ports from existing postgres services

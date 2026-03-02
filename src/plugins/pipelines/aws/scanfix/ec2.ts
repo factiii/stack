@@ -70,7 +70,7 @@ export const ec2Fixes: Fix[] = [
         console.log('   Private key saved to: ' + keyPath);
 
         if (config.ansible?.vault_path) {
-          console.log('   TIP: Add this key to Ansible Vault with: npx stack secrets edit');
+          console.log('   TIP: Add this key to Ansible Vault with: npx stack deploy --secrets edit');
         }
 
         return true;

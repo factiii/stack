@@ -2,7 +2,7 @@
  * Deploy Command
  *
  * Deploys to specified environment by delegating to the pipeline plugin.
- * The pipeline plugin decides how to reach the stage (local vs workflow trigger).
+ * The pipeline plugin decides how to reach the stage (local vs SSH).
  *
  * ============================================================
  * STAGE EXECUTION PATTERN
@@ -11,21 +11,18 @@
  *
  * Key points:
  * - This file asks pipeline plugin canReach(stage) for each stage
- * - Pipeline decides if stage runs locally or via workflow
- * - When running on server, pipeline workflow specifies --staging/--prod
+ * - Pipeline decides if stage runs locally or via SSH
+ * - When running on server (FACTIII_ON_SERVER=true), runs locally
  * ============================================================
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import yaml from 'js-yaml';
-
-import { getStackConfigPath } from '../constants/config-files.js';
 import { scan } from './scan.js';
 import { deploySecrets } from './deploy-secrets.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import type { FactiiiConfig, DeployOptions, DeployResult, Stage } from '../types/index.js';
-import { extractEnvironments, getStageFromEnvironment } from '../utils/config-helpers.js';
+import { extractEnvironments, getStageFromEnvironment, loadConfig } from '../utils/config-helpers.js';
 
 /**
  * Pipeline plugin class interface
@@ -41,25 +38,6 @@ interface PipelinePluginClass {
  */
 interface PipelinePluginInstance {
   deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult>;
-}
-
-/**
- * Load config from stack.yml (or legacy stack.yml)
- */
-function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = getStackConfigPath(rootDir);
-
-  if (!fs.existsSync(configPath)) {
-    return {} as FactiiiConfig;
-  }
-
-  try {
-    return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('[!] Error parsing config: ' + errorMessage);
-    return {} as FactiiiConfig;
-  }
 }
 
 /**
@@ -244,6 +222,31 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     return { success: false, error: 'Critical pre-deploy checks failed' };
   } else {
     console.log('[OK] All pre-deploy checks passed!\n');
+  }
+
+  // Hint: if vault has env vars for this stage but --secrets wasn't passed
+  if (!options.deploySecrets && (stage === 'staging' || stage === 'prod') && config.ansible?.vault_path) {
+    try {
+      const vaultPath = path.resolve(rootDir, config.ansible.vault_path);
+      const vaultPassFile = config.ansible.vault_password_file
+        ? path.resolve(rootDir, config.ansible.vault_password_file)
+        : undefined;
+      if (fs.existsSync(vaultPath) && (!vaultPassFile || fs.existsSync(vaultPassFile))) {
+        const { AnsibleVaultSecrets } = await import('../utils/ansible-vault-secrets.js');
+        const store = new AnsibleVaultSecrets({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+          rootDir,
+        });
+        const keys = await store.listEnvironmentSecretKeys(stage);
+        if (keys.length > 0) {
+          console.log('[INFO] Vault has ' + keys.length + ' secrets for ' + stage + '.');
+          console.log('       To deploy them: npx stack deploy --secrets deploy --' + stage + '\n');
+        }
+      }
+    } catch {
+      // Vault check is informational only — don't block deploy
+    }
   }
 
   // Dry run: show deployment plan without executing

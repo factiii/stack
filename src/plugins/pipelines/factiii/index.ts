@@ -68,6 +68,7 @@ import { workflowFixes } from './scanfix/workflows.js';
 import { secretsFixes } from './scanfix/secrets.js';
 import { envFileFixes } from './scanfix/env-files.js';
 import { ansibleFixes } from './scanfix/ansible.js';
+import { vaultFixes } from './scanfix/vault.js';
 
 // Import AWS scanfix arrays (AWS provisioning runs as part of factiii pipeline)
 import { awsCliFixes } from '../aws/scanfix/aws-cli.js';
@@ -200,12 +201,73 @@ class FactiiiPipeline {
           return { reachable: true, via: 'local' };
         }
 
+        // ============================================================
+        // CRITICAL: Block SSH to EXAMPLE_ placeholder domains
+        // ============================================================
+        // If domain still has EXAMPLE_ prefix, the user hasn't configured
+        // it yet. Never attempt SSH to a placeholder domain.
+        // ============================================================
+        {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
+          const stageEnvs = getEnvironmentsForStage(config, stage);
+          const stageEnvValues = Object.values(stageEnvs) as EnvironmentConfig[];
+          const allExample = stageEnvValues.every((e: EnvironmentConfig) =>
+            !e.domain || e.domain.toUpperCase().startsWith('EXAMPLE')
+          );
+          if (allExample && stageEnvValues.length > 0) {
+            // Check if AWS config exists — allow local provisioning even with EXAMPLE_ domain
+            const hasAws = stageEnvValues.some((e: EnvironmentConfig) =>
+              !!e.access_key_id || !!e.config
+            );
+            if (hasAws) {
+              return { reachable: true, via: 'local' };
+            }
+            return {
+              reachable: false,
+              reason: stage + ' domain is still a placeholder (EXAMPLE_...).\n' +
+                '   Replace the EXAMPLE_ value in stack.yml with your actual domain.',
+            };
+          }
+        }
+
         // On dev machine: check for SSH key to reach server directly
         // This is the primary path - direct SSH is faster than GitHub workflows
         {
           const sshKey = findSshKeyForStage(stage);
           if (sshKey) {
             return { reachable: true, via: 'ssh' };
+          }
+        }
+
+        // No SSH key — check if vault has a password for this stage (sshpass fallback)
+        if (config.ansible?.vault_path) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const yamlLib = require('js-yaml');
+            const vaultPath = config.ansible.vault_path;
+            const resolvedPath = path.isAbsolute(vaultPath)
+              ? vaultPath
+              : path.join(process.cwd(), vaultPath);
+
+            if (fs.existsSync(resolvedPath)) {
+              let cmd = 'ansible-vault view "' + resolvedPath + '"';
+              if (config.ansible.vault_password_file) {
+                const osLib = require('os');
+                const pwFile = config.ansible.vault_password_file.replace(/^~/, osLib.homedir());
+                cmd += ' --vault-password-file "' + pwFile + '"';
+              }
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
+              const { execSync: execSyncImport } = require('child_process');
+              const content = execSyncImport(cmd, { encoding: 'utf8', stdio: 'pipe' });
+              const parsed = yamlLib.load(content) as Record<string, unknown>;
+              const secretName = stage.toUpperCase() + '_SSH_PASSWORD';
+              if (parsed && typeof parsed === 'object' && typeof parsed[secretName] === 'string') {
+                return { reachable: true, via: 'ssh' };
+              }
+            }
+          } catch {
+            // Vault read failed — continue to other checks
           }
         }
 
@@ -217,14 +279,14 @@ class FactiiiPipeline {
           const envs = getEnvironmentsForStage(config, stage);
           const envValues = Object.values(envs) as EnvironmentConfig[];
           const hasAws = envValues.some((e: EnvironmentConfig) =>
-            e.pipeline === 'aws' || !!e.access_key_id || !!e.config
+            !!e.access_key_id || !!e.config
           );
           if (hasAws) {
             return { reachable: true, via: 'local' };
           }
         }
 
-        // No SSH key, no AWS — cannot reach this stage
+        // No SSH key, no password, no AWS — cannot reach this stage
         {
           const sshLabel = stage === 'staging' ? 'SSH_STAGING' : 'SSH_PROD';
           const vaultName = stage === 'staging' ? 'STAGING_SSH' : 'PROD_SSH';
@@ -232,7 +294,7 @@ class FactiiiPipeline {
             reachable: false,
             reason: sshLabel + ' not found (no key at ~/.ssh/' + stage + '_deploy_key).\n' +
               '   Run: npx stack fix --secrets   (stores key in vault + writes to disk)\n' +
-              '   Or:  npx stack secrets set ' + vaultName + ' && npx stack secrets write-ssh-keys',
+              '   Or:  npx stack deploy --secrets set ' + vaultName + ' && npx stack deploy --secrets write-ssh-keys',
           };
         }
 
@@ -251,6 +313,7 @@ class FactiiiPipeline {
     ...bootstrapFixes,
     ...configFixes,
     ...ansibleFixes,
+    ...vaultFixes,
     ...githubCliFixes,
     ...workflowFixes,
     ...secretsFixes,
@@ -856,16 +919,6 @@ class FactiiiPipeline {
     return prodUtils.buildProductionImage(config, stagingConfig);
   }
 
-  /**
-   * Trigger a GitHub Actions workflow
-   */
-  static async triggerWorkflow(
-    workflowName: string,
-    inputs: Record<string, string> = {}
-  ): Promise<void> {
-    return workflowUtils.triggerWorkflow(workflowName, inputs);
-  }
-
   // ============================================================
   // INSTANCE METHODS
   // ============================================================
@@ -897,7 +950,7 @@ class FactiiiPipeline {
     if (reach.via === 'ssh') {
       // Direct SSH to server - the primary deployment path
       console.log(`   Deploying to ${stage} via direct SSH...`);
-      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'deploy --' + stage);
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'deploy --' + stage);
       return {
         success: sshResult.success,
         message: sshResult.success ? 'Deployment complete via SSH' : undefined,
@@ -925,7 +978,7 @@ class FactiiiPipeline {
 
     if (reach.via === 'ssh') {
       console.log('   Scanning ' + stage + ' via direct SSH...');
-      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
       if (!sshResult.success) {
         console.log('   [!] ' + stage + ' scan failed: ' + sshResult.stderr);
       }
@@ -952,7 +1005,7 @@ class FactiiiPipeline {
 
     if (reach.via === 'ssh') {
       console.log('   Fixing ' + stage + ' via direct SSH...');
-      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
       if (!sshResult.success) {
         console.log('   [!] ' + stage + ' fix failed: ' + sshResult.stderr);
       }

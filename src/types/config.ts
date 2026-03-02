@@ -68,6 +68,9 @@ export interface FactiiiConfig {
     vault_password_file?: string;
   };
 
+  // Keys allowed to have identical values across .env.example and staging/prod
+  env_match_exceptions?: string[];
+
   // Dynamic environment keys
   // Any top-level key NOT in the reserved list above is an environment
   // Example: staging, staging2, prod, prod2, qa, etc.

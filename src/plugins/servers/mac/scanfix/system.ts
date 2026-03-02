@@ -83,6 +83,26 @@ export const systemFixes: Fix[] = [
     manualFix: 'Install Docker Desktop: brew install --cask docker',
   },
   {
+    id: 'mac-passwordless-sudo',
+    stage: 'staging',
+    severity: 'critical',
+    description: '🔑 Passwordless sudo not configured (required for remote fixes)',
+    scan: async (): Promise<boolean> => {
+      try {
+        // Check if current user can run sudo without password
+        execSync('sudo -n true 2>/dev/null', { stdio: 'pipe' });
+        return false; // No problem — passwordless sudo works
+      } catch {
+        return true; // Needs password — problem
+      }
+    },
+    fix: null,
+    manualFix: 'Enable passwordless sudo for your user:\n' +
+      '  sudo visudo\n' +
+      '  Add this line at the end: ' + (process.env.USER ?? '<username>') + ' ALL=(ALL) NOPASSWD: ALL\n' +
+      '  Or run: echo "' + (process.env.USER ?? '<username>') + ' ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/' + (process.env.USER ?? 'deploy'),
+  },
+  {
     id: 'mac-ssh-server-disabled',
     stage: 'staging',
     severity: 'critical',

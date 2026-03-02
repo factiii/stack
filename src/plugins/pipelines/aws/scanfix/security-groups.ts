@@ -176,6 +176,8 @@ export const securityGroupFixes: Fix[] = [
       const environments = extractEnvironments(config);
       const stagingEnv = environments.staging;
       if (!stagingEnv?.domain) return false;
+      // Skip if staging domain is still a placeholder
+      if (stagingEnv.domain.toUpperCase().startsWith('EXAMPLE')) return false;
 
       // Check if RDS SG has an inbound rule for the staging IP
       try {
@@ -218,6 +220,11 @@ export const securityGroupFixes: Fix[] = [
       const stagingEnv = environments.staging;
       if (!stagingEnv?.domain) {
         console.log('   No staging domain configured');
+        return false;
+      }
+      // Skip if staging domain is still a placeholder
+      if (stagingEnv.domain.toUpperCase().startsWith('EXAMPLE')) {
+        console.log('   Set staging domain in stack.yml first');
         return false;
       }
 

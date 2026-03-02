@@ -6,7 +6,7 @@
  *
  * After EC2 provisions a key pair and saves it to ~/.ssh/prod_deploy_key,
  * this fix automatically stores it in Ansible Vault as PROD_SSH so that:
- * - Other dev machines can pull the key via `npx stack secrets write-ssh-keys`
+ * - Other dev machines can pull the key via `npx stack deploy --secrets write-ssh-keys`
  * - The `missing-prod-ssh` secrets check passes
  * - canReach('prod') returns via: 'ssh' on subsequent runs
  *
@@ -82,7 +82,7 @@ export const sshBridgeFixes: Fix[] = [
         const result = await store.setSecret('PROD_SSH', keyContent.trim());
         if (result.success) {
           console.log('   Stored EC2 key pair as PROD_SSH in Ansible Vault');
-          console.log('   Other dev machines can pull it with: npx stack secrets write-ssh-keys');
+          console.log('   Other dev machines can pull it with: npx stack deploy --secrets write-ssh-keys');
           return true;
         }
         console.log('   Failed to store in vault: ' + (result.error ?? 'unknown error'));
@@ -92,7 +92,7 @@ export const sshBridgeFixes: Fix[] = [
         return false;
       }
     },
-    manualFix: 'Store the EC2 key pair in vault: npx stack secrets set PROD_SSH\n' +
+    manualFix: 'Store the EC2 key pair in vault: npx stack deploy --secrets set PROD_SSH\n' +
       '      Then paste the contents of ~/.ssh/prod_deploy_key',
   },
   {
@@ -108,7 +108,7 @@ export const sshBridgeFixes: Fix[] = [
       const { extractEnvironments } = require('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
       const prodEnv = environments.prod ?? environments.production;
-      if (!prodEnv?.domain || !prodEnv.domain.startsWith('EXAMPLE-')) return false;
+      if (!prodEnv?.domain || !prodEnv.domain.toUpperCase().startsWith('EXAMPLE')) return false;
 
       // Check if EC2 instance has an Elastic IP
       const { region } = getAwsConfig(config);

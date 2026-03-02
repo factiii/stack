@@ -1,6 +1,6 @@
 {
   "name": "@factiii/stack",
-  "version": "0.1.35",
+  "version": "0.1.53",
   "description": "Infrastructure management package for deploying services to servers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

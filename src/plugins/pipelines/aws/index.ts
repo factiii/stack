@@ -48,29 +48,14 @@ import type {
   EnvironmentConfig,
   DeployResult,
   EnsureServerReadyOptions,
+  Fix,
   Stage,
   Reachability,
   ServerOS,
 } from '../../../types/index.js';
 
-// Import shared scanfix factories
-import {
-  getDockerFixes,
-} from '../../../scanfix/index.js';
-
-// Import plugin-specific scanfix arrays
-import { awsCliFixes } from './scanfix/aws-cli.js';
-import { configFixes } from './scanfix/config.js';
-import { credentialsFixes } from './scanfix/credentials.js';
-import { vpcFixes } from './scanfix/vpc.js';
-import { securityGroupFixes } from './scanfix/security-groups.js';
-import { ec2Fixes } from './scanfix/ec2.js';
-import { rdsFixes } from './scanfix/rds.js';
-import { s3Fixes } from './scanfix/s3.js';
-import { ecrFixes } from './scanfix/ecr.js';
-import { sesFixes } from './scanfix/ses.js';
-import { iamFixes } from './scanfix/iam.js';
-import { dbReplicationFixes } from './scanfix/db-replication.js';
+// AWS scanfix arrays are imported by factiii pipeline (factiii/index.ts)
+// to avoid duplicates when both plugins load. Docker is handled by server plugins.
 
 // Import environment-specific operations
 import { deployDev } from './dev.js';
@@ -242,7 +227,7 @@ class AWSPipeline {
         if (envValues.length === 0) {
           return { reachable: false, reason: 'No ' + stage + ' environment configured' };
         }
-        const hasAwsEnv = envValues.some(e => e.pipeline === 'aws' || e.config || e.access_key_id);
+        const hasAwsEnv = envValues.some(e => e.config || e.access_key_id);
         if (!hasAwsEnv) {
           return { reachable: false, reason: 'No AWS environment for ' + stage };
         }
@@ -257,7 +242,7 @@ class AWSPipeline {
         {
           const firstEnvForStage = envValues[0];
           const domain = firstEnvForStage?.domain;
-          const hasRealDomain = domain && !domain.startsWith('EXAMPLE_');
+          const hasRealDomain = domain && !domain.toUpperCase().startsWith('EXAMPLE');
 
           if (hasRealDomain) {
             // Server exists — check for SSH key (direct SSH from dev machine)
@@ -298,24 +283,9 @@ class AWSPipeline {
   // Config-specific fixes are merged at runtime
   // ============================================================
 
-  static readonly fixes = [
-    // Dev stage - shared fixes
-    ...getDockerFixes('dev', 'aws'),
-
-    // Plugin-specific fixes
-    ...awsCliFixes,
-    ...configFixes,
-    ...credentialsFixes,
-    ...vpcFixes,
-    ...securityGroupFixes,
-    ...ec2Fixes,
-    ...rdsFixes,
-    ...s3Fixes,
-    ...ecrFixes,
-    ...sesFixes,
-    ...iamFixes,
-    ...dbReplicationFixes,
-  ];
+  // AWS scanfixes are imported by the factiii pipeline (factiii/index.ts)
+  // to avoid duplicates when both plugins load. Docker is handled by server plugins.
+  static readonly fixes: Fix[] = [];
 
   // ============================================================
   // STATIC HELPER METHODS
@@ -439,7 +409,7 @@ class AWSPipeline {
         return { handled: true };
       }
 
-      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
       if (!sshResult.success) {
         console.log('   [!] ' + stage + ' scan failed: ' + sshResult.stderr);
       }
@@ -474,7 +444,7 @@ class AWSPipeline {
         return { handled: true };
       }
 
-      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
       if (!sshResult.success) {
         console.log('   [!] ' + stage + ' fix failed: ' + sshResult.stderr);
       }
@@ -504,7 +474,7 @@ class AWSPipeline {
         return { success: false, error: 'Server bootstrap failed' };
       }
 
-      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'deploy --' + stage);
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'deploy --' + stage);
       if (!sshResult.success) {
         return { success: false, error: sshResult.stderr };
       }

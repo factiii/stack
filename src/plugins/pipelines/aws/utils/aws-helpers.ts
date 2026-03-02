@@ -221,6 +221,37 @@ export async function getAwsAccountId(region: string): Promise<string | null> {
   }
 }
 
+/**
+ * Get ECR authorization token via SDK (runs on dev machine).
+ * Returns credentials for docker login — no AWS CLI needed on server.
+ * Token is valid for 12 hours.
+ */
+export async function getEcrAuthToken(region: string): Promise<{
+  username: string;
+  password: string;
+  proxyEndpoint: string;
+} | null> {
+  try {
+    const ecr = getECRClient(region);
+    const result = await ecr.send(new GetAuthorizationTokenCommand({}));
+    const authData = result.authorizationData?.[0];
+    if (!authData?.authorizationToken || !authData?.proxyEndpoint) return null;
+
+    // Token is base64-encoded "username:password"
+    const decoded = Buffer.from(authData.authorizationToken, 'base64').toString('utf8');
+    const colonIndex = decoded.indexOf(':');
+    if (colonIndex === -1) return null;
+
+    return {
+      username: decoded.substring(0, colonIndex),
+      password: decoded.substring(colonIndex + 1),
+      proxyEndpoint: authData.proxyEndpoint,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ============================================================
 // SHARED RESOURCE LOOKUP HELPERS
 // ============================================================

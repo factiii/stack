@@ -197,7 +197,7 @@ export const iamFixes: Fix[] = [
         console.log('   Access Key ID: ' + accessKeyId);
         console.log('   Secret Access Key: ' + secretKey);
         console.log('');
-        console.log('   TIP: Store in Ansible Vault: npx stack secrets edit');
+        console.log('   TIP: Store in Ansible Vault: npx stack deploy --secrets edit');
 
         return true;
       } catch (e) {
@@ -256,7 +256,7 @@ export const iamFixes: Fix[] = [
         console.log('   Access Key ID: ' + accessKeyId);
         console.log('   Secret Access Key: ' + secretKey);
         console.log('');
-        console.log('   TIP: Store in Ansible Vault: npx stack secrets edit');
+        console.log('   TIP: Store in Ansible Vault: npx stack deploy --secrets edit');
 
         return true;
       } catch (e) {

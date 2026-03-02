@@ -1,11 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import yaml from 'js-yaml';
-import { getStackConfigPath } from '../constants/config-files.js';
 import { AnsibleVaultSecrets } from '../utils/ansible-vault-secrets.js';
 import { SSHDeploy } from '../utils/ssh-deploy.js';
 import type { FactiiiConfig, EnvironmentConfig } from '../types/index.js';
-import { extractEnvironments } from '../utils/config-helpers.js';
+import { extractEnvironments, loadConfig } from '../utils/config-helpers.js';
 
 export interface DeploySecretsOptions {
     rootDir?: string;
@@ -19,19 +17,12 @@ export interface DeploySecretsResult {
     error?: string;
 }
 
-/**
- * Load configuration from stack.yml (or legacy stack.yml)
- */
-function loadConfig(rootDir: string): FactiiiConfig {
-    const configPath = getStackConfigPath(rootDir);
-    if (!fs.existsSync(configPath)) {
+function loadConfigOrThrow(rootDir: string): FactiiiConfig {
+    const config = loadConfig(rootDir);
+    if (!config || Object.keys(config).length === 0) {
         throw new Error('stack.yml not found. Run: npx stack init');
     }
-    try {
-        return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
-    } catch (e) {
-        throw new Error('Error parsing config: ' + (e instanceof Error ? e.message : String(e)));
-    }
+    return config;
 }
 
 /**
@@ -55,12 +46,12 @@ async function deployToEnvironment(
 ): Promise<DeploySecretsResult> {
     console.log(`\nDeploying secrets to ${stage}...`);
 
-    // Get SSH key
+    // Get SSH key from Ansible Vault
     const sshKey = await store.getSSHKey(stage);
     if (!sshKey) {
         return {
             success: false,
-            error: `No SSH key found for ${stage}. Run: npx stack secrets set ${stage.toUpperCase()}_SSH`
+            error: `No SSH key found for ${stage}. Run: npx stack deploy --secrets set ${stage.toUpperCase()}_SSH`
         };
     }
 
@@ -68,7 +59,7 @@ async function deployToEnvironment(
     const envSecrets = await store.getEnvironmentSecrets(stage);
     if (Object.keys(envSecrets).length === 0) {
         console.log(`  [!] No environment secrets found for ${stage}`);
-        console.log(`      Add secrets with: npx stack secrets set-env <NAME> --${stage}`);
+        console.log(`      Add secrets with: npx stack deploy --secrets set-env <NAME> --${stage}`);
         return {
             success: true,
             message: `No secrets to deploy for ${stage}`,
@@ -148,7 +139,7 @@ export async function deploySecrets(
     // Load configuration
     let config: FactiiiConfig;
     try {
-        config = loadConfig(rootDir);
+        config = loadConfigOrThrow(rootDir);
     } catch (e) {
         console.log(`\n[ERROR] ${e instanceof Error ? e.message : String(e)}`);
         return { success: false, error: String(e) };

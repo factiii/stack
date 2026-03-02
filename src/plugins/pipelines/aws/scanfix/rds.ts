@@ -148,7 +148,7 @@ export const rdsFixes: Fix[] = [
         console.log('   RDS instance takes ~5-10 minutes to become available.');
         console.log('   Run "npx stack scan --prod" to check status.');
         console.log('');
-        console.log('   TIP: Store credentials in Ansible Vault: npx stack secrets edit');
+        console.log('   TIP: Store credentials in Ansible Vault: npx stack deploy --secrets edit');
 
         return true;
       } catch (e) {

@@ -153,12 +153,66 @@ export const workflowFixes: Fix[] = [
         return false;
       }
     },
-    fix: null, // Cannot auto-commit
+    fix: null,
     manualFix:
       'Commit and push workflow files to git:\n' +
       '      git add .github/workflows/\n' +
       '      git commit -m "Update stack workflows"\n' +
       '      git push',
+  },
+  {
+    id: 'workflows-not-pushed',
+    stage: 'dev',
+    severity: 'critical',
+    description: '🚀 GitHub workflows committed but not pushed to remote',
+    scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      const workflowsDir = path.join(rootDir, '.github', 'workflows');
+      if (!fs.existsSync(workflowsDir)) return false;
+
+      try {
+        // First check workflows are committed (no uncommitted changes)
+        const status = execSync('git status --porcelain .github/workflows/', {
+          cwd: rootDir,
+          encoding: 'utf8',
+          stdio: ['pipe', 'pipe', 'ignore'],
+        });
+        if (status.trim().length > 0) return false; // Uncommitted — handled by workflows-uncommitted
+
+        // Check if there's a tracking branch
+        let remoteBranch: string;
+        try {
+          remoteBranch = execSync('git rev-parse --abbrev-ref --symbolic-full-name @{u}', {
+            cwd: rootDir,
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'ignore'],
+          }).trim();
+        } catch {
+          // No upstream branch — workflows definitely not pushed
+          // But only flag if workflow files are tracked by git
+          const tracked = execSync('git ls-files .github/workflows/', {
+            cwd: rootDir,
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'ignore'],
+          }).trim();
+          return tracked.length > 0;
+        }
+
+        // Check if any unpushed commits touch workflow files
+        const unpushed = execSync('git log ' + remoteBranch + '..HEAD --name-only --pretty=format:', {
+          cwd: rootDir,
+          encoding: 'utf8',
+          stdio: ['pipe', 'pipe', 'ignore'],
+        });
+
+        // Check if any unpushed commit modified workflow files
+        const lines = unpushed.split('\n').filter((l) => l.trim().length > 0);
+        return lines.some((l) => l.startsWith('.github/workflows/'));
+      } catch {
+        return false;
+      }
+    },
+    fix: null,
+    manualFix: 'Push your branch to remote: git push',
   },
   {
     id: 'missing-start-sh',

@@ -83,10 +83,10 @@ program
     }
   });
 
-// Deploy command
+// Deploy command (also handles secrets management via --secrets [action])
 program
-  .command('deploy')
-  .description('Deploy to environments (runs scan first, aborts on issues)')
+  .command('deploy [secretName]')
+  .description('Deploy to environments, or manage secrets with --secrets <action>')
   .option('--dev', 'Deploy dev environment only (local containers)')
   .option('--staging', 'Deploy staging environment only')
   .option('--prod', 'Deploy production environment only')
@@ -94,9 +94,45 @@ program
   .option('-b, --branch <branch>', 'Branch to deploy from (defaults to current branch)')
   .option('--commit <hash>', 'Commit hash to deploy (passed by workflow)')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
-  .option('--secrets', 'Deploy secrets from Ansible Vault before deploying')
+  .option('--secrets [action]', 'Manage or deploy secrets (list|set|check|set-env|list-env|deploy|write-ssh-keys)')
+  .option('--value <value>', 'Secret value (for scripting)')
+  .option('--restart', 'Restart containers after deploying secrets')
   .option('--dry-run', 'Show deployment plan without actually deploying')
-  .action(async (options) => {
+  .action(async (secretName, options) => {
+    // --secrets with an action string = vault management mode
+    if (typeof options.secrets === 'string') {
+      const action = options.secrets;
+      const validActions = ['list', 'set', 'check', 'set-env', 'list-env', 'deploy', 'write-ssh-keys'];
+
+      if (!validActions.includes(action)) {
+        console.log('');
+        console.log('Unknown secrets action: ' + action);
+        console.log('');
+        console.log('Usage: npx stack deploy --secrets <action> [name] [options]');
+        console.log('');
+        console.log('Actions:');
+        console.log('  list              List all secrets (SSH keys + env vars)');
+        console.log('  set <name>        Set a secret (STAGING_SSH, PROD_SSH, etc.)');
+        console.log('  check [name]      Check if secrets exist');
+        console.log('  set-env <name>    Set environment variable for a stage');
+        console.log('  list-env          List environment variable keys for a stage');
+        console.log('  deploy            Deploy secrets to staging/prod servers');
+        console.log('  write-ssh-keys    Write SSH keys to ~/.ssh/ (for workflows)');
+        console.log('');
+        console.log('Examples:');
+        console.log('  npx stack deploy --secrets list');
+        console.log('  npx stack deploy --secrets set STAGING_SSH');
+        console.log('  npx stack deploy --secrets set-env DATABASE_URL --staging');
+        console.log('  npx stack deploy --secrets deploy --staging');
+        console.log('');
+        return;
+      }
+
+      await secrets(action, secretName, options);
+      return;
+    }
+
+    // --secrets as boolean flag = deploy secrets before app deploy
     // Determine which environment to deploy
     let environment = options.environment;
     if (options.dev) environment = 'dev';
@@ -108,8 +144,8 @@ program
       process.exit(1);
     }
 
-    // Map --secrets CLI flag to deploySecrets option
-    if (options.secrets) {
+    // Map --secrets boolean flag to deploySecrets option
+    if (options.secrets === true) {
       options.deploySecrets = true;
     }
 
@@ -145,48 +181,6 @@ program
   .action(async (options) => {
     const FactiiiPipeline = require('../dist/plugins/pipelines/factiii').default;
     await FactiiiPipeline.generateWorkflows(process.cwd());
-  });
-
-// Secrets command
-program
-  .command('secrets [action] [name]')
-  .description('Manage secrets and deploy to servers')
-  .option('--value <value>', 'Secret value (for scripting)')
-  .option('--staging', 'Target staging environment')
-  .option('--prod', 'Target production environment')
-  .option('--restart', 'Restart containers after deploying secrets')
-  .option('--dry-run', 'Show what would be deployed without deploying')
-  .option('--token <token>', 'GitHub token (or use GITHUB_TOKEN env var)')
-  .action(async (action, name, options) => {
-    // Valid actions for secrets command
-    const validActions = ['list', 'set', 'check', 'set-env', 'list-env', 'deploy', 'write-ssh-keys'];
-
-    if (!action || !validActions.includes(action)) {
-      // Show help if no valid action provided
-      console.log('');
-      console.log('Usage: npx stack secrets <action> [name] [options]');
-      console.log('');
-      console.log('Actions:');
-      console.log('  list              List all secrets (SSH keys + env vars)');
-      console.log('  set <name>        Set a secret (STAGING_SSH, PROD_SSH, etc.)');
-      console.log('  check [name]      Check if secrets exist');
-      console.log('  set-env <name>    Set environment variable for a stage');
-      console.log('  list-env          List environment variable keys for a stage');
-      console.log('  deploy            Deploy secrets to staging/prod servers');
-      console.log('  write-ssh-keys    Write SSH keys to ~/.ssh/ (for workflows)');
-      console.log('');
-      console.log('Examples:');
-      console.log('  npx stack secrets list');
-      console.log('  npx stack secrets set STAGING_SSH');
-      console.log('  npx stack secrets set-env DATABASE_URL --staging');
-      console.log('  npx stack secrets list-env --staging');
-      console.log('  npx stack secrets deploy --staging');
-      console.log('  npx stack secrets deploy --all');
-      console.log('');
-      return;
-    }
-
-    await secrets(action, name, options);
   });
 
 // Upgrade command
@@ -248,7 +242,15 @@ program.addHelpText('after', '\n' +
   '  npx stack fix [--stage]            Auto-fix detected issues (installs tools, creates configs)\n' +
   '  npx stack deploy --<stage>         Build and deploy to an environment\n' +
   '  npx stack undeploy --<stage>       Remove deployment from a server\n' +
-  '  npx stack secrets <action>         Manage Ansible Vault secrets (run without args for help)\n' +
+  '\n' +
+  'SECRETS — npx stack deploy --secrets <action>\n' +
+  '  list                               Show all stored vault secrets\n' +
+  '  set <name>                         Set a secret (STAGING_SSH, PROD_SSH, etc.)\n' +
+  '  check [name]                       Check if secrets exist\n' +
+  '  set-env <name> --<stage>           Set environment variable for a stage\n' +
+  '  list-env --<stage>                 List environment variable keys for a stage\n' +
+  '  deploy --<stage>                   Push secrets to server\n' +
+  '  write-ssh-keys                     Write SSH keys to ~/.ssh/\n' +
   '\n' +
   'DATABASE — npx stack db <command> --<stage>\n' +
   '  seed --staging                     Run db:seed script to populate initial data\n' +
@@ -278,11 +280,11 @@ program.addHelpText('after', '\n' +
   '  npx stack                          Scan and bootstrap a new project\n' +
   '  npx stack fix --prod               Provision AWS infrastructure or fix server issues\n' +
   '  npx stack deploy --staging         Build and deploy to staging\n' +
+  '  npx stack deploy --secrets list    Show all stored vault secrets\n' +
+  '  npx stack deploy --secrets deploy --prod   Push secrets to production server\n' +
   '  npx stack db migrate --prod        Run production database migrations\n' +
   '  npx stack backup create --prod     Create production database backup\n' +
-  '  npx stack ops logs --staging -f    Follow staging container logs\n' +
-  '  npx stack secrets list             Show all stored vault secrets\n' +
-  '  npx stack secrets deploy --prod    Push secrets to production server\n'
+  '  npx stack ops logs --staging -f    Follow staging container logs\n'
 );
 
 program.parse();
