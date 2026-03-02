@@ -64,7 +64,7 @@ class UbuntuPlugin {
   // Env vars this plugin requires
   static readonly requiredEnvVars: string[] = [];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {};
 
   // Schema for factiiiAuto.yml (auto-detected)

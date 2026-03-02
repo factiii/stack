@@ -10,12 +10,9 @@
  * 5. If via: 'local' -> execute command directly
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import yaml from 'js-yaml';
 import { execSync, spawn } from 'child_process';
 
-import { getStackConfigPath } from '../constants/config-files.js';
+import { loadConfig } from '../utils/config-helpers.js';
 import type {
   FactiiiConfig,
   Stage,
@@ -30,25 +27,6 @@ import type {
 interface PipelinePluginClass {
   id: string;
   canReach(stage: Stage, config: FactiiiConfig): Reachability;
-}
-
-/**
- * Load config from stack.yml (or legacy factiii.yml)
- */
-function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = getStackConfigPath(rootDir);
-
-  if (!fs.existsSync(configPath)) {
-    return {} as FactiiiConfig;
-  }
-
-  try {
-    return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('Error parsing config: ' + errorMessage);
-    return {} as FactiiiConfig;
-  }
 }
 
 /**

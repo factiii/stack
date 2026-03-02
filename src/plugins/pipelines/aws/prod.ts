@@ -4,24 +4,34 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
 import { extractEnvironments } from '../../../utils/config-helpers.js';
 import { generateDockerCompose, generateNginx, scanRepos, loadConfigs } from '../../../scripts/index.js';
+import { getAwsAccountId, getEcrAuthToken } from './utils/aws-helpers.js';
+import { AnsibleVaultSecrets } from '../../../utils/ansible-vault-secrets.js';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
   DeployResult,
   EnsureServerReadyOptions,
+  Stage,
 } from '../../../types/index.js';
+
+// Module-level state for SSH auth context (set by exported functions before SSH calls)
+let _sshStage: Stage | undefined;
+let _sshConfig: FactiiiConfig | undefined;
+let _sshRootDir: string | undefined;
 
 /**
  * Execute a command on a remote server via SSH
+ * Uses module-level stage/config for password auth fallback
  */
 async function sshExecCommand(envConfig: EnvironmentConfig, command: string): Promise<string> {
-  return await sshExec(envConfig, command);
+  return await sshExec(envConfig, command, _sshStage, _sshConfig, _sshRootDir);
 }
 
 /**
@@ -174,7 +184,7 @@ ${envFileContent}ENVEOF`
 /**
  * Run certbot to obtain/renew SSL certificates using Docker
  * Called after nginx.conf is generated but before containers start
- * Collects all domains from all environments in factiii.yml and obtains certificates
+ * Collects all domains from all environments in stack.yml and obtains certificates
  * Uses standalone mode with Docker certbot (nginx must be stopped first)
  */
 async function runCertbot(
@@ -186,7 +196,7 @@ async function runCertbot(
   // Collect all domains that need certificates
   const domains: string[] = [];
   for (const env of Object.values(environments)) {
-    if (env.domain && !env.domain.startsWith('EXAMPLE-')) {
+    if (env.domain && !env.domain.toUpperCase().startsWith('EXAMPLE')) {
       domains.push(env.domain);
     }
   }
@@ -197,9 +207,9 @@ async function runCertbot(
   }
 
   const sslEmail = config.ssl_email;
-  if (!sslEmail || sslEmail.startsWith('EXAMPLE-')) {
-    console.log('      ⚠️  ssl_email not configured in factiii.yml, skipping SSL');
-    console.log('      Add ssl_email to factiii.yml to enable automatic SSL certificates');
+  if (!sslEmail || sslEmail.toUpperCase().startsWith('EXAMPLE')) {
+    console.log('      ⚠️  ssl_email not configured in stack.yml, skipping SSL');
+    console.log('      Add ssl_email to stack.yml to enable automatic SSL certificates');
     return;
   }
 
@@ -264,31 +274,11 @@ async function setupCertbotRenewal(envConfig: EnvironmentConfig): Promise<void> 
  */
 async function updateComposeForECR(
   envConfig: EnvironmentConfig,
-  config: FactiiiConfig
+  config: FactiiiConfig,
+  ecrRegistry: string
 ): Promise<void> {
   const repoName = config.name ?? 'app';
-  const region = config.aws?.region ?? 'us-east-1';
   const serviceName = `${repoName}-prod`;
-
-  // Get ECR registry - use config value or construct from AWS account ID on server
-  let ecrRegistry: string;
-  if (config.ecr_registry) {
-    ecrRegistry = config.ecr_registry;
-  } else {
-    // Get AWS account ID from the server
-    try {
-      const accountId = await sshExecCommand(
-        envConfig,
-        `aws sts get-caller-identity --query Account --output text --region ${region}`
-      );
-      ecrRegistry = `${accountId.trim()}.dkr.ecr.${region}.amazonaws.com`;
-    } catch (error) {
-      throw new Error(
-        `Failed to get AWS account ID from server: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
   const ecrRepository = config.ecr_repository ?? repoName;
   const imageTag = `${ecrRegistry}/${ecrRepository}:latest`;
 
@@ -340,6 +330,10 @@ export async function ensureServerReady(
     return { success: true, message: 'AWS only handles production environments' };
   }
 
+  // Set module-level SSH auth context for password fallback
+  _sshStage = 'prod';
+  _sshConfig = config;
+
   // Get environment config (supports both v1.x and v2.0.0+ formats)
   const environments = extractEnvironments(config);
   const envConfig = environments[environment] ?? environments['prod'] ?? environments['production'];
@@ -377,6 +371,41 @@ export async function ensureServerReady(
 
     // Note: Production doesn't install dependencies - it pulls pre-built images from ECR
 
+    // 5. Auto-configure AWS credentials on server from Ansible Vault
+    if (config.ansible?.vault_path) {
+      try {
+        const vault = new AnsibleVaultSecrets({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+          rootDir: process.cwd(),
+        });
+        const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
+        const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
+        const region = config.aws?.region ?? 'us-east-1';
+
+        if (accessKeyId && secretKey) {
+          console.log('   🔑 Configuring AWS credentials on server from vault...');
+          await sshExecCommand(envConfig,
+            'mkdir -p ~/.aws && ' +
+            "cat > ~/.aws/credentials << 'AWSEOF'\n" +
+            '[default]\n' +
+            'aws_access_key_id = ' + accessKeyId + '\n' +
+            'aws_secret_access_key = ' + secretKey + '\n' +
+            'AWSEOF\n' +
+            "cat > ~/.aws/config << 'AWSEOF'\n" +
+            '[default]\n' +
+            'region = ' + region + '\n' +
+            'output = json\n' +
+            'AWSEOF'
+          );
+          console.log('   ✅ AWS credentials configured on server');
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log('   ⚠️  Could not auto-configure AWS on server: ' + msg);
+      }
+    }
+
     return { success: true, message: 'Server ready' };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -394,6 +423,10 @@ export async function deployProd(
   config: FactiiiConfig,
   environment: string = 'prod'
 ): Promise<DeployResult> {
+  // Set module-level SSH auth context for password fallback
+  _sshStage = 'prod';
+  _sshConfig = config;
+
   // Get environment config (supports both v1.x and v2.0.0+ formats)
   const environments = extractEnvironments(config);
   const envConfig = environments[environment] ?? environments['prod'] ?? environments['production'];
@@ -408,6 +441,23 @@ export async function deployProd(
     const repoName = config.name ?? 'app';
     const region = config.aws?.region ?? 'us-east-1';
 
+    // Resolve AWS values on dev machine via SDK (no AWS CLI needed on server)
+    let ecrRegistry: string;
+    if (config.ecr_registry) {
+      ecrRegistry = config.ecr_registry;
+    } else {
+      const accountId = await getAwsAccountId(region);
+      if (!accountId) {
+        return { success: false, error: 'Failed to get AWS account ID. Check AWS credentials on dev machine.' };
+      }
+      ecrRegistry = accountId + '.dkr.ecr.' + region + '.amazonaws.com';
+    }
+
+    const ecrAuth = await getEcrAuthToken(region);
+    if (!ecrAuth) {
+      return { success: false, error: 'Failed to get ECR auth token. Check AWS credentials on dev machine.' };
+    }
+
     // Step 1: Regenerate unified docker-compose.yml (generic, uses build context)
     console.log('   🔄 Regenerating unified docker-compose.yml...');
     const repos = scanRepos();
@@ -417,17 +467,15 @@ export async function deployProd(
 
     // Step 2: Update docker-compose.yml to use ECR image for prod services
     console.log('   🔄 Updating docker-compose.yml with ECR image references...');
-    await updateComposeForECR(envConfig, config);
+    await updateComposeForECR(envConfig, config, ecrRegistry);
 
-    // Step 3: Login to ECR and pull latest image
+    // Step 3: Login to ECR (token obtained on dev machine via SDK) and pull latest image
     console.log('   🔐 Logging in to ECR and pulling image...');
     await sshExecCommand(
       envConfig,
-      `
-      aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin $(aws sts get-caller-identity --query Account --output text).dkr.ecr.${region}.amazonaws.com && \
-      cd ~/.factiii && \
-      docker compose pull ${repoName}-prod
-    `
+      'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry + ' && ' +
+      'cd ~/.factiii && ' +
+      'docker compose pull ' + repoName + '-prod'
     );
 
     // Step 4: Manage SSL certificates

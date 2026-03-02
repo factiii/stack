@@ -242,7 +242,7 @@ export function findMatchingValues(env1: EnvVars, env2: EnvVars): string[] {
 /**
  * Validate environment file setup
  * @param rootDir - Root directory
- * @param config - Parsed factiii.yml config
+ * @param config - Parsed stack.yml config
  * @param githubSecrets - Optional GitHub secrets for comparison
  */
 export function validateEnvFiles(

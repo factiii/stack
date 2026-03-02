@@ -162,10 +162,17 @@ export async function generateFactiiiAuto(
     autoConfig.ssh_user = 'ubuntu';
   }
 
+  // Ansible Vault defaults (merged into config via loadConfig)
+  autoConfig.ansible = {
+    vault_path: 'group_vars/all/vault.yml',
+    vault_password_file: '~/.vault_pass',
+  };
+
   // Organize config into sections for better readability
   const versionSection: Record<string, unknown> = {};
   const stackSection: Record<string, unknown> = {};
   const sshSection: Record<string, unknown> = {};
+  const ansibleSection: Record<string, unknown> = {};
   const buildSection: Record<string, unknown> = {};
   const otherSection: Record<string, unknown> = {};
 
@@ -177,6 +184,8 @@ export async function generateFactiiiAuto(
       stackSection[key] = value;
     } else if (key === 'ssh_user') {
       sshSection[key] = value;
+    } else if (key === 'ansible') {
+      ansibleSection[key] = value;
     } else if (['dockerfile', 'package_manager', 'node_version', 'pnpm_version'].includes(key)) {
       buildSection[key] = value;
     } else {
@@ -214,6 +223,13 @@ export async function generateFactiiiAuto(
     sections.push('# SSH configuration');
     sections.push('# Default SSH user for all environments (override with: ubuntu OVERRIDE admin)');
     sections.push(yaml.dump(sshSection, { lineWidth: -1, noRefs: true }).trim());
+    sections.push('');
+  }
+
+  // Ansible Vault configuration section
+  if (Object.keys(ansibleSection).length > 0) {
+    sections.push('# Ansible Vault (secrets management)');
+    sections.push(yaml.dump(ansibleSection, { lineWidth: -1, noRefs: true }).trim());
     sections.push('');
   }
 

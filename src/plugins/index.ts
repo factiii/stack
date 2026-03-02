@@ -142,11 +142,27 @@ try {
   // Plugin not available
 }
 
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ExpoPlugin = require('./frameworks/expo/index').default as PluginClass;
+  registry.frameworks['expo'] = ExpoPlugin;
+} catch {
+  // Plugin not available
+}
+
 // Addon plugins
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const ServerModeAddon = require('./addons/server-mode/index').default as PluginClass;
   registry.addons['server-mode'] = ServerModeAddon;
+} catch {
+  // Plugin not available
+}
+
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const OpenClawAddon = require('./addons/openclaw/index').default as PluginClass;
+  registry.addons['openclaw'] = OpenClawAddon;
 } catch {
   // Plugin not available
 }

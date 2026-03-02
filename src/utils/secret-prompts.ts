@@ -33,7 +33,7 @@ interface MultiSelectChoice {
  * - {ENV}_SSH: SSH private key for each environment
  * - AWS_SECRET_ACCESS_KEY: Only truly secret AWS value
  *
- * Not secrets (in factiii.yml):
+ * Not secrets (in stack.yml):
  * - HOST: environments.{env}.host
  * - AWS_ACCESS_KEY_ID: aws.access_key_id
  * - AWS_REGION: aws.region
@@ -49,7 +49,7 @@ const SECRET_METADATA: Record<string, SecretMetadata> = {
    Step 2: Add PUBLIC key to your staging server:
    ssh-copy-id -i ~/.ssh/staging_deploy.pub ubuntu@YOUR_HOST
    
-   (HOST is configured in factiii.yml → environments.staging.host)
+   (HOST is configured in stack.yml → environments.staging.host)
    
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
    cat ~/.ssh/staging_deploy`,
@@ -77,7 +77,7 @@ const SECRET_METADATA: Record<string, SecretMetadata> = {
    Step 2: Add PUBLIC key to your production server:
    ssh-copy-id -i ~/.ssh/prod_deploy.pub ubuntu@YOUR_HOST
    
-   (HOST is configured in factiii.yml → environments.production.host)
+   (HOST is configured in stack.yml → environments.production.host)
    
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
    cat ~/.ssh/prod_deploy`,
@@ -104,7 +104,7 @@ const SECRET_METADATA: Record<string, SecretMetadata> = {
    This is shown only once when you create the key.
    If lost, you must create a new key pair.
    
-   Note: AWS_ACCESS_KEY_ID and AWS_REGION go in factiii.yml (not secrets)
+   Note: AWS_ACCESS_KEY_ID and AWS_REGION go in stack.yml (not secrets)
    
    Enter AWS Secret Access Key:`,
     validation: (value: string): ValidationResult => {
@@ -161,16 +161,39 @@ export function validateSecretFormat(
 }
 
 /**
- * Prompt for single-line input
+ * Prompt for single-line input.
+ * When options.hidden is true, user input is not echoed to the terminal.
  */
-export function promptSingleLine(prompt: string): Promise<string> {
+export function promptSingleLine(
+  prompt: string,
+  options?: { hidden?: boolean }
+): Promise<string> {
+  const hidden = options?.hidden === true;
+
   return new Promise((resolve) => {
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
     });
 
+    if (hidden) {
+      // Show the prompt text, then suppress all echoed input
+      let promptShown = false;
+      (rl as any)._writeToOutput = function (stringToWrite: string): void {
+        if (!promptShown) {
+          // First write is the prompt itself — show it
+          (rl as any).output.write(stringToWrite);
+          promptShown = true;
+        }
+        // Subsequent writes (user keystrokes) are suppressed
+      };
+    }
+
     rl.question(prompt, (answer) => {
+      if (hidden) {
+        // Move to next line since Enter wasn't echoed
+        (rl as any).output.write('\n');
+      }
       rl.close();
       resolve(answer.trim());
     });
@@ -179,27 +202,32 @@ export function promptSingleLine(prompt: string): Promise<string> {
 
 /**
  * Prompt for multi-line input (for SSH keys)
+ * Hides input from terminal to protect sensitive data like private keys.
+ * User sees "[hidden] Pasting..." while entering, then a confirmation line count.
  */
 export function promptMultiLine(prompt: string): Promise<string> {
   return new Promise((resolve) => {
-    console.log(prompt);
+    if (prompt) console.log(prompt);
+    console.log('   [hidden] Paste your key, then press Enter on a blank line to finish:');
 
     const lines: string[] = [];
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
-      terminal: false,
     });
 
-    // Set stdin to raw mode to detect blank lines
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
-    }
+    // Suppress echoed input by overriding readline's internal write method.
+    // This prevents the OS terminal driver from displaying pasted key content.
+    // We keep terminal mode (default) so readline handles line events properly.
+    (rl as any)._writeToOutput = function () {
+      // Suppress all echoed input — prompt was already printed above
+    };
 
     rl.on('line', (line) => {
       // Empty line signals end of input
       if (line.trim() === '' && lines.length > 0) {
         rl.close();
+        console.log('   [hidden] Received ' + lines.length + ' lines');
         resolve(lines.join('\n'));
       } else {
         lines.push(line);
@@ -241,9 +269,11 @@ export async function promptForSecret(
 
     // Prompt based on type
     if (metadata.type === 'ssh_key') {
+      // SSH keys are pasted multi-line; we don't echo them elsewhere or log them.
       value = await promptMultiLine('');
     } else {
-      value = await promptSingleLine('   > ');
+      // Non-SSH secrets (AWS_SECRET_ACCESS_KEY, generic GitHub secrets, etc.) are hidden while typing.
+      value = await promptSingleLine('   > ', { hidden: true });
     }
 
     // Validate
@@ -369,10 +399,10 @@ export async function promptForEnvSecret(
   let attempts = 0;
   const maxAttempts = 3;
 
-  while (!isValid && attempts < maxAttempts) {
+    while (!isValid && attempts < maxAttempts) {
     attempts++;
 
-    value = await promptSingleLine('   > ');
+    value = await promptSingleLine('   > ', { hidden: true });
 
     if (value && value.trim().length > 0) {
       isValid = true;

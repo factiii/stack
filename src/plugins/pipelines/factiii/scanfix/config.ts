@@ -1,6 +1,8 @@
 /**
  * Configuration-related fixes for Factiii Pipeline plugin
- * Handles stack.yml file generation and validation
+ * Validates stack.yml content (EXAMPLE_ values, etc.)
+ *
+ * Note: Missing stack.yml detection is in bootstrap.ts (runs first).
  */
 
 import * as fs from 'fs';
@@ -12,37 +14,23 @@ export const configFixes: Fix[] = [
     id: 'example-values-in-config',
     stage: 'dev',
     severity: 'critical',
-    description: STACK_CONFIG_FILENAME + ' contains EXAMPLE- placeholder values that must be replaced',
+    description: '⚠️ ' + STACK_CONFIG_FILENAME + ' contains EXAMPLE_ placeholder values that must be replaced',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const configPath = getStackConfigPath(rootDir);
       if (!fs.existsSync(configPath)) return false;
       const content = fs.readFileSync(configPath, 'utf8');
-      return content.includes('EXAMPLE-');
+      // Only check non-comment lines (ignore # commented examples)
+      const activeLines = content.split('\n').filter(line => !line.trimStart().startsWith('#'));
+      return activeLines.some(line => line.toUpperCase().includes('EXAMPLE_'));
     },
     fix: null,
     manualFix:
-      'Replace all EXAMPLE- prefixed values in ' + STACK_CONFIG_FILENAME + ' with your actual values:\n' +
+      'Replace all EXAMPLE_ prefixed values in ' + STACK_CONFIG_FILENAME + ' with your actual values:\n' +
       '      - name: your-repo-name\n' +
       '      - github_repo: your-username/your-repo\n' +
       '      - ssl_email: your-email@domain.com\n' +
       '      - staging.domain: staging.yourdomain.com\n' +
       '      - prod.domain: yourdomain.com',
-  },
-  {
-    id: 'missing-stack-yml',
-    stage: 'dev',
-    severity: 'critical',
-    description: STACK_CONFIG_FILENAME + ' configuration file not found',
-    scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-      return !fs.existsSync(getStackConfigPath(rootDir));
-    },
-    fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-      const { generateFactiiiYml } = await import(
-        '../../../../generators/generate-stack-yml.js'
-      );
-      return generateFactiiiYml(rootDir, { force: false });
-    },
-    manualFix: 'Run: npx stack fix (will create ' + STACK_CONFIG_FILENAME + ' from plugin schemas)',
   },
 ];
 

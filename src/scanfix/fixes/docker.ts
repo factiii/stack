@@ -28,13 +28,14 @@ export function createDockerInstallFix(stage: Stage, idPrefix?: string): Fix {
     severity: 'critical',
     description: 'Docker is not installed ' + stageLabel,
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      // For non-dev stages, check if environment is configured
+      // For non-dev stages, check if environment is configured with a real domain
       if (stage !== 'dev') {
-        // Environments are top-level keys in factiii.yml (not under config.environments)
         const envConfig = stage === 'prod'
           ? ((config as Record<string, unknown>).prod ?? (config as Record<string, unknown>).production) as Record<string, unknown> | undefined
           : (config as Record<string, unknown>)[stage] as Record<string, unknown> | undefined;
         if (!envConfig?.domain) return false;
+        // Skip if domain is still a placeholder
+        if (typeof envConfig.domain === 'string' && envConfig.domain.toUpperCase().startsWith('EXAMPLE')) return false;
       }
 
       try {
@@ -79,12 +80,14 @@ export function createDockerRunningFix(stage: Stage, idPrefix?: string): Fix {
     severity: 'critical',
     description: 'Docker is not running ' + stageLabel,
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      // For non-dev stages, check if environment is configured
+      // For non-dev stages, check if environment is configured with a real domain
       if (stage !== 'dev') {
         const envConfig = stage === 'prod'
           ? ((config as Record<string, unknown>).prod ?? (config as Record<string, unknown>).production) as Record<string, unknown> | undefined
           : (config as Record<string, unknown>)[stage] as Record<string, unknown> | undefined;
         if (!envConfig?.domain) return false;
+        // Skip if domain is still a placeholder
+        if (typeof envConfig.domain === 'string' && envConfig.domain.toUpperCase().startsWith('EXAMPLE')) return false;
       }
 
       try {

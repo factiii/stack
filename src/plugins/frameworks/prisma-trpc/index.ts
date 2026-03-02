@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
@@ -37,7 +38,7 @@ class PrismaTrpcPlugin {
   // Env vars this plugin requires (will be validated against .env.example)
   static readonly requiredEnvVars: string[] = ['DATABASE_URL'];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
     prisma: {
       schema_path: null, // Optional override
@@ -85,7 +86,7 @@ class PrismaTrpcPlugin {
       id: 'missing-prisma',
       stage: 'dev',
       severity: 'info',
-      description: 'Prisma not detected in project',
+      description: '📦 Prisma not detected in project',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         // Check if prisma is in package.json
         const pkgPath = path.join(rootDir, 'package.json');
@@ -107,7 +108,7 @@ class PrismaTrpcPlugin {
       id: 'missing-prisma-schema',
       stage: 'dev',
       severity: 'critical',
-      description: 'Prisma schema not found',
+      description: '📋 Prisma schema not found',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         // Only check if Prisma is installed
         const hasPrisma = await PrismaTrpcPlugin.hasPrisma(rootDir);
@@ -122,7 +123,7 @@ class PrismaTrpcPlugin {
       id: 'missing-env-file',
       stage: 'dev',
       severity: 'warning',
-      description: '.env file missing (copy of .env.example)',
+      description: '📄 .env file missing (copy of .env.example)',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         if (!fs.existsSync(path.join(rootDir, '.env.example'))) return false;
         return !fs.existsSync(path.join(rootDir, '.env'));
@@ -138,7 +139,7 @@ class PrismaTrpcPlugin {
       id: 'prisma-client-not-generated',
       stage: 'dev',
       severity: 'warning',
-      description: 'Prisma client not generated',
+      description: '⚙️ Prisma client not generated',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const hasPrisma = await PrismaTrpcPlugin.hasPrisma(rootDir);
         if (!hasPrisma) return false;
@@ -164,7 +165,7 @@ class PrismaTrpcPlugin {
       id: 'pending-migrations-dev',
       stage: 'dev',
       severity: 'warning',
-      description: 'Prisma migrations pending locally',
+      description: '🗃️ Prisma migrations pending locally',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const hasPrisma = await PrismaTrpcPlugin.hasPrisma(rootDir);
         if (!hasPrisma) return false;
@@ -198,7 +199,7 @@ class PrismaTrpcPlugin {
       id: 'missing-env-staging',
       stage: 'staging',
       severity: 'critical',
-      description: '.env.staging file missing',
+      description: '📄 .env.staging file missing',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         return !fs.existsSync(path.join(rootDir, '.env.staging'));
       },
@@ -222,7 +223,7 @@ class PrismaTrpcPlugin {
       id: 'missing-env-prod',
       stage: 'prod',
       severity: 'critical',
-      description: '.env.prod file missing',
+      description: '📄 .env.prod file missing',
       scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         return !fs.existsSync(path.join(rootDir, '.env.prod'));
       },
@@ -244,7 +245,7 @@ class PrismaTrpcPlugin {
       id: 'env-example-staging-format',
       stage: 'dev',
       severity: 'warning',
-      description: '.env.example and .env.staging should use postgres:5432 format (container format) and match each other',
+      description: '🔗 .env.example and .env.staging should use postgres:5432 format (container format) and match each other',
       scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
         const hasPrisma = await PrismaTrpcPlugin.hasPrisma(rootDir);
         if (!hasPrisma) return false;
@@ -539,7 +540,7 @@ class PrismaTrpcPlugin {
     }
     const repos = scanRepos();
 
-    const factiiiDir = process.env.FACTIII_DIR ?? path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+    const factiiiDir = process.env.FACTIII_DIR ?? path.join(process.env.HOME ?? os.homedir(), '.factiii');
     const composePath = path.join(factiiiDir, 'docker-compose.yml');
 
     // Collect all exposed ports from existing postgres services

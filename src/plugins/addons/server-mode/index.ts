@@ -16,7 +16,7 @@
  * USAGE
  * ============================================================
  *
- * Enable in factiii.yml:
+ * Enable in stack.yml:
  *
  * staging:
  *   domain: 192.168.1.100
@@ -57,7 +57,7 @@ class ServerModeAddon {
   // Env vars this addon requires
   static readonly requiredEnvVars: string[] = [];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
     // server_mode is defined per-environment in EnvironmentConfig
   };

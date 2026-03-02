@@ -34,7 +34,7 @@ export interface PRCheckResult {
  * Call this when GITHUB_ACTIONS=true or FACTIII_ON_SERVER=true (running on staging server).
  *
  * @param rootDir - Repo root (e.g. ~/.factiii/repo-name on server)
- * @param config - factiii.yml config
+ * @param config - stack.yml config
  * @param options - commit, branch for git checkout
  */
 export async function runBuilds(
@@ -175,7 +175,7 @@ async function runMobileBuild(rootDir: string, pathEnv: string): Promise<BuildRe
 
   const start = Date.now();
   try {
-    // EAS build - common command; app repos can override via factiii.yml later
+    // EAS build - common command; app repos can override via stack.yml later
     execSync('npx eas build --platform all --non-interactive 2>&1 || npx eas build --platform all 2>&1', {
       cwd: mobileDir,
       stdio: 'pipe',

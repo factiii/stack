@@ -12,18 +12,16 @@
  *
  * Key points:
  * - This file asks pipeline plugin canReach(stage) for each stage
- * - Pipeline decides if stage runs locally or via workflow/SSH
- * - When running on server, pipeline workflow specifies --staging/--prod
+ * - Pipeline decides if stage runs locally or via SSH
+ * - When running on server (FACTIII_ON_SERVER=true), runs locally
  * ============================================================
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import yaml from 'js-yaml';
-
-import { getStackConfigPath } from '../constants/config-files.js';
 import { scan } from './scan.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
+import { loadConfig } from '../utils/config-helpers.js';
 import type { FactiiiConfig, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
 
 interface PluginClass {
@@ -43,25 +41,6 @@ interface PipelinePluginClass {
 
 interface PipelinePluginInstance {
   fixStage(stage: Stage, options: Record<string, unknown>): Promise<{ handled: boolean }>;
-}
-
-/**
- * Load config from stack.yml (or legacy factiii.yml)
- */
-function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = getStackConfigPath(rootDir);
-
-  if (!fs.existsSync(configPath)) {
-    return {} as FactiiiConfig;
-  }
-
-  try {
-    return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('[!] Error parsing config: ' + errorMessage);
-    return {} as FactiiiConfig;
-  }
 }
 
 /**
@@ -87,15 +66,20 @@ function checkReachability(
   stage: Stage,
   config: FactiiiConfig
 ): Reachability {
+  let defaultPipelineReason = '';
   let lastReason = 'No pipeline plugin loaded';
   for (const plugin of pipelinePlugins) {
     if (typeof plugin.canReach === 'function') {
       const result = plugin.canReach(stage, config);
       if (result.reachable) return result;
-      lastReason = result.reason ?? 'Unreachable';
+      const reason = result.reason ?? 'Unreachable';
+      if (plugin.id === (config.pipeline ?? 'factiii')) {
+        defaultPipelineReason = reason;
+      }
+      lastReason = reason;
     }
   }
-  return { reachable: false, reason: lastReason };
+  return { reachable: false, reason: defaultPipelineReason || lastReason };
 }
 
 /**
@@ -156,7 +140,7 @@ async function runLocalFixes(
           }
 
           if (success) {
-            console.log('  [OK] Fixed: ' + problem.description);
+            console.log('  ✅ Fixed: ' + problem.description);
             result.fixed++;
             result.fixes.push({
               id: problem.id,
@@ -165,7 +149,7 @@ async function runLocalFixes(
               description: problem.description,
             });
           } else {
-            console.log('  [ERROR] Failed to fix: ' + problem.description);
+            console.log('  ❌ Failed to fix: ' + problem.description);
             result.failed++;
             result.fixes.push({
               id: problem.id,
@@ -176,7 +160,7 @@ async function runLocalFixes(
           }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          console.log('  [ERROR] Error fixing ' + problem.id + ': ' + errorMessage);
+          console.log('  ❌ Error fixing ' + problem.id + ': ' + errorMessage);
           result.failed++;
           result.fixes.push({
             id: problem.id,
@@ -187,7 +171,7 @@ async function runLocalFixes(
           });
         }
       } else {
-        console.log('  [man] Manual fix required: ' + problem.description);
+        console.log('  📝 Manual fix required: ' + problem.description);
         console.log('      -> ' + problem.manualFix);
         result.manual++;
         result.fixes.push({
@@ -214,8 +198,8 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   let stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
   if (options.dev) stages = ['dev'];
   else if (options.secrets) stages = ['secrets'];
-  else if (options.staging) stages = ['staging'];
-  else if (options.prod) stages = ['prod'];
+  else if (options.staging) stages = ['dev', 'secrets', 'staging'];
+  else if (options.prod) stages = ['dev', 'secrets', 'prod'];
   else if (options.stages) stages = options.stages;
 
   // Load all plugins to check reachability
@@ -293,14 +277,14 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
       // Show each fix with its status and details
       for (const fix of stageFixes) {
         if (fix.status === 'fixed') {
-          console.log('  [OK] Fixed: ' + (fix.description || fix.id));
+          console.log('  ✅ Fixed: ' + (fix.description || fix.id));
         } else if (fix.status === 'manual') {
-          console.log('  [man] Manual: ' + (fix.description || fix.id));
+          console.log('  📝 Manual: ' + (fix.description || fix.id));
           if (fix.manualFix) {
             console.log('    -> ' + fix.manualFix);
           }
         } else if (fix.status === 'failed') {
-          console.log('  [ERROR] Failed: ' + (fix.description || fix.id));
+          console.log('  ❌ Failed: ' + (fix.description || fix.id));
           if (fix.error) {
             console.log('      Error: ' + fix.error);
           }
@@ -311,7 +295,15 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   }
 
   console.log('-'.repeat(60));
-  console.log('TOTAL: Fixed: ' + result.fixed + ', Manual: ' + result.manual + ', Failed: ' + result.failed);
+  console.log(
+    'TOTAL: ' +
+      '✅ Fixed: ' +
+      result.fixed +
+      ', 📝 Manual: ' +
+      result.manual +
+      ', ❌ Failed: ' +
+      result.failed
+  );
 
   // Show next-step guidance after successful fix
   if (result.failed === 0 && result.manual === 0) {
@@ -321,15 +313,15 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
       console.log('============================================================');
       console.log('✅ Infrastructure ready!');
       if (stages.includes('prod')) {
-        console.log('   Next step:  npx factiii deploy --prod');
+        console.log('   Next step:  npx stack deploy --prod');
       } else if (stages.includes('staging')) {
-        console.log('   Next step:  npx factiii deploy --staging');
+        console.log('   Next step:  npx stack deploy --staging');
       }
       console.log('============================================================');
     }
   } else if (result.manual > 0 && result.failed === 0) {
     console.log('');
-    console.log('⚠️  Resolve manual fixes above, then re-run: npx factiii fix');
+    console.log('⚠️  Resolve manual fixes above, then re-run: npx stack fix');
   }
 
   // Exit with error if any fixes failed

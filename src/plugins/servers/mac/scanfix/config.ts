@@ -4,6 +4,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
@@ -14,7 +15,7 @@ export const configFixes: Fix[] = [
     id: 'missing-dockerfile-dev',
     stage: 'dev',
     severity: 'warning',
-    description: 'Dockerfile not found',
+    description: '🐳 Dockerfile not found',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const commonPaths = [
         'Dockerfile',
@@ -39,7 +40,7 @@ export const configFixes: Fix[] = [
     id: 'missing-docker-compose-dev',
     stage: 'dev',
     severity: 'info',
-    description: 'docker-compose.yml not found (optional for dev)',
+    description: '🐳 docker-compose.yml not found (optional for dev)',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       return (
         !fs.existsSync(path.join(rootDir, 'docker-compose.yml')) &&
@@ -62,7 +63,7 @@ export const configFixes: Fix[] = [
     id: 'staging-domain-missing',
     stage: 'staging',
     severity: 'critical',
-    description: 'Staging domain not configured in factiii.yml',
+    description: '🌐 Staging domain not configured in stack.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -74,7 +75,7 @@ export const configFixes: Fix[] = [
       return !environments.staging?.domain;
     },
     fix: null,
-    manualFix: 'Add staging.domain to factiii.yml. Example:\n' +
+    manualFix: 'Add staging.domain to stack.yml. Example:\n' +
       '      staging:\n' +
       '        server: mac\n' +
       '        domain: staging.yourdomain.com\n' +
@@ -84,7 +85,7 @@ export const configFixes: Fix[] = [
     id: 'staging-unreachable',
     stage: 'staging',
     severity: 'critical',
-    description: 'Cannot reach staging server',
+    description: '🌐 Cannot reach staging server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -111,7 +112,7 @@ export const configFixes: Fix[] = [
     id: 'staging-repo-not-cloned',
     stage: 'staging',
     severity: 'warning',
-    description: 'Repository not cloned on staging server',
+    description: '📂 Repository not cloned on staging server',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
       const environments = extractEnvironments(config);
@@ -126,7 +127,7 @@ export const configFixes: Fix[] = [
 
       // Executed locally - SSH handled by CLI wrapper
       try {
-        const repoPath = path.join(process.env.HOME ?? '/Users/jon', '.factiii', repoName, '.git');
+        const repoPath = path.join(process.env.HOME ?? os.homedir(), '.factiii', repoName, '.git');
         return !fs.existsSync(repoPath);
       } catch {
         return true;

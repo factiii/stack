@@ -11,8 +11,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import yaml from 'js-yaml';
-
 import { getStackConfigPath } from '../constants/config-files.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import { sshRemoteFactiiiCommand } from '../utils/ssh-helper.js';
@@ -22,7 +20,7 @@ import {
   getPRNumber,
 } from '../utils/github-status.js';
 import { runBuilds } from '../plugins/pipelines/factiii/pr-check.js';
-import { extractEnvironments } from '../utils/config-helpers.js';
+import { extractEnvironments, loadConfig } from '../utils/config-helpers.js';
 import type { FactiiiConfig, Stage } from '../types/index.js';
 
 interface PipelinePluginClass {
@@ -46,17 +44,6 @@ export interface PRCheckResult {
   error?: string;
 }
 
-function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = getStackConfigPath(rootDir);
-  if (!fs.existsSync(configPath)) {
-    return {} as FactiiiConfig;
-  }
-  try {
-    return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
-  } catch {
-    return {} as FactiiiConfig;
-  }
-}
 
 function formatBuildReport(results: { name: string; success: boolean; output: string }[]): string {
   const lines = ['## Factiii PR Check – Build Results\n'];
@@ -146,7 +133,7 @@ export async function prCheck(options: PRCheckOptions = {}): Promise<PRCheckResu
   // From dev machine: SSH to staging and run pr-check there
   if (reach.via === 'ssh') {
     console.log('\n🔗 Running PR check via SSH on staging...\n');
-    const result = sshRemoteFactiiiCommand('staging', config, 'pr-check --staging');
+    const result = await sshRemoteFactiiiCommand('staging', config, 'pr-check --staging');
     return {
       success: result.success,
       error: result.success ? undefined : result.stderr,
