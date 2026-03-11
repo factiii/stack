@@ -120,6 +120,27 @@ const SECRET_METADATA: Record<string, SecretMetadata> = {
       return { valid: true };
     },
   },
+
+  VERCEL_TOKEN: {
+    type: 'api_token',
+    description: 'Vercel API Token for deployments',
+    helpText: `
+   Get your token from: https://vercel.com/account/tokens
+   Create a new token with:
+   - Scope: Full Account (or specific team)
+   - Expiration: No Expiration (or custom)
+   
+   Enter Vercel API Token:`,
+    validation: (value: string): ValidationResult => {
+      if (!value || value.trim().length === 0) {
+        return { valid: false, error: 'Vercel API Token cannot be empty' };
+      }
+      if (value.length < 20) {
+        return { valid: false, error: 'Token seems too short — check you copied the full token' };
+      }
+      return { valid: true };
+    },
+  },
 };
 
 /**
@@ -399,7 +420,7 @@ export async function promptForEnvSecret(
   let attempts = 0;
   const maxAttempts = 3;
 
-    while (!isValid && attempts < maxAttempts) {
+  while (!isValid && attempts < maxAttempts) {
     attempts++;
 
     value = await promptSingleLine('   > ', { hidden: true });

@@ -10,6 +10,7 @@ import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeSecureKeyFile } from './ssh-helper.js';
 
 export interface SSHDeployConfig {
     host: string;
@@ -58,7 +59,7 @@ export class SSHDeploy {
             key += '\n';
         }
 
-        fs.writeFileSync(keyPath, key, { mode: 0o600 });
+        writeSecureKeyFile(keyPath, key);
         this.keyPath = keyPath;
         return keyPath;
     }

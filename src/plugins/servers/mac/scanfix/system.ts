@@ -146,7 +146,15 @@ export const systemFixes: Fix[] = [
         return false;
       }
     },
-    fix: null,
+    fix: async (): Promise<boolean> => {
+      try {
+        console.log('   Disabling macOS firewall (server needs ports 80/443 open)...');
+        execSync('sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off', { stdio: 'inherit' });
+        return true;
+      } catch {
+        return false;
+      }
+    },
     manualFix: 'Check firewall settings: System Settings > Network > Firewall\n  Ensure ports 80 and 443 are allowed for incoming connections.',
   },
   {

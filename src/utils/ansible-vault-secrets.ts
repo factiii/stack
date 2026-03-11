@@ -2,14 +2,15 @@
  * Ansible Vault Secrets
  *
  * Read, write, and check secrets stored in an Ansible Vault–encrypted YAML file.
- * Used by the secrets CLI and pipeline secrets stage. Requires ansible-vault on PATH.
+ * Uses pure Node.js encryption (ansible-vault npm package) — no Python/CLI required.
  */
 
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import yaml from 'js-yaml';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { encryptSync: (data: string) => string; decryptSync: (data: string) => string } };
 
 export interface AnsibleVaultSecretsConfig {
   /** Path to the vault file (relative to rootDir or absolute) */
@@ -59,96 +60,63 @@ function resolveVaultPath(config: AnsibleVaultSecretsConfig): string {
 }
 
 /**
- * Get path to vault password (file or temp file with env password)
+ * Get vault password as a string (from env var or password file)
  */
-function getVaultPasswordFileForExec(config: AnsibleVaultSecretsConfig): string {
+export function getVaultPasswordString(config: AnsibleVaultSecretsConfig): string {
+  // Priority 1: Direct env var
+  const envPass = getVaultPassword();
+  if (envPass) return envPass;
+
+  // Priority 2: Password file (strip BOM + whitespace)
   const file = getVaultPasswordFile(config);
-  if (file) return file;
-  const pass = getVaultPassword();
-  if (pass) {
-    const tmp = path.join(os.tmpdir(), `factiii-vault-pass-${Date.now()}`);
-    fs.writeFileSync(tmp, pass, 'utf8');
-    return tmp;
+  if (file) {
+    return fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').trim();
   }
+
   throw new Error(
     'Vault password required. Set ansible.vault_password_file in stack.yml, or ANSIBLE_VAULT_PASSWORD_FILE / ANSIBLE_VAULT_PASSWORD env.'
   );
 }
 
 /**
- * Run ansible-vault view to get decrypted content
+ * Decrypt an Ansible Vault–encrypted file (pure Node.js, no CLI)
  */
 function vaultView(vaultPath: string, config: AnsibleVaultSecretsConfig): string {
-  const passFile = getVaultPasswordFileForExec(config);
-  const isTempFile = passFile.startsWith(os.tmpdir());
-
+  const password = getVaultPasswordString(config);
+  // Strip BOM and normalize line endings for cross-platform compatibility
+  const vaultContent = fs.readFileSync(vaultPath, 'utf8')
+    .replace(/^\uFEFF/, '')
+    .trim();
+  const v = new Vault({ password });
   try {
-    // Escape path for shell (handle spaces and special chars)
-    const escapedVaultPath = vaultPath.replace(/"/g, '\\"');
-    const escapedPassFile = passFile.replace(/"/g, '\\"');
-
-    const result = execSync(
-      `ansible-vault view "${escapedVaultPath}" --vault-password-file "${escapedPassFile}"`,
-      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-
-    // Cleanup temp password file if we created it
-    if (isTempFile && fs.existsSync(passFile)) {
-      try {
-        fs.unlinkSync(passFile);
-      } catch {
-        // ignore cleanup errors
-      }
-    }
-    return result;
+    return v.decryptSync(vaultContent);
   } catch (e) {
-    // Cleanup temp password file on error
-    if (isTempFile && fs.existsSync(passFile)) {
-      try {
-        fs.unlinkSync(passFile);
-      } catch {
-        // ignore cleanup errors
-      }
-    }
     const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`Ansible Vault view failed: ${msg}`);
+    if (msg.includes('Integrity check failed')) {
+      throw new Error(
+        'Vault decryption failed — wrong password or vault was created with a different password.\n' +
+        '   Vault file: ' + vaultPath + '\n' +
+        '   Password file: ' + (config.vault_password_file ?? '(env var)') + '\n' +
+        '   If vault was created on another machine, ensure the same password is in your password file.'
+      );
+    }
+    throw e;
   }
 }
 
 /**
- * Run ansible-vault encrypt to encrypt a file to output path
+ * Encrypt a plaintext file to Ansible Vault format (pure Node.js, no CLI)
  */
 function vaultEncrypt(
   inputPath: string,
   outputPath: string,
   config: AnsibleVaultSecretsConfig
 ): void {
-  const passFile = getVaultPasswordFileForExec(config);
-  const isTempFile = passFile.startsWith(os.tmpdir());
-
-  try {
-    // Escape paths for shell (handle spaces and special chars)
-    const escapedInputPath = inputPath.replace(/"/g, '\\"');
-    const escapedOutputPath = outputPath.replace(/"/g, '\\"');
-    const escapedPassFile = passFile.replace(/"/g, '\\"');
-
-    execSync(
-      `ansible-vault encrypt "${escapedInputPath}" --output="${escapedOutputPath}" --vault-password-file "${escapedPassFile}"`,
-      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`Ansible Vault encrypt failed: ${msg}`);
-  } finally {
-    // Cleanup temp password file if we created it
-    if (isTempFile && fs.existsSync(passFile)) {
-      try {
-        fs.unlinkSync(passFile);
-      } catch {
-        // ignore cleanup errors
-      }
-    }
-  }
+  const password = getVaultPasswordString(config);
+  const plaintext = fs.readFileSync(inputPath, 'utf8');
+  const v = new Vault({ password });
+  const encrypted = v.encryptSync(plaintext);
+  fs.writeFileSync(outputPath, encrypted + '\n', 'utf8');
 }
 
 /**
@@ -194,7 +162,7 @@ function parseVaultContentFull(content: string): VaultContent {
 
 /**
  * Ansible Vault–backed secret operations.
- * Uses ansible-vault view/encrypt; vault password from config or ANSIBLE_VAULT_PASSWORD_FILE / ANSIBLE_VAULT_PASSWORD.
+ * Uses pure Node.js encryption (no CLI). Password from config or ANSIBLE_VAULT_PASSWORD_FILE / ANSIBLE_VAULT_PASSWORD.
  */
 export class AnsibleVaultSecrets {
   private config: AnsibleVaultSecretsConfig;
@@ -298,7 +266,10 @@ export class AnsibleVaultSecrets {
       const data = await this.getDecrypted();
       const v = data[name];
       return v ?? null;
-    } catch {
+    } catch (e) {
+      // Re-throw password mismatch — caller must handle (vault-password-mismatch scanfix)
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Integrity check failed') || msg.includes('wrong password')) throw e;
       return null;
     }
   }
@@ -318,8 +289,11 @@ export class AnsibleVaultSecrets {
       }
       return { status, missing };
     } catch (e) {
+      // Re-throw password mismatch — caller must handle (vault-password-mismatch scanfix)
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Integrity check failed') || msg.includes('wrong password')) throw e;
       return {
-        error: e instanceof Error ? e.message : String(e),
+        error: msg,
         status: {},
         missing: names,
       };

@@ -13,12 +13,27 @@ import * as path from 'path';
 import * as readline from 'readline';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { parseEnvFile, compareEnvKeys, findMatchingValues } from '../../../../utils/env-validator.js';
-import { extractEnvironments } from '../../../../utils/config-helpers.js';
+import { extractEnvironments, hasEnvironments } from '../../../../utils/config-helpers.js';
 
 /**
  * Values that are commonly identical across environments and shouldn't trigger warnings
  */
 const TRIVIALLY_IDENTICAL = new Set(['', 'true', 'false', '0', '1', 'yes', 'no']);
+
+/**
+ * Infrastructure keys that should NOT be synced to vault staging_envs/prod_envs.
+ * These are managed separately (vault password, deploy tokens, etc.)
+ */
+const VAULT_ENV_EXCLUDE_KEYS = new Set([
+  'GITHUB_TOKEN',
+  'ANSIBLE_VAULT_PASSWORD_FILE',
+  'ANSIBLE_VAULT_PASSWORD',
+  'VERCEL_TOKEN',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_DEFAULT_REGION',
+  'AWS_REGION',
+]);
 
 /**
  * Get exception list from stack.yml config
@@ -58,6 +73,7 @@ export const envFileFixes: Fix[] = [
     severity: 'warning',
     description: '📄 .env.example not found (template for environment variables)',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      if (!hasEnvironments(_config)) return false;
       return !fs.existsSync(path.join(rootDir, '.env.example'));
     },
     fix: null,
@@ -110,6 +126,7 @@ export const envFileFixes: Fix[] = [
   {
     id: 'env-staging-missing-keys',
     stage: 'dev',
+    targetStage: 'staging',
     severity: 'critical',
     description: '🔑 .env.staging is missing keys from .env.example',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -133,6 +150,7 @@ export const envFileFixes: Fix[] = [
   {
     id: 'env-prod-missing-keys',
     stage: 'dev',
+    targetStage: 'prod',
     severity: 'critical',
     description: '🔑 .env.prod is missing keys from .env.example',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -156,6 +174,7 @@ export const envFileFixes: Fix[] = [
   {
     id: 'env-staging-matches-dev',
     stage: 'dev',
+    targetStage: 'staging',
     severity: 'warning',
     get description(): string {
       const keys = (this as any)._matchingKeys as string[] | undefined;
@@ -194,6 +213,7 @@ export const envFileFixes: Fix[] = [
   {
     id: 'env-prod-matches-dev',
     stage: 'dev',
+    targetStage: 'prod',
     severity: 'warning',
     get description(): string {
       const keys = (this as any)._matchingKeys as string[] | undefined;
@@ -234,6 +254,7 @@ export const envFileFixes: Fix[] = [
   {
     id: 'env-staging-not-in-vault',
     stage: 'dev',
+    targetStage: 'staging',
     severity: 'warning',
     description: '🔐 .env.staging not stored in Ansible Vault',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -291,6 +312,7 @@ export const envFileFixes: Fix[] = [
   {
     id: 'env-prod-not-in-vault',
     stage: 'dev',
+    targetStage: 'prod',
     severity: 'warning',
     description: '🔐 .env.prod not stored in Ansible Vault',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -351,6 +373,7 @@ export const envFileFixes: Fix[] = [
   {
     id: 'env-staging-vault-missing-keys',
     stage: 'dev',
+    targetStage: 'staging',
     severity: 'critical',
     get description(): string {
       const keys = (this as any)._missingKeys as string[] | undefined;
@@ -370,6 +393,12 @@ export const envFileFixes: Fix[] = [
       const dev = parseEnvFile(path.join(rootDir, '.env.example'));
       if (!dev) return false;
 
+      // Filter out infrastructure keys that are managed separately
+      const filteredDev: Record<string, string> = {};
+      for (const [k, v] of Object.entries(dev)) {
+        if (!VAULT_ENV_EXCLUDE_KEYS.has(k)) filteredDev[k] = v;
+      }
+
       try {
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
@@ -380,7 +409,7 @@ export const envFileFixes: Fix[] = [
         const vaultSecrets = await vault.getEnvironmentSecrets('staging');
         if (Object.keys(vaultSecrets).length === 0) return false; // No vault secrets yet, handled by env-staging-not-in-vault
 
-        const comparison = compareEnvKeys(dev, vaultSecrets);
+        const comparison = compareEnvKeys(filteredDev, vaultSecrets);
         if (comparison.missing.length > 0) {
           (this as any)._missingKeys = comparison.missing;
         }
@@ -395,6 +424,12 @@ export const envFileFixes: Fix[] = [
       const dev = parseEnvFile(path.join(rootDir, '.env.example'));
       if (!dev) return false;
 
+      // Filter out infrastructure keys that are managed separately
+      const filteredDev: Record<string, string> = {};
+      for (const [k, v] of Object.entries(dev)) {
+        if (!VAULT_ENV_EXCLUDE_KEYS.has(k)) filteredDev[k] = v;
+      }
+
       try {
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
@@ -403,7 +438,7 @@ export const envFileFixes: Fix[] = [
           rootDir,
         });
         const vaultSecrets = await vault.getEnvironmentSecrets('staging');
-        const comparison = compareEnvKeys(dev, vaultSecrets);
+        const comparison = compareEnvKeys(filteredDev, vaultSecrets);
 
         if (comparison.missing.length === 0) return true;
 
@@ -412,7 +447,7 @@ export const envFileFixes: Fix[] = [
 
         const newSecrets: Record<string, string> = {};
         for (const key of comparison.missing) {
-          const exampleVal = dev[key] ?? '';
+          const exampleVal = filteredDev[key] ?? '';
           const value = await promptForValue(key, exampleVal);
           newSecrets[key] = value || exampleVal; // Use example value if left blank
         }
@@ -432,6 +467,7 @@ export const envFileFixes: Fix[] = [
   {
     id: 'env-prod-vault-missing-keys',
     stage: 'dev',
+    targetStage: 'prod',
     severity: 'critical',
     get description(): string {
       const keys = (this as any)._missingKeys as string[] | undefined;
@@ -452,6 +488,12 @@ export const envFileFixes: Fix[] = [
       const dev = parseEnvFile(path.join(rootDir, '.env.example'));
       if (!dev) return false;
 
+      // Filter out infrastructure keys that are managed separately
+      const filteredDev: Record<string, string> = {};
+      for (const [k, v] of Object.entries(dev)) {
+        if (!VAULT_ENV_EXCLUDE_KEYS.has(k)) filteredDev[k] = v;
+      }
+
       try {
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
@@ -462,7 +504,7 @@ export const envFileFixes: Fix[] = [
         const vaultSecrets = await vault.getEnvironmentSecrets('prod');
         if (Object.keys(vaultSecrets).length === 0) return false; // No vault secrets yet
 
-        const comparison = compareEnvKeys(dev, vaultSecrets);
+        const comparison = compareEnvKeys(filteredDev, vaultSecrets);
         if (comparison.missing.length > 0) {
           (this as any)._missingKeys = comparison.missing;
         }
@@ -477,6 +519,12 @@ export const envFileFixes: Fix[] = [
       const dev = parseEnvFile(path.join(rootDir, '.env.example'));
       if (!dev) return false;
 
+      // Filter out infrastructure keys that are managed separately
+      const filteredDev: Record<string, string> = {};
+      for (const [k, v] of Object.entries(dev)) {
+        if (!VAULT_ENV_EXCLUDE_KEYS.has(k)) filteredDev[k] = v;
+      }
+
       try {
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
@@ -485,7 +533,7 @@ export const envFileFixes: Fix[] = [
           rootDir,
         });
         const vaultSecrets = await vault.getEnvironmentSecrets('prod');
-        const comparison = compareEnvKeys(dev, vaultSecrets);
+        const comparison = compareEnvKeys(filteredDev, vaultSecrets);
 
         if (comparison.missing.length === 0) return true;
 
@@ -494,7 +542,7 @@ export const envFileFixes: Fix[] = [
 
         const newSecrets: Record<string, string> = {};
         for (const key of comparison.missing) {
-          const exampleVal = dev[key] ?? '';
+          const exampleVal = filteredDev[key] ?? '';
           const value = await promptForValue(key, exampleVal);
           newSecrets[key] = value || exampleVal;
         }

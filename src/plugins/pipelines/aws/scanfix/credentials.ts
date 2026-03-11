@@ -12,9 +12,9 @@
  * 5. Auto-configures AWS CLI with new IAM credentials
  */
 
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsAccountId,
@@ -24,6 +24,8 @@ import {
   CreateUserCommand,
   PutUserPolicyCommand,
   CreateAccessKeyCommand,
+  writeAwsCredentials,
+  readAwsRegionFromConfig,
 } from '../utils/aws-helpers.js';
 
 /**
@@ -57,23 +59,26 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
     return true;
   }
 
-  // Phase B: Prompt user to login via aws configure (still needs CLI for interactive setup)
+  // Phase B: Prompt user for AWS credentials directly (no CLI needed)
   console.log('');
   console.log('   ============================================================');
   console.log('   AWS credentials not configured.');
   console.log('   Login with your AWS root account or an IAM admin user.');
   console.log('   ============================================================');
   console.log('');
-  console.log('   Running: aws configure');
-  console.log('   (Enter your Access Key ID, Secret Access Key, and region)');
-  console.log('');
 
-  try {
-    execSync('aws configure', { stdio: 'inherit' });
-  } catch (e) {
-    console.log('   aws configure failed: ' + (e instanceof Error ? e.message : String(e)));
+  const { promptSingleLine } = await import('../../../../utils/secret-prompts.js');
+  const inputAccessKeyId = await promptSingleLine('   AWS Access Key ID: ');
+  const inputSecretKey = await promptSingleLine('   AWS Secret Access Key: ', { hidden: true });
+  const inputRegion = await promptSingleLine('   Default region [' + region + ']: ');
+  const finalRegion = inputRegion || region;
+
+  if (!inputAccessKeyId || !inputSecretKey) {
+    console.log('   Access Key ID and Secret Access Key are required.');
     return false;
   }
+
+  writeAwsCredentials(inputAccessKeyId, inputSecretKey, finalRegion);
 
   accountId = await getAwsAccountId(region);
   if (!accountId) {
@@ -140,10 +145,8 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
 
     console.log('   [OK] Created access key for ' + userName);
 
-    // Phase D: Auto-configure AWS CLI with new IAM credentials
-    execSync('aws configure set aws_access_key_id ' + newAccessKeyId, { stdio: 'pipe' });
-    execSync('aws configure set aws_secret_access_key ' + newSecretKey, { stdio: 'pipe' });
-    execSync('aws configure set region ' + region, { stdio: 'pipe' });
+    // Phase D: Write new IAM credentials to ~/.aws/
+    writeAwsCredentials(newAccessKeyId, newSecretKey, region);
 
     // Verify new credentials work
     const verifyId = await getAwsAccountId(region);
@@ -231,6 +234,7 @@ export const credentialsFixes: Fix[] = [
   {
     id: 'aws-region-configured',
     stage: 'dev',
+    targetStage: 'prod',
     severity: 'warning',
     description: '🌍 AWS region not configured in stack.yml',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
@@ -244,7 +248,32 @@ export const credentialsFixes: Fix[] = [
       const awsConfig = getAwsConfig(config);
       return !awsConfig.region || awsConfig.region === 'us-east-1' && !config.aws?.region;
     },
-    fix: null,
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      try {
+        // Try to read region from ~/.aws/config
+        let region = readAwsRegionFromConfig() ?? '';
+
+        if (!region) region = 'us-east-1'; // Safe default
+
+        // Read stack.yml and add aws.region
+        const stackPath = path.join(rootDir, 'stack.yml');
+        if (!fs.existsSync(stackPath)) return false;
+
+        let content = fs.readFileSync(stackPath, 'utf8');
+        if (content.includes('aws:')) {
+          // aws block exists — add region under it
+          content = content.replace(/^(aws:.*)/m, '$1\n  region: ' + region);
+        } else {
+          // No aws block — add one
+          content += '\naws:\n  region: ' + region + '\n';
+        }
+        fs.writeFileSync(stackPath, content, 'utf8');
+        console.log('   [OK] Set aws.region to ' + region + ' in stack.yml');
+        return true;
+      } catch {
+        return false;
+      }
+    },
     manualFix: 'Set aws.region in stack.yml under the prod environment or top-level aws block',
   },
   {
@@ -275,8 +304,10 @@ export const credentialsFixes: Fix[] = [
           if (result.status?.AWS_ACCESS_KEY_ID && result.status?.AWS_SECRET_ACCESS_KEY) {
             return false;
           }
-        } catch {
-          // Vault not accessible
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes('Integrity check failed') || msg.includes('wrong password')) return false;
+          // Other vault errors — continue
         }
       }
 
@@ -290,7 +321,6 @@ export const credentialsFixes: Fix[] = [
 
       try {
         // Read from ~/.aws/credentials (set by aws configure)
-        const os = await import('os');
         const awsCredsPath = path.join(os.homedir(), '.aws', 'credentials');
         if (!fs.existsSync(awsCredsPath)) {
           console.log('   ~/.aws/credentials not found — run "aws configure" first');
@@ -346,6 +376,83 @@ export const credentialsFixes: Fix[] = [
     ].join('\n'),
   },
   {
+    id: 'aws-cli-not-configured-from-vault',
+    stage: 'dev',
+    severity: 'warning',
+    description: '🔐 AWS CLI not configured on dev machine (credentials exist in vault)',
+    scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      // Skip if not using AWS
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+      const hasAwsEnv = Object.values(environments).some(
+        (e: { access_key_id?: string; config?: string }) => !!e.access_key_id || !!e.config
+      );
+      if (!hasAwsEnv && !config.aws) return false;
+
+      // Skip if AWS CLI already configured
+      const os = await import('os');
+      const awsCredsPath = path.join(os.homedir(), '.aws', 'credentials');
+      if (fs.existsSync(awsCredsPath)) {
+        // Check if credentials are valid
+        const content = fs.readFileSync(awsCredsPath, 'utf8');
+        if (content.includes('aws_access_key_id')) {
+          return false; // Already configured
+        }
+      }
+
+      // Check if credentials exist in vault
+      if (!config.ansible?.vault_path) return false;
+
+      try {
+        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+        const vault = new AnsibleVaultSecrets({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+        });
+        const result = await vault.checkSecrets(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']);
+        // Flag if credentials exist in vault but not in ~/.aws/credentials
+        return !!(result.status?.AWS_ACCESS_KEY_ID && result.status?.AWS_SECRET_ACCESS_KEY);
+      } catch {
+        return false;
+      }
+    },
+    fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (!config.ansible?.vault_path) {
+        console.log('   Ansible Vault not configured');
+        return false;
+      }
+
+      try {
+        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+        const vault = new AnsibleVaultSecrets({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+        });
+
+        const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
+        const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
+
+        if (!accessKeyId || !secretKey) {
+          console.log('   AWS credentials not found in vault');
+          return false;
+        }
+
+        const region = config.aws?.region ?? 'us-east-1';
+
+        writeAwsCredentials(accessKeyId, secretKey, region);
+
+        console.log('   ✅ Configured ~/.aws/credentials from Ansible Vault');
+        console.log('   ✅ Configured ~/.aws/config (region: ' + region + ')');
+        return true;
+      } catch (e) {
+        console.log('   Error: ' + (e instanceof Error ? e.message : String(e)));
+        return false;
+      }
+    },
+    manualFix: 'Extract AWS credentials from vault and configure CLI:\n' +
+      '    npx stack fix --dev',
+  },
+  {
     id: 'aws-credentials-invalid',
     stage: 'secrets',
     severity: 'warning',
@@ -358,7 +465,6 @@ export const credentialsFixes: Fix[] = [
         if (process.env.AWS_ACCESS_KEY_ID) return true;
         try {
           // Check ~/.aws/credentials directly (no AWS CLI needed)
-          const os = await import('os');
           const credPath = path.join(os.homedir(), '.aws', 'credentials');
           if (fs.existsSync(credPath)) {
             const content = fs.readFileSync(credPath, 'utf8');

@@ -843,6 +843,74 @@ The system automatically generates fixes to validate these exist in:
 - `.env.staging` (staging stage)
 - `.env.prod` (prod stage)
 
+## Factiii Pipeline Port Convention
+
+### Slot-Based PORT System
+
+Each repo in a multi-repo setup gets a **slot number** (1-5). The slot determines all ports:
+
+| Slot (PORT=N) | Client Port (300N) | Server Port (500N) |
+|---------------|--------------------|--------------------|
+| 1             | 3001               | 5001               |
+| 2             | 3002               | 5002               |
+| 3             | 3003               | 5003               |
+| 4             | 3004               | 5004               |
+| 5             | 3005               | 5005               |
+
+**Rules:**
+- `.env.example` and `.env` contain `PORT=N` (the slot number, NOT a full port)
+- App code derives actual ports: `clientPort = 3000 + PORT`, `serverPort = 5000 + PORT`
+- Docker compose and nginx configs use the same derived ports
+- Never hardcode 3001, 5001, etc. in source — always derive from `PORT`
+
+### IP Detection
+
+For multi-device development (e.g., mobile app connecting to local server):
+- `start.sh` auto-detects the machine's local network IP
+- Replaces `localhost`/`127.0.0.1` in `.env` with the real IP
+- URL variables use `YOUR_IP` as placeholder in `.env.example`
+
+### Protocol Rules (http vs https)
+
+| Stage   | Protocol | Enforcement      |
+|---------|----------|------------------|
+| dev     | http://  | Scanfix warning  |
+| staging | https:// | Scanfix warning  |
+| prod    | https:// | Scanfix critical |
+
+URL variables checked: `*_URL`, `*_HOST`, `API_URL`, `NEXT_PUBLIC_API_URL`, `EXPO_PUBLIC_API_URL`, etc.
+
+### Adding a New Repo
+
+1. Pick an unused slot number (1-5)
+2. Create `stack.yml` in the repo root
+3. Create `.env.example` with `PORT=<slot>`
+4. Run `./start.sh` — it scans sibling repos, injects IP + PORT, installs deps, starts Docker
+5. Commit `.env.example` (never commit `.env`)
+
+### init.sql Handling
+
+When `start.sh` detects `init.sql` in the repo root, it prompts:
+1. **Inject** — pipes init.sql directly into the running DB container (`docker exec -i <container> psql ...`)
+2. **Seed** — runs `pnpm prisma db seed` or `pnpm seed` (uses the app's seed script)
+3. **Skip** — do nothing
+
+The DB container is auto-detected by scanning docker-compose.yml for postgres/mysql images.
+
+### start.sh Quick Reference
+
+```bash
+./start.sh
+# 1. Detects system IP
+# 2. Scans ../*/stack.yml for sibling repos
+# 3. Reads/prompts for PORT slot
+# 4. Creates .env from .env.example, injects IP + PORT
+# 5. Validates .env (http/https, EXAMPLE_ values)
+# 6. Runs pnpm install
+# 7. Runs docker compose up
+# 8. Handles init.sql if present
+```
+
 ## Plugin Lifecycle
 
 ### 1. Load

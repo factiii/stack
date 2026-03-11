@@ -23,6 +23,7 @@ export interface EnvironmentConfig {
 
   // Optional base fields
   ssh_user?: string;
+  ssl_email?: string;   // Email for Let's Encrypt SSL certificates
   env_file?: string;
 
   // Server mode addon - enables server hardening fixes (default: true for staging/prod)
@@ -67,6 +68,10 @@ export interface FactiiiConfig {
     vault_path: string;
     vault_password_file?: string;
   };
+
+  // Dev-only mode: when true (default), staging/prod stages and Ansible are disabled.
+  // Set dev_only: false in stack.local to unlock.
+  dev_only?: boolean;
 
   // Keys allowed to have identical values across .env.example and staging/prod
   env_match_exceptions?: string[];

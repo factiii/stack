@@ -244,6 +244,7 @@ class PrismaTrpcPlugin {
     {
       id: 'env-example-staging-format',
       stage: 'dev',
+      targetStage: 'staging',
       severity: 'warning',
       description: '🔗 .env.example and .env.staging should use postgres:5432 format (container format) and match each other',
       scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {

@@ -151,7 +151,7 @@ export async function deploySecrets(
         console.log('\n[ERROR] ' + error);
         console.log('Add to stack.yml:');
         console.log('  ansible:');
-        console.log('    vault_path: group_vars/all/vault.yml');
+        console.log('    vault_path: group_vars/all/vault-YOUR_REPO_NAME.yml');
         console.log('    vault_password_file: ~/.vault_pass');
         return { success: false, error };
     }

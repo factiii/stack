@@ -84,33 +84,38 @@ export function generateSmartStackYml(rootDir: string, options: { force?: boolea
   // Detect github repo
   const githubRepo = detectGithubRepo(rootDir) ?? 'EXAMPLE_username/' + name;
 
-  // Detect server OS for staging
-  const devOS = detectServerOS();
-  const stagingServer = devOS === 'windows' ? 'ubuntu' : devOS;
+  // Staging always uses mac (Mac Mini server)
+  const stagingServer = 'mac';
 
-  // Build config
-  const config: Record<string, unknown> = {
+  // Build top-level metadata (not tied to any pipeline)
+  const metaConfig: Record<string, unknown> = {
     name,
     config_version: '0.1.0',
     github_repo: githubRepo,
-    ssl_email: 'EXAMPLE_admin@yourdomain.com',
+  };
+
+  // Build pipeline-specific config
+  const pipelineConfig: Record<string, unknown> = {
     pipeline: 'factiii',
 
     staging: {
       server: stagingServer,
       domain: 'EXAMPLE_staging.yourdomain.com',
+      ssl_email: 'EXAMPLE_admin@yourdomain.com',
+      ssh_user: 'macuser',
       env_file: '.env.staging',
     },
 
     prod: {
       server: 'ubuntu',
       domain: 'EXAMPLE_yourdomain.com',
+      ssl_email: 'EXAMPLE_admin@yourdomain.com',
+      ssh_user: 'ubuntu',
       env_file: '.env.prod',
       config: 'free-tier',
       access_key_id: 'EXAMPLE_AKIAXXXXXXXX',
       region: 'us-east-1',
     },
-
   };
 
   // Detect frameworks and add relevant config
@@ -119,6 +124,7 @@ export function generateSmartStackYml(rootDir: string, options: { force?: boolea
   if (deps['prisma'] || deps['@prisma/client']) detectedPlugins.push('prisma');
   if (deps['@trpc/server']) detectedPlugins.push('trpc');
   if (deps['expo']) detectedPlugins.push('expo');
+  if (deps['@factiii/auth']) detectedPlugins.push('auth');
 
   // Build YAML content with comments
   const sections: string[] = [];
@@ -127,13 +133,90 @@ export function generateSmartStackYml(rootDir: string, options: { force?: boolea
   sections.push('# Replace all EXAMPLE_ values with your actual configuration');
   sections.push('');
 
-  // Dump main config
-  sections.push(yaml.dump(config, { lineWidth: -1, noRefs: true }).trim());
+  // Dump top-level metadata
+  sections.push(yaml.dump(metaConfig, { lineWidth: -1, noRefs: true }).trim());
+  sections.push('');
+
+  // Dump pipeline config with visual separator
+  sections.push('# ── factiii pipeline ──────────────────────────────────────');
+  sections.push(yaml.dump(pipelineConfig, { lineWidth: -1, noRefs: true }).trim());
+  sections.push('# ─────────────────────────────────────────────────────────');
+  sections.push('');
+
+  // Features explainer
+  sections.push('# ============================================================');
+  sections.push('# AVAILABLE FEATURES');
+  sections.push('# ============================================================');
+  sections.push('# stack.yml is your single config file. Enable features by');
+  sections.push('# uncommenting the relevant sections below, then run:');
+  sections.push('#   npx stack fix --dev');
+  sections.push('#');
+  sections.push('# INCLUDED (enabled by default):');
+  sections.push('#   - Staging deploy    SSH to Mac Mini (staging: section above)');
+  sections.push('#   - Prod deploy       AWS free-tier EC2 (prod: section above)');
+  sections.push('#   - CI workflows      GitHub Actions build+test on push');
+  sections.push('#   - SSL certificates  Auto Let\'s Encrypt via certbot');
+  sections.push('#   - Ansible Vault     Encrypted secrets (SSH keys, env vars)');
+  sections.push('#');
+  sections.push('# OPT-IN (uncomment to enable):');
+  sections.push('#   - Auth              @factiii/auth — JWT, OAuth, 2FA (see AUTH section)');
+  sections.push('#   - OpenClaw          Local AI coding agent in Tart VM (see OPENCLAW section)');
+  sections.push('#   - Vercel            Deploy to Vercel instead of SSH (see VERCEL section)');
+  sections.push('#');
+  sections.push('# AUTO-DETECTED (no config needed):');
+  sections.push('#   - Prisma            Migrations, schema validation');
+  sections.push('#   - tRPC              Type-safe API layer');
+  sections.push('#   - Expo              Mobile app builds');
+  sections.push('# ============================================================');
+  sections.push('');
+
+  // Env match exceptions hint
+  sections.push('# ============================================================');
+  sections.push('# ENV MATCH EXCEPTIONS');
+  sections.push('# ============================================================');
+  sections.push('# Keys that are intentionally the same across all environments.');
+  sections.push('# These will be excluded from "matches .env.example" warnings.');
+  sections.push('#');
+  sections.push('# env_match_exceptions:');
+  sections.push('#   - APP_NAME');
+  sections.push('#   - NODE_ENV');
   sections.push('');
 
   // Add detected plugins as a comment
   if (detectedPlugins.length > 0) {
     sections.push('# Detected frameworks: ' + detectedPlugins.join(', '));
+    sections.push('');
+  }
+
+  // Auth (@factiii/auth) - auto-detected or commented out
+  if (deps['@factiii/auth']) {
+    sections.push('# ============================================================');
+    sections.push('# AUTH (@factiii/auth)');
+    sections.push('# ============================================================');
+    sections.push('# Detected @factiii/auth in dependencies.');
+    sections.push('# JWT_SECRET is auto-generated and stored in Ansible Vault.');
+    sections.push('# Customize features below as needed.');
+    sections.push('auth:');
+    sections.push('  features:');
+    sections.push('    oauth: false');
+    sections.push('    twoFa: false');
+    sections.push('    emailVerification: false');
+    sections.push('  oauth_provider: EXAMPLE_google');
+    sections.push('');
+  } else {
+    sections.push('# ============================================================');
+    sections.push('# AUTH (@factiii/auth)');
+    sections.push('# ============================================================');
+    sections.push('# Drop-in tRPC auth: JWT sessions, OAuth, 2FA, email verification.');
+    sections.push('# Install: npm install @factiii/auth');
+    sections.push('# Then re-run: npx stack fix --dev');
+    sections.push('#');
+    sections.push('# auth:');
+    sections.push('#   features:');
+    sections.push('#     oauth: false');
+    sections.push('#     twoFa: false');
+    sections.push('#     emailVerification: false');
+    sections.push('#   oauth_provider: EXAMPLE_google');
     sections.push('');
   }
 
@@ -149,6 +232,22 @@ export function generateSmartStackYml(rootDir: string, options: { force?: boolea
   sections.push('# openclaw: true');
   sections.push('');
 
+  // Vercel option - commented out by default
+  sections.push('# ============================================================');
+  sections.push('# VERCEL DEPLOYMENT (ADDON)');
+  sections.push('# ============================================================');
+  sections.push('# Deploy to Vercel via factiii pipeline.');
+  sections.push('# Free tier: 100GB bandwidth, serverless functions, automatic SSL.');
+  sections.push('#');
+  sections.push('# To enable, uncomment the lines below and run: npx stack fix --dev');
+  sections.push('# vercel:');
+  sections.push('#   project_name: EXAMPLE_my-project');
+  sections.push('#   org_id: EXAMPLE_team_xxx  # Optional: from vercel link');
+  sections.push('#   project_id: EXAMPLE_prj_xxx  # Optional: from vercel link');
+  sections.push('#');
+  sections.push('# Then deploy with: npx stack deploy --prod');
+  sections.push('');
+
   // Add helpful comments
   sections.push('# ============================================================');
   sections.push('# NEXT STEPS');
@@ -156,9 +255,10 @@ export function generateSmartStackYml(rootDir: string, options: { force?: boolea
   sections.push('#');
   sections.push('# 1. UPDATE THIS FILE');
   sections.push('#    Replace all values marked EXAMPLE_ with your actual values:');
-  sections.push('#    - ssl_email: your real email for SSL certificates');
   sections.push('#    - staging.domain: your staging domain');
+  sections.push('#    - staging.ssl_email: your email for SSL certificates');
   sections.push('#    - prod.domain: your production domain');
+  sections.push('#    - prod.ssl_email: your email for SSL certificates');
   sections.push('#');
   sections.push('# 2. SCAN FOR ISSUES');
   sections.push('#    npx stack scan           -> checks everything, reports what is missing (changes nothing)');
@@ -170,7 +270,11 @@ export function generateSmartStackYml(rootDir: string, options: { force?: boolea
   sections.push('# 4. SET UP SECRETS');
   sections.push('#    npx stack deploy --secrets set  -> store SSH keys & credentials in Ansible Vault');
   sections.push('#');
-  sections.push('# 5. DEPLOY');
+  sections.push('# 5. UNLOCK STAGING/PROD');
+  sections.push('#    Edit stack.local.yml and set: dev_only: false');
+  sections.push('#    (stack.local.yml is gitignored - only affects YOUR machine)');
+  sections.push('#');
+  sections.push('# 6. DEPLOY');
   sections.push('#    npx stack deploy --staging --dry-run   -> preview what will happen');
   sections.push('#    npx stack deploy --staging             -> deploy to staging');
   sections.push('#    npx stack deploy --prod                -> deploy to production');

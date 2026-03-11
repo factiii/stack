@@ -78,7 +78,7 @@ export const configFixes: Fix[] = [
     manualFix: 'Add staging.domain to stack.yml. Example:\n' +
       '      staging:\n' +
       '        server: mac\n' +
-      '        domain: staging.yourdomain.com\n' +
+      '        domain: EXAMPLE_staging.yourdomain.com\n' +
       '        env_file: .env.staging',
   },
   {

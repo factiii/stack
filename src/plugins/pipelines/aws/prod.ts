@@ -108,6 +108,7 @@ async function pullAndCheckout(
   const commands = [
     `cd ${repoDir}`,
     'git fetch --all',
+    'git reset --hard HEAD',
     `git checkout ${branch}`,
     `git pull origin ${branch}`,
   ];
@@ -206,10 +207,10 @@ async function runCertbot(
     return;
   }
 
-  const sslEmail = config.ssl_email;
+  const sslEmail = envConfig.ssl_email ?? config.ssl_email;
   if (!sslEmail || sslEmail.toUpperCase().startsWith('EXAMPLE')) {
     console.log('      ⚠️  ssl_email not configured in stack.yml, skipping SSL');
-    console.log('      Add ssl_email to stack.yml to enable automatic SSL certificates');
+    console.log('      Add ssl_email to your environment config in stack.yml');
     return;
   }
 

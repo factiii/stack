@@ -39,7 +39,9 @@ export function generateEnvExampleTemplate(config: FactiiiConfig): string {
 
 # === Application Settings ===
 NODE_ENV=development
-PORT=3000
+# Slot number (1-5). Client=3000+PORT, Server=5000+PORT
+# Example: PORT=1 → client:3001, server:5001
+PORT=1
 
 # === Database ===
 # PostgreSQL connection string format
@@ -68,8 +70,9 @@ JWT_EXPIRES_IN=7d
 # SMTP_PASSWORD=EXAMPLE_your-app-password
 
 # === Application URLs ===
-# FRONTEND_URL=EXAMPLE_http://localhost:3000
-# API_URL=EXAMPLE_http://localhost:3001
+# Replace YOUR_IP with your local network IP (start.sh does this automatically)
+# FRONTEND_URL=http://YOUR_IP:3001
+# API_URL=http://YOUR_IP:5001
 
 # === Application-specific settings ===
 # Add your custom environment variables below

@@ -8,6 +8,7 @@
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
+import { writeSshKeyToDisk } from '../../factiii/scanfix/secrets.js';
 import {
   getAwsConfig,
   getProjectName,
@@ -41,7 +42,7 @@ export const ec2Fixes: Fix[] = [
       const projectName = getProjectName(config);
       return !(await findKeyPair('factiii-' + projectName, region));
     },
-    fix: async (config: FactiiiConfig): Promise<boolean> => {
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const keyName = 'factiii-' + projectName;
@@ -56,16 +57,8 @@ export const ec2Fixes: Fix[] = [
         }));
         const privateKey = result.KeyMaterial;
 
-        // Save private key to ~/.ssh/prod_deploy_key
-        const os = await import('os');
-        const fs = await import('fs');
-        const path = await import('path');
-        const sshDir = path.join(os.homedir(), '.ssh');
-        if (!fs.existsSync(sshDir)) {
-          fs.mkdirSync(sshDir, { mode: 0o700 });
-        }
-        const keyPath = path.join(sshDir, 'prod_deploy_key');
-        fs.writeFileSync(keyPath, privateKey + '\n', { mode: 0o600 });
+        // Save private key to disk (generic + repo-specific)
+        const keyPath = writeSshKeyToDisk('prod', privateKey!, config);
         console.log('   Created key pair: ' + keyName);
         console.log('   Private key saved to: ' + keyPath);
 
@@ -76,6 +69,7 @@ export const ec2Fixes: Fix[] = [
             const vault = new AnsibleVaultSecrets({
               vault_path: config.ansible.vault_path,
               vault_password_file: config.ansible.vault_password_file,
+              rootDir: rootDir || process.cwd(),
             });
             const vaultResult = await vault.setSecret('PROD_SSH', privateKey!);
             if (vaultResult.success) {

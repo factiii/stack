@@ -63,7 +63,7 @@ import { execSync } from 'child_process';
 import { getStackConfigPath } from '../constants/config-files.js';
 import { loadRelevantPlugins, registry } from '../plugins/index.js';
 import type { FactiiiConfig, Stage, Fix, Reachability, ScanOptions, ScanProblems, ServerOS } from '../types/index.js';
-import { extractEnvironments, loadLocalConfig, loadConfig } from '../utils/config-helpers.js';
+import { extractEnvironments, loadLocalConfig, loadConfig, isDevOnly } from '../utils/config-helpers.js';
 
 interface PluginClass {
   id: string;
@@ -184,7 +184,18 @@ function generateEnvVarFixes(
         const content = fs.readFileSync(envPath, 'utf8');
         return !content.includes(varName + '=');
       },
-      fix: null,
+      fix: async (): Promise<boolean> => {
+        const envPath = path.join(rootDir, '.env.example');
+        try {
+          const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+          const newLine = (existing.endsWith('\n') || existing === '') ? '' : '\n';
+          fs.appendFileSync(envPath, newLine + varName + '=\n');
+          console.log('   Added ' + varName + '= to .env.example');
+          return true;
+        } catch {
+          return false;
+        }
+      },
       manualFix: 'Add ' + varName + '=your_value to .env.example (format: KEY=value, one per line)',
     });
 
@@ -347,7 +358,7 @@ function displayProblems(
       if (reasonLower.includes('vault_path') || reasonLower.includes('ansible')) {
         console.log('    Fix: Add ansible config to stack.yml:');
         console.log('           ansible:');
-        console.log('             vault_path: group_vars/all/vault.yml');
+        console.log('             vault_path: group_vars/all/vault-YOUR_REPO_NAME.yml');
         console.log('             vault_password_file: ~/.vault_pass');
       } else if (reasonLower.includes('vault password') || reasonLower.includes('vault_pass')) {
         console.log('    Fix: Create vault password file:');
@@ -386,6 +397,7 @@ function displayProblems(
 
       if (stageProblems.length > 0) {
         console.log(stage.toUpperCase() + ':');
+
         for (const problem of stageProblems) {
           const icon = problem.fix ? '[fix]' : '[man]';
           const autoFix = problem.fix ? '(auto-fixable)' : '(manual)';
@@ -497,11 +509,38 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
 
   // Determine which stages to scan
   let stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
-  if (options.dev) stages = ['dev'];
+  let targetStage: 'staging' | 'prod' | undefined;
+
+  // Explicit stages array takes priority (used by fix.ts multi-pass loop)
+  if (options.stages) {
+    stages = options.stages;
+    // Inherit targetStage from caller (fix.ts passes it via options)
+    targetStage = options.targetStage;
+  }
+  else if (options.dev) stages = ['dev'];
   else if (options.secrets) stages = ['secrets'];
-  else if (options.staging) stages = ['dev', 'secrets', 'staging'];
-  else if (options.prod) stages = ['dev', 'secrets', 'prod'];
-  else if (options.stages) stages = options.stages;
+  else if (options.staging) {
+    stages = ['dev', 'secrets', 'staging'];
+    targetStage = 'staging'; // Only scan staging secrets
+  }
+  else if (options.prod) {
+    stages = ['dev', 'secrets', 'prod'];
+    targetStage = 'prod'; // Only scan prod secrets
+  }
+
+  // Dev-only gate: when dev_only is true (default), restrict to dev+secrets only
+  // Secrets stage is always allowed (needed to set up tokens/keys before unlocking staging/prod)
+  // CRITICAL: Keep targetStage so secrets fixes only run for the requested stage
+  // Skip dev_only gate when running on the server (SSH'd in or CI)
+  const onServer = process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true';
+  if (isDevOnly(config) && !onServer) {
+    if (stages.some(s => s !== 'dev' && s !== 'secrets')) {
+      if (!options.silent) {
+        console.log('ℹ️  Dev-only mode (set dev_only: false in stack.local to unlock staging/prod)\n');
+      }
+      stages = stages.filter(s => s === 'dev' || s === 'secrets');
+    }
+  }
 
   // Load all plugins (guaranteed non-null after bootstrap check above)
   const plugins = (await loadPlugins(rootDir))!;
@@ -517,6 +556,13 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
   const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
+    // dev and secrets always run locally — they never route via SSH
+    if (stage === 'dev' || stage === 'secrets') {
+      reachability[stage] = { reachable: true, via: 'local' };
+      localStages.push(stage);
+      continue;
+    }
+
     if (pipelinePlugins.length > 0) {
       // Check all pipeline plugins — first reachable wins
       reachability[stage] = checkReachability(pipelinePlugins, stage, config);
@@ -585,6 +631,13 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
   for (const fix of allFixes) {
     // Skip if stage not in local stages
     if (!localStages.includes(fix.stage)) continue;
+
+    // Target stage filtering: Skip secret fixes that don't match deployment target
+    // When running `npx stack fix --staging`, only run staging-related secret fixes
+    // When running `npx stack fix --prod`, only run prod-related secret fixes
+    if (targetStage && fix.targetStage && fix.targetStage !== targetStage) {
+      continue; // Skip this fix - target stage doesn't match
+    }
 
     // OS filtering: Skip fixes that don't match the target OS
     if (fix.os) {

@@ -217,11 +217,25 @@ export function generateDockerCompose(allConfigs: Record<string, FactiiiConfig>)
       }
 
       // Add ports if configured
+      // Slot-based: port 1-5 → client 300N, server 500N (both exposed)
+      // Legacy: port >1000 → use as-is (backwards compat)
       const typedEnvConfig = envConfig as EnvironmentConfig & { port?: number };
       if (typedEnvConfig.port) {
-        compose.services[serviceName]!.ports = [
-          `${typedEnvConfig.port}:${typedEnvConfig.port}`,
-        ];
+        if (typedEnvConfig.port >= 1 && typedEnvConfig.port <= 9) {
+          // Slot-based port: expose both client and server ports
+          const slot = typedEnvConfig.port;
+          const clientPort = 3000 + slot;
+          const serverPort = 5000 + slot;
+          compose.services[serviceName]!.ports = [
+            `${clientPort}:${clientPort}`,
+            `${serverPort}:${serverPort}`,
+          ];
+        } else {
+          // Legacy full port number
+          compose.services[serviceName]!.ports = [
+            `${typedEnvConfig.port}:${typedEnvConfig.port}`,
+          ];
+        }
       } else {
         // Expose port 3000 by default (internal only, nginx proxies)
         compose.services[serviceName]!.expose = ['3000'];
@@ -258,10 +272,16 @@ export function generateNginx(allConfigs: Record<string, FactiiiConfig>): number
     for (const [envName, envConfig] of Object.entries(environments)) {
       const typedEnvConfig = envConfig as EnvironmentConfig & { port?: number };
       if (typedEnvConfig.domain) {
+        // Slot-based: port 1-9 → client 300N (frontend), nginx proxies to client port
+        // Legacy: port >1000 → use as-is
+        let effectivePort = typedEnvConfig.port ?? 3000;
+        if (effectivePort >= 1 && effectivePort <= 9) {
+          effectivePort = 3000 + effectivePort; // Slot → client port
+        }
         routes.push({
           domain: typedEnvConfig.domain,
           service: `${repoName}-${envName}`,
-          port: typedEnvConfig.port ?? 3000,
+          port: effectivePort,
         });
       }
     }

@@ -157,21 +157,30 @@ export async function generateFactiiiAuto(
     }
   }
 
-  // Ensure ssh_user is always present (defaults to ubuntu)
-  if (!autoConfig.ssh_user) {
-    autoConfig.ssh_user = 'ubuntu';
-  }
-
   // Ansible Vault defaults (merged into config via loadConfig)
+  // Use per-repo vault naming when repo name is available
+  let defaultVaultPath = 'group_vars/all/vault.yml';
+  try {
+    const { getStackConfigPath } = await import('../constants/config-files.js');
+    const stackPath = getStackConfigPath(rootDir);
+    if (fs.existsSync(stackPath)) {
+      const stackContent = yaml.load(fs.readFileSync(stackPath, 'utf8')) as Record<string, unknown> | null;
+      const repoName = stackContent?.name as string | undefined;
+      if (repoName && !repoName.toUpperCase().startsWith('EXAMPLE')) {
+        defaultVaultPath = 'group_vars/all/vault-' + repoName + '.yml';
+      }
+    }
+  } catch {
+    // Fallback to generic vault.yml
+  }
   autoConfig.ansible = {
-    vault_path: 'group_vars/all/vault.yml',
+    vault_path: defaultVaultPath,
     vault_password_file: '~/.vault_pass',
   };
 
   // Organize config into sections for better readability
   const versionSection: Record<string, unknown> = {};
   const stackSection: Record<string, unknown> = {};
-  const sshSection: Record<string, unknown> = {};
   const ansibleSection: Record<string, unknown> = {};
   const buildSection: Record<string, unknown> = {};
   const otherSection: Record<string, unknown> = {};
@@ -182,8 +191,6 @@ export async function generateFactiiiAuto(
       versionSection[key] = value;
     } else if (key.startsWith('has_')) {
       stackSection[key] = value;
-    } else if (key === 'ssh_user') {
-      sshSection[key] = value;
     } else if (key === 'ansible') {
       ansibleSection[key] = value;
     } else if (['dockerfile', 'package_manager', 'node_version', 'pnpm_version'].includes(key)) {
@@ -215,14 +222,6 @@ export async function generateFactiiiAuto(
   if (Object.keys(stackSection).length > 0) {
     sections.push('# Detected stack components');
     sections.push(yaml.dump(stackSection, { lineWidth: -1, noRefs: true }).trim());
-    sections.push('');
-  }
-
-  // SSH configuration section
-  if (Object.keys(sshSection).length > 0) {
-    sections.push('# SSH configuration');
-    sections.push('# Default SSH user for all environments (override with: ubuntu OVERRIDE admin)');
-    sections.push(yaml.dump(sshSection, { lineWidth: -1, noRefs: true }).trim());
     sections.push('');
   }
 

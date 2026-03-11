@@ -58,3 +58,6 @@ prod:
 # container_exclusions:
 #   - factiii_postgres
 #   - legacy_container
+
+aws:
+  region: us-east-1

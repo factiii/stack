@@ -204,6 +204,33 @@ export async function executePluginCommand(
     return;
   }
 
+  if (reach.via === 'ssh') {
+    // Route command to server via SSH — re-runs `npx stack {cmd}` on remote
+    // with FACTIII_ON_SERVER=true so it executes locally there
+    const { sshRemoteFactiiiCommand } = await import('../utils/ssh-helper.js');
+
+    // Rebuild option flags (skip stage/force flags — already in the command)
+    let optionFlags = '';
+    for (const [key, value] of Object.entries(options)) {
+      if (['dev', 'staging', 'prod', 'force'].includes(key)) continue;
+      if (value === true) optionFlags += ' --' + key;
+      else if (value && value !== false) optionFlags += ' --' + key + ' ' + String(value);
+    }
+
+    const remoteCmd = command.category + ' ' + command.name + ' --' + stage + optionFlags;
+    console.log('');
+    console.log('Running ' + command.category + ':' + command.name + ' on ' + stage + ' via SSH...');
+    console.log('');
+
+    const sshResult = await sshRemoteFactiiiCommand(stage as Stage, config, remoteCmd);
+    if (!sshResult.success) {
+      console.error('');
+      console.error('Command failed: ' + (sshResult.stderr || 'SSH command exited with non-zero status'));
+      process.exit(1);
+    }
+    return;
+  }
+
   // via: 'local' - execute directly
   console.log('');
   console.log('Running ' + command.category + ':' + command.name + ' on ' + stage + '...');

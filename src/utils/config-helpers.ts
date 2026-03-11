@@ -34,6 +34,10 @@ export const RESERVED_CONFIG_KEYS = [
   'trusted_plugins',
   'ansible',  // Ansible Vault configuration (not an environment)
   'env_match_exceptions',  // Keys allowed to match across .env.example and staging/prod
+  'dev_only',  // Dev-only mode flag (default: true, set false in stack.local to unlock)
+  'openclaw',  // OpenClaw addon config (not an environment)
+  'auth',      // Auth addon config (not an environment)
+  'aws',       // AWS global config (not an environment)
 ] as const;
 
 /**
@@ -69,6 +73,14 @@ export function extractEnvironments(
 }
 
 /**
+ * Check if config has any deployment environments defined
+ * Returns false for addon-only repos (e.g., only openclaw: true)
+ */
+export function hasEnvironments(config: FactiiiConfig): boolean {
+  return Object.keys(extractEnvironments(config)).length > 0;
+}
+
+/**
  * Map environment name to stage
  *
  * Rules:
@@ -89,7 +101,7 @@ export function getStageFromEnvironment(envName: string): Stage {
 
   throw new Error(
     `Cannot determine stage for environment: ${envName}. ` +
-      `Environment names must start with 'staging', 'prod', or be 'dev'/'secrets'.`
+    `Environment names must start with 'staging', 'prod', or be 'dev'/'secrets'.`
   );
 }
 
@@ -177,6 +189,7 @@ export function getUsedPlugins(config: FactiiiConfig): Set<string> {
  */
 export interface LocalConfig {
   dev_os?: 'mac' | 'windows' | 'ubuntu';
+  dev_only?: boolean;
   openclaw?: boolean | {
     model?: string;
   };
@@ -249,6 +262,33 @@ export function loadConfig(rootDir: string): FactiiiConfig {
     }
   }
 
+  // Merge stack.local.yml (per-developer overrides, stack.local wins over everything)
+  const localPath = getStackLocalPath(rootDir);
+  if (fs.existsSync(localPath)) {
+    try {
+      const localConfig = (yaml.load(fs.readFileSync(localPath, 'utf8')) as Record<string, unknown>) ?? {};
+      for (const [key, value] of Object.entries(localConfig)) {
+        // stack.local.yml values always win (override stack.yml and stackAuto.yml)
+        (config as Record<string, unknown>)[key] = value;
+      }
+    } catch {
+      // stack.local.yml parse error — ignore
+    }
+  }
+  // Auto-populate ansible vault_path and vault_password_file defaults
+  // This ensures ALL downstream consumers (25+ places) get the correct per-repo vault path
+  // without needing explicit ansible: config in stack.yml
+  if (!config.ansible) {
+    config.ansible = { vault_path: getDefaultVaultPath(config), vault_password_file: '~/.vault_pass' };
+  } else {
+    if (!config.ansible.vault_path) {
+      config.ansible.vault_path = getDefaultVaultPath(config);
+    }
+    if (!config.ansible.vault_password_file) {
+      config.ansible.vault_password_file = '~/.vault_pass';
+    }
+  }
+
   return config;
 }
 
@@ -274,3 +314,24 @@ export function validateEnvironmentName(name: string): string | null {
   return null;
 }
 
+/**
+ * Check if the project is in dev-only mode.
+ * Returns true unless the merged config (stack.yml + stack.local) explicitly sets dev_only: false.
+ * A fresh clone with no stack.local will always be dev-only.
+ */
+export function isDevOnly(config: FactiiiConfig): boolean {
+  return config.dev_only !== false;
+}
+
+/**
+ * Get the default vault path for a repo, based on config.name.
+ * Produces per-repo vault files: vault-greasemoto.yml, vault-factiii.yml, etc.
+ * Falls back to vault.yml if name is missing or starts with EXAMPLE.
+ */
+export function getDefaultVaultPath(config: FactiiiConfig): string {
+  const name = config.name;
+  if (!name || name.toUpperCase().startsWith('EXAMPLE')) {
+    return 'group_vars/all/vault.yml';
+  }
+  return 'group_vars/all/vault-' + name + '.yml';
+}

@@ -44,7 +44,7 @@ function getVaultStore(config: FactiiiConfig, rootDir: string): AnsibleVaultSecr
     throw new Error(
       'ansible.vault_path not configured in config. Add:\n' +
       '  ansible:\n' +
-      '    vault_path: group_vars/all/vault.yml\n' +
+      '    vault_path: group_vars/all/vault-YOUR_REPO_NAME.yml\n' +
       '    vault_password_file: ~/.vault_pass  # optional'
     );
   }
@@ -284,6 +284,8 @@ export async function secrets(
     case 'write-ssh-keys': {
       const stagingKey = await store.getSecret('STAGING_SSH');
       const prodKey = await store.getSecret('PROD_SSH');
+      const keyRepoName = config.name;
+      const hasRepoName = keyRepoName && !keyRepoName.toUpperCase().startsWith('EXAMPLE');
 
       const sshDir = path.join(os.homedir(), '.ssh');
       if (!fs.existsSync(sshDir)) {
@@ -291,15 +293,31 @@ export async function secrets(
       }
 
       if (stagingKey) {
-        const stagingPath = path.join(sshDir, 'staging_deploy_key');
-        fs.writeFileSync(stagingPath, stagingKey, { mode: 0o600 });
-        console.log(`[OK] Wrote STAGING_SSH to ${stagingPath}`);
+        // Write generic key (backward compat)
+        const genericPath = path.join(sshDir, 'staging_deploy_key');
+        fs.writeFileSync(genericPath, stagingKey, { mode: 0o600 });
+        console.log(`[OK] Wrote STAGING_SSH to ${genericPath}`);
+
+        // Write repo-specific key
+        if (hasRepoName) {
+          const repoPath = path.join(sshDir, 'staging_deploy_key_' + keyRepoName);
+          fs.writeFileSync(repoPath, stagingKey, { mode: 0o600 });
+          console.log(`[OK] Wrote STAGING_SSH to ${repoPath}`);
+        }
       }
 
       if (prodKey) {
-        const prodPath = path.join(sshDir, 'prod_deploy_key');
-        fs.writeFileSync(prodPath, prodKey, { mode: 0o600 });
-        console.log(`[OK] Wrote PROD_SSH to ${prodPath}`);
+        // Write generic key (backward compat)
+        const genericPath = path.join(sshDir, 'prod_deploy_key');
+        fs.writeFileSync(genericPath, prodKey, { mode: 0o600 });
+        console.log(`[OK] Wrote PROD_SSH to ${genericPath}`);
+
+        // Write repo-specific key
+        if (hasRepoName) {
+          const repoPath = path.join(sshDir, 'prod_deploy_key_' + keyRepoName);
+          fs.writeFileSync(repoPath, prodKey, { mode: 0o600 });
+          console.log(`[OK] Wrote PROD_SSH to ${repoPath}`);
+        }
       }
 
       if (!stagingKey && !prodKey) {

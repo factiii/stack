@@ -67,11 +67,13 @@ import { githubCliFixes } from './scanfix/github-cli.js';
 import { workflowFixes } from './scanfix/workflows.js';
 import { secretsFixes } from './scanfix/secrets.js';
 import { envFileFixes } from './scanfix/env-files.js';
-import { ansibleFixes } from './scanfix/ansible.js';
 import { vaultFixes } from './scanfix/vault.js';
+import { domainFixes } from './scanfix/domain.js';
+import { portConventionFixes } from './scanfix/port-convention.js';
+import { startShFixes } from './scanfix/start-sh.js';
+import { dbSeedFixes } from './scanfix/db-seed.js';
 
 // Import AWS scanfix arrays (AWS provisioning runs as part of factiii pipeline)
-import { awsCliFixes } from '../aws/scanfix/aws-cli.js';
 import { configFixes as awsConfigFixes } from '../aws/scanfix/config.js';
 import { credentialsFixes } from '../aws/scanfix/credentials.js';
 import { vpcFixes } from '../aws/scanfix/vpc.js';
@@ -84,6 +86,9 @@ import { sesFixes } from '../aws/scanfix/ses.js';
 import { iamFixes } from '../aws/scanfix/iam.js';
 import { dbReplicationFixes } from '../aws/scanfix/db-replication.js';
 import { sshBridgeFixes } from '../aws/scanfix/ssh-bridge.js';
+import { route53Fixes } from '../aws/scanfix/route53.js';
+
+// Vercel fixes are loaded via the vercel addon plugin (not duplicated here)
 
 // Import utility methods
 import * as detectionUtils from './utils/detection.js';
@@ -102,6 +107,8 @@ class FactiiiPipeline {
   static readonly version = '1.0.0';
 
   // Env vars this plugin requires (none - pipeline doesn't need app env vars)
+  // GITHUB_TOKEN and ANSIBLE_VAULT_PASSWORD_FILE are infrastructure keys,
+  // not app env vars — they're handled by secrets scanfixes, not .env files.
   static readonly requiredEnvVars: string[] = [];
 
   // Schema for stack.yml (user-editable)
@@ -234,7 +241,7 @@ class FactiiiPipeline {
         // On dev machine: check for SSH key to reach server directly
         // This is the primary path - direct SSH is faster than GitHub workflows
         {
-          const sshKey = findSshKeyForStage(stage);
+          const sshKey = findSshKeyForStage(stage, config.name);
           if (sshKey) {
             return { reachable: true, via: 'ssh' };
           }
@@ -312,14 +319,16 @@ class FactiiiPipeline {
   static readonly fixes: Fix[] = [
     ...bootstrapFixes,
     ...configFixes,
-    ...ansibleFixes,
+    ...domainFixes,
     ...vaultFixes,
     ...githubCliFixes,
     ...workflowFixes,
     ...secretsFixes,
     ...envFileFixes,
+    ...portConventionFixes,
+    ...startShFixes,
+    ...dbSeedFixes,
     // AWS infrastructure provisioning (guarded by isAwsConfigured())
-    ...awsCliFixes,
     ...awsConfigFixes,
     ...credentialsFixes,
     ...vpcFixes,
@@ -332,6 +341,8 @@ class FactiiiPipeline {
     ...iamFixes,
     ...dbReplicationFixes,
     ...sshBridgeFixes,
+    ...route53Fixes,
+    // Vercel fixes loaded via vercel addon plugin
   ];
 
   // ============================================================
@@ -392,7 +403,7 @@ class FactiiiPipeline {
       const dir = path.join(rootDir, loc);
       // Check for prisma.config.ts or prisma/schema.prisma
       if (fs.existsSync(path.join(dir, 'prisma.config.ts')) ||
-          fs.existsSync(path.join(dir, 'prisma', 'schema.prisma'))) {
+        fs.existsSync(path.join(dir, 'prisma', 'schema.prisma'))) {
         return dir;
       }
     }
@@ -430,12 +441,25 @@ class FactiiiPipeline {
         env: { ...process.env, ...envVars },
       });
     } else {
-      // Staging: run inside Docker container
-      const containerName = config.name + '-' + stage;
-      console.log('  Container: ' + containerName);
+      // Staging/Prod: run from repo directory on server (not inside container)
+      // Container may lack node_modules; the repo has deps from pnpm install during deploy
+      const dbDir = FactiiiPipeline.findDbDir(rootDir);
+      const envFile = FactiiiPipeline.getEnvFile(stage);
+      const envVars = FactiiiPipeline.loadEnvFile(rootDir, envFile);
 
-      execSync('docker exec ' + containerName + ' ' + prefix + command, {
+      // Replace docker-internal hostname with localhost for host access
+      // Handles any container hostname: postgres, factiii_postgres, db, etc.
+      if (envVars.DATABASE_URL) {
+        envVars.DATABASE_URL = envVars.DATABASE_URL.replace(/@([^:/@]+):(\d+)/, '@localhost:$2');
+      }
+
+      console.log('  Directory: ' + dbDir);
+      console.log('  Env file: ' + rootDir + '/' + envFile);
+
+      execSync(prefix + command, {
+        cwd: dbDir,
         stdio: 'inherit',
+        env: { ...process.env, ...envVars },
       });
     }
   }
@@ -491,16 +515,6 @@ class FactiiiPipeline {
         };
       }
 
-      // Ensure ansible-vault is available
-      try {
-        execSync('ansible-vault --version', { stdio: 'pipe' });
-      } catch {
-        return {
-          success: false,
-          error: 'ansible-vault CLI not found. Install Ansible to change the vault password.',
-        };
-      }
-
       console.log('\n🔐 Change Ansible Vault password');
       console.log('   Vault file: ' + vaultPath + '\n');
 
@@ -514,25 +528,32 @@ class FactiiiPipeline {
         return { success: false, error: 'Passwords do not match.' };
       }
 
-      // Write new password to a temporary file for rekey
-      const tmpNewPass = path.join(os.tmpdir(), `factiii-vault-pass-new-${Date.now()}`);
-      fs.writeFileSync(tmpNewPass, newPassword.trim() + '\n', { encoding: 'utf8' });
-
       try {
-        const escapedVaultPath = vaultPath.replace(/"/g, '\\"');
-        const escapedOldPassFile = passwordFile.replace(/"/g, '\\"');
-        const escapedNewPassFile = tmpNewPass.replace(/"/g, '\\"');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { encryptSync: (data: string) => string; decryptSync: (data: string) => string } };
+
+        // Read vault content
+        const vaultContent = fs.readFileSync(vaultPath, 'utf8');
+
+        // Read old password and decrypt
+        const oldPassword = fs.readFileSync(passwordFile, 'utf8').trim();
+        const oldVault = new Vault({ password: oldPassword });
 
         console.log('\nRekeying vault...');
-        execSync(
-          `ansible-vault rekey "${escapedVaultPath}" ` +
-            `--vault-password-file "${escapedOldPassFile}" ` +
-            `--new-vault-password-file "${escapedNewPassFile}"`,
-          {
-            cwd: rootDir,
-            stdio: 'inherit',
-          }
-        );
+        let decrypted: string;
+        try {
+          decrypted = oldVault.decryptSync(vaultContent);
+        } catch (decErr) {
+          return {
+            success: false,
+            error: 'Failed to decrypt vault with current password: ' + (decErr instanceof Error ? decErr.message : String(decErr)),
+          };
+        }
+
+        // Re-encrypt with new password
+        const newVault = new Vault({ password: newPassword.trim() });
+        const reEncrypted = newVault.encryptSync(decrypted);
+        fs.writeFileSync(vaultPath, reEncrypted + '\n', 'utf8');
 
         // Overwrite the configured password file with the new password
         fs.writeFileSync(passwordFile, newPassword.trim() + '\n', {
@@ -549,16 +570,8 @@ class FactiiiPipeline {
         const msg = e instanceof Error ? e.message : String(e);
         return {
           success: false,
-          error: 'Ansible Vault rekey failed: ' + msg,
+          error: 'Vault rekey failed: ' + msg,
         };
-      } finally {
-        try {
-          if (fs.existsSync(tmpNewPass)) {
-            fs.unlinkSync(tmpNewPass);
-          }
-        } catch {
-          // ignore cleanup errors
-        }
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -572,20 +585,39 @@ class FactiiiPipeline {
     // ────────────────────────────────────────────────────────────
     {
       name: 'seed',
-      description: 'Seed database with initial data via db:seed script (dev/staging only)',
+      description: 'Seed database with initial data via pnpm seed (dev/staging only)',
       category: 'db',
       stages: ['dev', 'staging'], // No prod - destructive
       prodSafety: 'destructive',
       execute: async (stage, _options, config, rootDir): Promise<CommandResult> => {
         try {
           if (stage === 'dev') {
-            // Dev: use pnpm
-            FactiiiPipeline.runDbCommand('pnpm db:seed', stage, config, rootDir, false);
-          } else {
-            // Staging: use npm run (more commonly available in Docker)
-            FactiiiPipeline.runDbCommand('npm run db:seed', stage, config, rootDir, false);
+            // Dev: run locally in apps/server
+            FactiiiPipeline.runDbCommand('pnpm seed', stage, config, rootDir, false);
+            return { success: true, message: 'Database seeded successfully' };
           }
-          return { success: true, message: 'Database seeded successfully' };
+
+          // Remote stages (staging/prod): check deployment type
+          const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+          const environments = extractEnvironments(config);
+          const envConfig = environments[stage];
+
+          if (!envConfig) {
+            return { success: false, error: stage + ' environment not configured' };
+          }
+
+          // Check if running on the server already (FACTIII_ON_SERVER or GITHUB_ACTIONS)
+          if (process.env.FACTIII_ON_SERVER || process.env.GITHUB_ACTIONS) {
+            // Run seed directly on host (not inside Docker) — needs access to host filesystem
+            const serverDir = process.env.HOME + '/.factiii/' + config.name + '/apps/server';
+            console.log('  Seeding from: ' + serverDir);
+            execSync('cd ' + serverDir + ' && pnpm seed', { stdio: 'inherit' });
+            return { success: true, message: 'Database seeded successfully' };
+          }
+
+          // Running from dev machine: should be routed via SSH by executePluginCommand
+          // If we reach here, something went wrong with routing
+          return { success: false, error: stage + ' seed requires SSH — run via: npx stack db seed --' + stage };
         } catch (error) {
           return { success: false, error: String(error) };
         }
@@ -919,6 +951,16 @@ class FactiiiPipeline {
     return prodUtils.buildProductionImage(config, stagingConfig);
   }
 
+  /**
+   * Build production Docker image locally on the prod server itself and push to ECR.
+   * Used when deploying directly on the prod server (FACTIII_ON_SERVER=true).
+   */
+  static async buildProductionImageLocally(
+    config: FactiiiConfig
+  ): Promise<DeployResult> {
+    return prodUtils.buildProductionImageLocally(config);
+  }
+
   // ============================================================
   // INSTANCE METHODS
   // ============================================================
@@ -950,7 +992,10 @@ class FactiiiPipeline {
     if (reach.via === 'ssh') {
       // Direct SSH to server - the primary deployment path
       console.log(`   Deploying to ${stage} via direct SSH...`);
-      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'deploy --' + stage);
+      let sshCommand = 'deploy --' + stage;
+      if (options.branch) sshCommand += ' --branch ' + options.branch;
+      if (options.commit) sshCommand += ' --commit ' + options.commit;
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, sshCommand);
       return {
         success: sshResult.success,
         message: sshResult.success ? 'Deployment complete via SSH' : undefined,
@@ -959,7 +1004,28 @@ class FactiiiPipeline {
     }
 
     // via: 'local' - we can run directly (dev stage, or on-server in workflow)
-    return this.runLocalDeploy(stage, options);
+    const localResult = await this.runLocalDeploy(stage, options);
+
+    // Also deploy to Vercel if configured (addon triggered by pipeline)
+    if (this._config.vercel && localResult.success && (stage === 'staging' || stage === 'prod')) {
+      try {
+        const { default: VercelAddon } = await import('../../addons/vercel/index.js');
+        if (VercelAddon.isVercelConfigured(this._config)) {
+          console.log('');
+          console.log('   ── Vercel Deployment ──');
+          const vercelResult = await VercelAddon.deployToVercel(this._config, {
+            production: stage === 'prod',
+          });
+          if (vercelResult.success) {
+            console.log('   [OK] ' + (vercelResult.message ?? 'Vercel deployment complete'));
+          } else {
+            console.log('   [!] Vercel deployment failed: ' + (vercelResult.error ?? 'unknown'));
+          }
+        }
+      } catch { /* Vercel addon not available, skip */ }
+    }
+
+    return localResult;
   }
 
   /**
@@ -972,13 +1038,21 @@ class FactiiiPipeline {
     const reach = FactiiiPipeline.canReach(stage, this._config);
 
     if (!reach.reachable) {
-      console.log('\n[X] Cannot reach ' + stage + ': ' + reach.reason);
       return { handled: true };
     }
 
     if (reach.via === 'ssh') {
-      console.log('   Scanning ' + stage + ' via direct SSH...');
+      // Get domain for display
+      const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+      const envs = getEnvironmentsForStage(this._config, stage);
+      const envValues = Object.values(envs) as { domain?: string }[];
+      const domain = envValues[0]?.domain || 'unknown';
+
+      console.log('');
+      console.log('┌─ ' + stage.toUpperCase() + ' (via SSH → ' + domain + ')');
       const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
+      console.log('└─');
+
       if (!sshResult.success) {
         console.log('   [!] ' + stage + ' scan failed: ' + sshResult.stderr);
       }
@@ -995,21 +1069,29 @@ class FactiiiPipeline {
    * Returns { handled: true } if pipeline ran fix remotely.
    * Returns { handled: false } if caller should run fix locally.
    */
-  async fixStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean }> {
+  async fixStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean; success?: boolean; error?: string }> {
     const reach = FactiiiPipeline.canReach(stage, this._config);
 
     if (!reach.reachable) {
-      console.log('\n[X] Cannot reach ' + stage + ': ' + reach.reason);
-      return { handled: true };
+      return { handled: true, success: false, error: reach.reason };
     }
 
     if (reach.via === 'ssh') {
-      console.log('   Fixing ' + stage + ' via direct SSH...');
+      // Get domain for display
+      const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+      const envs = getEnvironmentsForStage(this._config, stage);
+      const envValues = Object.values(envs) as { domain?: string; ssh_user?: string }[];
+      const domain = envValues[0]?.domain || 'unknown';
+
+      console.log('');
+      console.log('┌─ ' + stage.toUpperCase() + ' (via SSH → ' + domain + ')');
       const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
-      if (!sshResult.success) {
-        console.log('   [!] ' + stage + ' fix failed: ' + sshResult.stderr);
-      }
-      return { handled: true };
+      console.log('└─');
+
+      // The remote fix already printed its own summary inline.
+      // Don't double-report: just mark as handled. The user already saw
+      // the server's detailed output (manual fixes, errors, etc.).
+      return { handled: true, success: sshResult.success };
     }
 
     // via: 'local' - caller should run locally
@@ -1022,10 +1104,20 @@ class FactiiiPipeline {
   private async runLocalDeploy(stage: Stage, options: DeployOptions): Promise<DeployResult> {
     const rootDir = options.rootDir ?? process.cwd();
 
-    // Load plugins and find server plugin
+    // Load plugins and find the correct server plugin for this stage
     const plugins = await loadRelevantPlugins(rootDir, this._config);
-    const ServerPluginClass = plugins.find((p) => p.category === 'server') as {
-      new (config: FactiiiConfig): {
+
+    // Match server plugin to the environment's server type (e.g., 'ubuntu', 'mac')
+    const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+    const environments = extractEnvironments(this._config);
+    const envConfig = environments[stage];
+    const serverType = envConfig?.server;
+
+    const ServerPluginClass = (serverType
+      ? plugins.find((p) => p.category === 'server' && (p as { id?: string }).id === serverType)
+      : plugins.find((p) => p.category === 'server')
+    ) as {
+      new(config: FactiiiConfig): {
         ensureServerReady?(
           config: FactiiiConfig,
           environment: string,
@@ -1045,15 +1137,20 @@ class FactiiiPipeline {
       // Ensure server is ready (install deps, clone repo, etc.)
       if (serverInstance.ensureServerReady) {
         console.log('   Preparing server...');
-        
+
         // Get repo URL from environment or config
         const repoUrl = process.env.GITHUB_REPO || this._config.github_repo || '';
-        
+
         await serverInstance.ensureServerReady(this._config, stage, {
           branch: options.branch ?? 'main',
           commitHash: options.commit ?? '',
           repoUrl: repoUrl,
         });
+
+        // Reload config after checkout — the branch may have a different stack.yml
+        const { loadConfig } = await import('../../../utils/config-helpers.js');
+        const rootDir = options.rootDir ?? process.cwd();
+        this._config = loadConfig(rootDir);
       }
 
       // Build Docker images before deployment
@@ -1087,6 +1184,13 @@ class FactiiiPipeline {
             if (!buildResult.success) {
               return buildResult;
             }
+          } else {
+            // No staging server — build locally on prod server as fallback
+            console.log('   🔨 No staging server configured — building on prod server...');
+            const buildResult = await FactiiiPipeline.buildProductionImageLocally(this._config);
+            if (!buildResult.success) {
+              return buildResult;
+            }
           }
         }
       } else {
@@ -1094,6 +1198,11 @@ class FactiiiPipeline {
       }
 
       // Run the actual deployment
+      // For prod with AWS config: use AWS prod deployment (pull from ECR, certbot, docker compose up)
+      if (stage === 'prod' && this._config.aws) {
+        const { deployProd } = await import('../aws/prod.js');
+        return deployProd(this._config, stage);
+      }
       return serverInstance.deploy(this._config, stage);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

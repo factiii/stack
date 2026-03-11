@@ -6,6 +6,7 @@
 
 import { execSync } from 'child_process';
 import * as fs from 'fs';
+import { writeSecureKeyFile } from './ssh-helper.js';
 
 import type {
   FactiiiConfig,
@@ -31,9 +32,9 @@ function sshCommand(
   host: string,
   command: string
 ): SSHResult {
+  const keyPath = (process.platform === 'win32' ? require('os').tmpdir() : '/tmp') + '/factiii-check-key';
   try {
-    const keyPath = '/tmp/factiii-check-key';
-    fs.writeFileSync(keyPath, sshKey, { mode: 0o600 });
+    writeSecureKeyFile(keyPath, sshKey);
 
     const result = execSync(
       `ssh -i ${keyPath} -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${user}@${host} "${command}"`,
@@ -44,7 +45,7 @@ function sshCommand(
     return { success: true, output: result.trim() };
   } catch (error) {
     try {
-      fs.unlinkSync('/tmp/factiii-check-key');
+      fs.unlinkSync(keyPath);
     } catch {
       // Ignore cleanup errors
     }

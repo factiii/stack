@@ -133,6 +133,15 @@ try {
   // Plugin not available
 }
 
+// Vercel addon
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const VercelAddon = require('./addons/vercel/index').default as PluginClass;
+  registry.addons['vercel'] = VercelAddon;
+} catch {
+  // Plugin not available
+}
+
 // Framework plugins
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -163,6 +172,15 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const OpenClawAddon = require('./addons/openclaw/index').default as PluginClass;
   registry.addons['openclaw'] = OpenClawAddon;
+} catch {
+  // Plugin not available
+}
+
+// Auth addon (@factiii/auth integration)
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const AuthAddon = require('./addons/auth/index').default as PluginClass;
+  registry.addons['auth'] = AuthAddon;
 } catch {
   // Plugin not available
 }

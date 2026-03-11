@@ -289,3 +289,82 @@ export async function buildProductionImage(
   }
 }
 
+/**
+ * Build production Docker image locally on the prod server itself and push to ECR.
+ * Adds swap space if needed (t3.micro has only 1GB RAM).
+ */
+export async function buildProductionImageLocally(
+  config: FactiiiConfig
+): Promise<DeployResult> {
+  const repoName = config.name ?? 'app';
+  const region = config.aws?.region ?? 'us-east-1';
+
+  // Get ECR registry
+  let ecrRegistry: string;
+  try {
+    ecrRegistry = await getECRRegistry(config);
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const ecrRepository = config.ecr_repository ?? repoName;
+  const imageTag = ecrRegistry + '/' + ecrRepository + ':latest';
+  const repoDir = (process.env.HOME ?? '') + '/.factiii/' + repoName;
+  const dockerfile = getDockerfilePath(repoDir);
+
+  console.log('      Image: ' + imageTag);
+
+  try {
+    // Add swap space if not already present (t3.micro has only 1GB RAM)
+    try {
+      const swapCheck = execSync('swapon --show', { encoding: 'utf8', stdio: 'pipe' });
+      if (!swapCheck.trim()) {
+        console.log('   Adding 2GB swap space for Docker build...');
+        execSync(
+          'sudo fallocate -l 2G /swapfile && ' +
+          'sudo chmod 600 /swapfile && ' +
+          'sudo mkswap /swapfile && ' +
+          'sudo swapon /swapfile',
+          { stdio: 'inherit', shell: '/bin/bash' }
+        );
+        console.log('   [OK] Swap space added');
+      }
+    } catch { /* swap setup is best-effort */ }
+
+    // Get ECR auth token
+    const { getEcrAuthToken } = await import('../aws/utils/aws-helpers.js');
+    const ecrAuth = await getEcrAuthToken(region);
+    if (!ecrAuth) {
+      return { success: false, error: 'Failed to get ECR auth token. Check AWS credentials.' };
+    }
+
+    const pathEnv = '/usr/local/bin:' + (process.env.PATH ?? '');
+
+    // Step 1: Build image
+    console.log('   Building Docker image: ' + imageTag + '...');
+    execSync(
+      'cd ' + repoDir + ' && docker build -t ' + imageTag + ' -f ' + dockerfile + ' .',
+      { stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } }
+    );
+
+    // Step 2: Login to ECR
+    console.log('   Logging in to ECR...');
+    const ecrLoginCmd = 'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry;
+    execSync(ecrLoginCmd, { stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } });
+
+    // Step 3: Push to ECR
+    console.log('   Pushing image to ECR: ' + imageTag + '...');
+    execSync('docker push ' + imageTag, { stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } });
+
+    console.log('   Production image built and pushed: ' + imageTag);
+    return { success: true, message: 'Production image built and pushed: ' + imageTag };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('   Failed to build/push production image: ' + errorMessage);
+    return { success: false, error: 'Failed to build/push production image: ' + errorMessage };
+  }
+}
+
