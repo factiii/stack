@@ -23,11 +23,13 @@
  * ============================================================
  */
 
+import { execSync } from 'child_process';
 import type {
   FactiiiConfig,
   EnvironmentConfig,
   DeployResult,
   EnsureServerReadyOptions,
+  Fix,
   ServerOS,
   PackageManager,
   ServiceManager,
@@ -56,7 +58,7 @@ class WindowsPlugin {
   // Env vars this plugin requires
   static readonly requiredEnvVars: string[] = [];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {};
 
   // Schema for factiiiAuto.yml (auto-detected)
@@ -100,12 +102,47 @@ class WindowsPlugin {
   // Template: Add Windows-specific fixes here
   // ============================================================
 
-  static readonly fixes = [
-    // TODO: Add Windows-specific fixes
-    // Examples:
-    // - Check if Docker Desktop is installed
-    // - Check if WSL2 is enabled
-    // - Check if Chocolatey is installed
+  static readonly fixes: Fix[] = [
+    {
+      id: 'windows-winget-missing',
+      stage: 'dev',
+      severity: 'critical',
+      description: '📦 winget not available (required for package management)',
+      scan: async (): Promise<boolean> => {
+        try {
+          execSync('winget --version', { stdio: 'pipe' });
+          return false;
+        } catch {
+          return true;
+        }
+      },
+      fix: null,
+      manualFix: 'Install App Installer from Microsoft Store (includes winget)\n  Or download from: https://github.com/microsoft/winget-cli/releases',
+    },
+    {
+      id: 'windows-docker-missing',
+      stage: 'dev',
+      severity: 'warning',
+      description: '🐳 Docker Desktop not installed',
+      scan: async (): Promise<boolean> => {
+        try {
+          execSync('docker --version', { stdio: 'pipe' });
+          return false;
+        } catch {
+          return true;
+        }
+      },
+      fix: async (): Promise<boolean> => {
+        try {
+          console.log('   Installing Docker Desktop via winget...');
+          execSync('winget install Docker.DockerDesktop', { stdio: 'inherit' });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      manualFix: 'Install Docker Desktop: winget install Docker.DockerDesktop',
+    },
   ];
 
   // ============================================================

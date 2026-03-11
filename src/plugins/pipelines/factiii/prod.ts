@@ -16,7 +16,21 @@ import type {
   FactiiiConfig,
   EnvironmentConfig,
   DeployResult,
+  Stage,
 } from '../../../types/index.js';
+
+// Module-level state for SSH auth context (set by exported functions before SSH calls)
+let _sshStage: Stage | undefined;
+let _sshConfig: FactiiiConfig | undefined;
+let _sshRootDir: string | undefined;
+
+/**
+ * Execute a command on a remote server via SSH
+ * Uses module-level stage/config for password auth fallback
+ */
+async function sshExecCommand(envConfig: EnvironmentConfig, command: string): Promise<string> {
+  return await sshExec(envConfig, command, _sshStage, _sshConfig, _sshRootDir);
+}
 
 /**
  * Get dockerfile path from stackAuto.yml (or legacy factiiiAuto.yml) or use default
@@ -40,9 +54,9 @@ function getDockerfilePath(repoDir: string): string {
 }
 
 /**
- * Get ECR registry from config or AWS account ID
+ * Get ECR registry from config or AWS account ID via SDK
  */
-export function getECRRegistry(config: FactiiiConfig): string {
+export async function getECRRegistry(config: FactiiiConfig): Promise<string> {
   const region = config.aws?.region ?? 'us-east-1';
 
   // Use config value if provided
@@ -50,18 +64,13 @@ export function getECRRegistry(config: FactiiiConfig): string {
     return config.ecr_registry;
   }
 
-  // Construct from AWS account ID
-  try {
-    const accountId = execSync(
-      `aws sts get-caller-identity --query Account --output text --region ${region}`,
-      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
-    ).trim();
-    return `${accountId}.dkr.ecr.${region}.amazonaws.com`;
-  } catch (error) {
-    throw new Error(
-      `Failed to get AWS account ID: ${error instanceof Error ? error.message : String(error)}`
-    );
+  // Construct from AWS account ID via SDK (no CLI needed)
+  const { getAwsAccountId } = await import('../aws/utils/aws-helpers.js');
+  const accountId = await getAwsAccountId(region);
+  if (!accountId) {
+    throw new Error('Failed to get AWS account ID via SDK. Check AWS credentials.');
   }
+  return accountId + '.dkr.ecr.' + region + '.amazonaws.com';
 }
 
 /**
@@ -140,10 +149,10 @@ async function ensureDockerRunning(
   } else {
     // We're remote - run via SSH
     try {
-      const result = await sshExec(envConfig, checkCmd);
+      const result = await sshExecCommand(envConfig, checkCmd);
       if (result.includes('stopped')) {
         console.log('   🐳 Starting Docker Desktop on staging server...');
-        await sshExec(envConfig, startCmd);
+        await sshExecCommand(envConfig, startCmd);
         console.log('   ✅ Docker Desktop started');
       } else {
         console.log('   ✅ Docker is already running');
@@ -151,7 +160,7 @@ async function ensureDockerRunning(
     } catch {
       console.log('   🐳 Starting Docker Desktop on staging server...');
       try {
-        await sshExec(envConfig, startCmd);
+        await sshExecCommand(envConfig, startCmd);
         console.log('   ✅ Docker Desktop started');
       } catch (startError) {
         throw new Error('Failed to start Docker Desktop on staging server. Please start it manually.');
@@ -168,13 +177,18 @@ export async function buildProductionImage(
   config: FactiiiConfig,
   stagingConfig: EnvironmentConfig
 ): Promise<DeployResult> {
+  // Set module-level SSH auth context for password fallback
+  // Prod builds happen on staging server, so use 'staging' stage for SSH
+  _sshStage = 'staging';
+  _sshConfig = config;
+
   const repoName = config.name ?? 'app';
   const region = config.aws?.region ?? 'us-east-1';
 
   // Get ECR registry
   let ecrRegistry: string;
   try {
-    ecrRegistry = getECRRegistry(config);
+    ecrRegistry = await getECRRegistry(config);
   } catch (error) {
     return {
       success: false,
@@ -193,6 +207,13 @@ export async function buildProductionImage(
     const repoDir = `~/.factiii/${repoName}`;
     const isOnServer = process.env.GITHUB_ACTIONS === 'true';
 
+    // Get ECR auth token via SDK on dev machine (no AWS CLI needed on staging server)
+    const { getEcrAuthToken } = await import('../aws/utils/aws-helpers.js');
+    const ecrAuth = await getEcrAuthToken(region);
+    if (!ecrAuth) {
+      return { success: false, error: 'Failed to get ECR auth token. Check AWS credentials on dev machine.' };
+    }
+
     // Get dockerfile path
     let dockerfile: string;
     if (isOnServer) {
@@ -207,61 +228,52 @@ export async function buildProductionImage(
     console.log('   🐳 Checking Docker status on staging server...');
     await ensureDockerRunning(stagingConfig, isOnServer);
 
+    // ECR login command using SDK token (no AWS CLI needed)
+    const ecrLoginCmd = 'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry;
+
     if (isOnServer) {
       // We're on the staging server - run commands directly
       const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
+      const pathEnv = '/opt/homebrew/bin:/usr/local/bin:' + (process.env.PATH ?? '');
 
       // Step 1: Build image with amd64 platform
-      console.log(`   🔨 Building Docker image (amd64): ${imageTag}...`);
+      console.log('   🔨 Building Docker image (amd64): ' + imageTag + '...');
       execSync(
-        `cd ${expandedRepoDir} && docker build --platform linux/amd64 -t ${imageTag} -f ${dockerfile} .`,
+        'cd ' + expandedRepoDir + ' && docker build --platform linux/amd64 -t ' + imageTag + ' -f ' + dockerfile + ' .',
         {
           stdio: 'inherit',
           shell: '/bin/bash',
-          env: {
-            ...process.env,
-            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-          },
+          env: { ...process.env, PATH: pathEnv },
         }
       );
 
-      // Step 2: Login to ECR
+      // Step 2: Login to ECR (using SDK token)
       console.log('   🔐 Logging in to ECR...');
-      execSync(
-        `aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${ecrRegistry}`,
-        {
-          stdio: 'inherit',
-          shell: '/bin/bash',
-          env: {
-            ...process.env,
-            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-          },
-        }
-      );
-
-      // Step 3: Push to ECR
-      console.log(`   📤 Pushing image to ECR: ${imageTag}...`);
-      execSync(`docker push ${imageTag}`, {
+      execSync(ecrLoginCmd, {
         stdio: 'inherit',
         shell: '/bin/bash',
-        env: {
-          ...process.env,
-          PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
-        },
+        env: { ...process.env, PATH: pathEnv },
+      });
+
+      // Step 3: Push to ECR
+      console.log('   📤 Pushing image to ECR: ' + imageTag + '...');
+      execSync('docker push ' + imageTag, {
+        stdio: 'inherit',
+        shell: '/bin/bash',
+        env: { ...process.env, PATH: pathEnv },
       });
     } else {
       // We're remote - SSH to staging server
-      await sshExec(
+      await sshExecCommand(
         stagingConfig,
-        `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
-         cd ${repoDir} && \
-         dockerfile="${dockerfile}" && \
-         echo "🔨 Building Docker image (amd64): ${imageTag}..." && \
-         docker build --platform linux/amd64 -t ${imageTag} -f "\$dockerfile" . && \
-         echo "🔐 Logging in to ECR..." && \
-         aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${ecrRegistry} && \
-         echo "📤 Pushing image to ECR: ${imageTag}..." && \
-         docker push ${imageTag}`
+        'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && ' +
+        'cd ' + repoDir + ' && ' +
+        'echo "Building Docker image (amd64): ' + imageTag + '..." && ' +
+        'docker build --platform linux/amd64 -t ' + imageTag + ' -f ' + dockerfile + ' . && ' +
+        'echo "Logging in to ECR..." && ' +
+        ecrLoginCmd + ' && ' +
+        'echo "Pushing image to ECR: ' + imageTag + '..." && ' +
+        'docker push ' + imageTag
       );
     }
 
@@ -274,6 +286,85 @@ export async function buildProductionImage(
       success: false,
       error: `Failed to build/push production image: ${errorMessage}`,
     };
+  }
+}
+
+/**
+ * Build production Docker image locally on the prod server itself and push to ECR.
+ * Adds swap space if needed (t3.micro has only 1GB RAM).
+ */
+export async function buildProductionImageLocally(
+  config: FactiiiConfig
+): Promise<DeployResult> {
+  const repoName = config.name ?? 'app';
+  const region = config.aws?.region ?? 'us-east-1';
+
+  // Get ECR registry
+  let ecrRegistry: string;
+  try {
+    ecrRegistry = await getECRRegistry(config);
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const ecrRepository = config.ecr_repository ?? repoName;
+  const imageTag = ecrRegistry + '/' + ecrRepository + ':latest';
+  const repoDir = (process.env.HOME ?? '') + '/.factiii/' + repoName;
+  const dockerfile = getDockerfilePath(repoDir);
+
+  console.log('      Image: ' + imageTag);
+
+  try {
+    // Add swap space if not already present (t3.micro has only 1GB RAM)
+    try {
+      const swapCheck = execSync('swapon --show', { encoding: 'utf8', stdio: 'pipe' });
+      if (!swapCheck.trim()) {
+        console.log('   Adding 2GB swap space for Docker build...');
+        execSync(
+          'sudo fallocate -l 2G /swapfile && ' +
+          'sudo chmod 600 /swapfile && ' +
+          'sudo mkswap /swapfile && ' +
+          'sudo swapon /swapfile',
+          { stdio: 'inherit', shell: '/bin/bash' }
+        );
+        console.log('   [OK] Swap space added');
+      }
+    } catch { /* swap setup is best-effort */ }
+
+    // Get ECR auth token
+    const { getEcrAuthToken } = await import('../aws/utils/aws-helpers.js');
+    const ecrAuth = await getEcrAuthToken(region);
+    if (!ecrAuth) {
+      return { success: false, error: 'Failed to get ECR auth token. Check AWS credentials.' };
+    }
+
+    const pathEnv = '/usr/local/bin:' + (process.env.PATH ?? '');
+
+    // Step 1: Build image
+    console.log('   Building Docker image: ' + imageTag + '...');
+    execSync(
+      'cd ' + repoDir + ' && docker build -t ' + imageTag + ' -f ' + dockerfile + ' .',
+      { stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } }
+    );
+
+    // Step 2: Login to ECR
+    console.log('   Logging in to ECR...');
+    const ecrLoginCmd = 'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry;
+    execSync(ecrLoginCmd, { stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } });
+
+    // Step 3: Push to ECR
+    console.log('   Pushing image to ECR: ' + imageTag + '...');
+    execSync('docker push ' + imageTag, { stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } });
+
+    console.log('   Production image built and pushed: ' + imageTag);
+    return { success: true, message: 'Production image built and pushed: ' + imageTag };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('   Failed to build/push production image: ' + errorMessage);
+    return { success: false, error: 'Failed to build/push production image: ' + errorMessage };
   }
 }
 

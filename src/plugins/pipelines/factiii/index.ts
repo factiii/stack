@@ -36,7 +36,7 @@
  *   - scanfix organized by concern, not environment - Fixes are grouped by what they check (config, workflows, secrets)
  *
  * **When each scanfix file is used:**
- *   - config.ts: When checking/generating factiii.yml
+ *   - config.ts: When checking/generating stack.yml
  *   - github-cli.ts: When checking GitHub CLI installation (dev)
  *   - workflows.ts: When checking/generating GitHub workflows (dev)
  *   - secrets.ts: When checking GitHub Secrets (secrets stage)
@@ -58,15 +58,37 @@ import type {
   CommandResult,
 } from '../../../types/index.js';
 import { loadRelevantPlugins } from '../../index.js';
-import GitHubWorkflowMonitor from '../../../utils/github-workflow-monitor.js';
-import { GitHubSecretsStore } from './github-secrets-store.js';
 import { findSshKeyForStage, sshRemoteFactiiiCommand } from '../../../utils/ssh-helper.js';
 
 // Import scanfix arrays
+import { bootstrapFixes } from './scanfix/bootstrap.js';
 import { configFixes } from './scanfix/config.js';
 import { githubCliFixes } from './scanfix/github-cli.js';
 import { workflowFixes } from './scanfix/workflows.js';
 import { secretsFixes } from './scanfix/secrets.js';
+import { envFileFixes } from './scanfix/env-files.js';
+import { vaultFixes } from './scanfix/vault.js';
+import { domainFixes } from './scanfix/domain.js';
+import { portConventionFixes } from './scanfix/port-convention.js';
+import { startShFixes } from './scanfix/start-sh.js';
+import { dbSeedFixes } from './scanfix/db-seed.js';
+
+// Import AWS scanfix arrays (AWS provisioning runs as part of factiii pipeline)
+import { configFixes as awsConfigFixes } from '../aws/scanfix/config.js';
+import { credentialsFixes } from '../aws/scanfix/credentials.js';
+import { vpcFixes } from '../aws/scanfix/vpc.js';
+import { securityGroupFixes } from '../aws/scanfix/security-groups.js';
+import { ec2Fixes } from '../aws/scanfix/ec2.js';
+import { rdsFixes } from '../aws/scanfix/rds.js';
+import { s3Fixes } from '../aws/scanfix/s3.js';
+import { ecrFixes } from '../aws/scanfix/ecr.js';
+import { sesFixes } from '../aws/scanfix/ses.js';
+import { iamFixes } from '../aws/scanfix/iam.js';
+import { dbReplicationFixes } from '../aws/scanfix/db-replication.js';
+import { sshBridgeFixes } from '../aws/scanfix/ssh-bridge.js';
+import { route53Fixes } from '../aws/scanfix/route53.js';
+
+// Vercel fixes are loaded via the vercel addon plugin (not duplicated here)
 
 // Import utility methods
 import * as detectionUtils from './utils/detection.js';
@@ -85,9 +107,11 @@ class FactiiiPipeline {
   static readonly version = '1.0.0';
 
   // Env vars this plugin requires (none - pipeline doesn't need app env vars)
+  // GITHUB_TOKEN and ANSIBLE_VAULT_PASSWORD_FILE are infrastructure keys,
+  // not app env vars — they're handled by secrets scanfixes, not .env files.
   static readonly requiredEnvVars: string[] = [];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
     // No user config - workflows are auto-generated
   };
@@ -113,7 +137,7 @@ class FactiiiPipeline {
    */
   static requiresFullRepo(environment: string): boolean {
     // Staging: needs full repo for local building from source
-    // Prod: pulls pre-built images from ECR, only needs factiii.yml + env file
+    // Prod: pulls pre-built images from ECR, only needs stack.yml + env file
     return environment === 'staging';
   }
 
@@ -127,8 +151,11 @@ class FactiiiPipeline {
    * Return values:
    *   { reachable: true, via: 'local' } - Run fixes on this machine
    *   { reachable: true, via: 'ssh' } - SSH directly to the server
-   *   { reachable: true, via: 'workflow' } - Trigger workflow to run fixes
    *   { reachable: false, reason: '...' } - Cannot reach, show error
+   *
+   * Note: 'workflow' path was removed — deploy/fix/scan workflows are gone.
+   * SSH from dev machine is now the only remote execution path.
+   * GitHub Actions only runs CI (build + test), not deployment.
    *
    * For the Factiii pipeline:
    *   - dev: always local
@@ -136,8 +163,7 @@ class FactiiiPipeline {
    *   - staging/prod:
    *       - If GITHUB_ACTIONS=true → local (we're on the server)
    *       - If SSH key exists → ssh (direct SSH from dev machine)
-   *       - If GITHUB_TOKEN → workflow (fallback to GitHub Actions)
-   *       - Otherwise → not reachable
+   *       - Otherwise → not reachable (guide user to set up SSH keys)
    *
    * CRITICAL: When SSHing to a server, the command MUST include
    *   --staging or --prod to prevent infinite loops.
@@ -154,7 +180,7 @@ class FactiiiPipeline {
         if (!config.ansible?.vault_path) {
           return {
             reachable: false,
-            reason: 'ansible.vault_path not configured in factiii.yml',
+            reason: 'ansible.vault_path not configured in stack.yml',
           };
         }
 
@@ -168,7 +194,7 @@ class FactiiiPipeline {
         if (!hasPasswordFile && !hasPasswordEnv) {
           return {
             reachable: false,
-            reason: 'Vault password required. Set ansible.vault_password_file in factiii.yml, or ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_PASSWORD_FILE env.',
+            reason: 'Vault password required. Set ansible.vault_password_file in stack.yml, or ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_PASSWORD_FILE env.',
           };
         }
 
@@ -176,50 +202,108 @@ class FactiiiPipeline {
 
       case 'staging':
       case 'prod':
-        // Skip environments owned by another pipeline (e.g. AWS)
-        {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
-          const envs = getEnvironmentsForStage(config, stage);
-          const envValues = Object.values(envs) as EnvironmentConfig[];
-          const firstEnv = envValues[0];
-          if (firstEnv && envValues.every((e: EnvironmentConfig) => e.pipeline && e.pipeline !== 'factiii')) {
-            return { reachable: false, reason: 'Handled by ' + (firstEnv.pipeline ?? 'other') + ' pipeline' };
-          }
-        }
-
         // If GITHUB_ACTIONS is set, we're running inside a workflow on the server
         // Return 'local' so fixes run directly without triggering another workflow
         if (process.env.GITHUB_ACTIONS || process.env.FACTIII_ON_SERVER) {
           return { reachable: true, via: 'local' };
         }
 
+        // ============================================================
+        // CRITICAL: Block SSH to EXAMPLE_ placeholder domains
+        // ============================================================
+        // If domain still has EXAMPLE_ prefix, the user hasn't configured
+        // it yet. Never attempt SSH to a placeholder domain.
+        // ============================================================
+        {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
+          const stageEnvs = getEnvironmentsForStage(config, stage);
+          const stageEnvValues = Object.values(stageEnvs) as EnvironmentConfig[];
+          const allExample = stageEnvValues.every((e: EnvironmentConfig) =>
+            !e.domain || e.domain.toUpperCase().startsWith('EXAMPLE')
+          );
+          if (allExample && stageEnvValues.length > 0) {
+            // Check if AWS config exists — allow local provisioning even with EXAMPLE_ domain
+            const hasAws = stageEnvValues.some((e: EnvironmentConfig) =>
+              !!e.access_key_id || !!e.config
+            );
+            if (hasAws) {
+              return { reachable: true, via: 'local' };
+            }
+            return {
+              reachable: false,
+              reason: stage + ' domain is still a placeholder (EXAMPLE_...).\n' +
+                '   Replace the EXAMPLE_ value in stack.yml with your actual domain.',
+            };
+          }
+        }
+
         // On dev machine: check for SSH key to reach server directly
         // This is the primary path - direct SSH is faster than GitHub workflows
         {
-          const sshKey = findSshKeyForStage(stage);
+          const sshKey = findSshKeyForStage(stage, config.name);
           if (sshKey) {
             return { reachable: true, via: 'ssh' };
           }
         }
 
-        // Fallback: use GitHub workflow if GITHUB_TOKEN is available
-        if (process.env.GITHUB_TOKEN) {
-          return {
-            reachable: true,
-            via: 'workflow',
-          };
+        // No SSH key — check if vault has a password for this stage (sshpass fallback)
+        if (config.ansible?.vault_path) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const yamlLib = require('js-yaml');
+            const vaultPath = config.ansible.vault_path;
+            const resolvedPath = path.isAbsolute(vaultPath)
+              ? vaultPath
+              : path.join(process.cwd(), vaultPath);
+
+            if (fs.existsSync(resolvedPath)) {
+              let cmd = 'ansible-vault view "' + resolvedPath + '"';
+              if (config.ansible.vault_password_file) {
+                const osLib = require('os');
+                const pwFile = config.ansible.vault_password_file.replace(/^~/, osLib.homedir());
+                cmd += ' --vault-password-file "' + pwFile + '"';
+              }
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
+              const { execSync: execSyncImport } = require('child_process');
+              const content = execSyncImport(cmd, { encoding: 'utf8', stdio: 'pipe' });
+              const parsed = yamlLib.load(content) as Record<string, unknown>;
+              const secretName = stage.toUpperCase() + '_SSH_PASSWORD';
+              if (parsed && typeof parsed === 'object' && typeof parsed[secretName] === 'string') {
+                return { reachable: true, via: 'ssh' };
+              }
+            }
+          } catch {
+            // Vault read failed — continue to other checks
+          }
         }
 
-        // No SSH key and no GITHUB_TOKEN
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const osForPath = require('os');
-        const expectedKeyPath = require('path').join(osForPath.homedir(), '.ssh', stage + '_deploy_key');
-        return {
-          reachable: false,
-          reason: 'No SSH key found at ' + expectedKeyPath + '. Run: npx stack secrets write-ssh-keys\n' +
-            '   Fallback: set GITHUB_TOKEN for GitHub Actions workflows.',
-        };
+        // If AWS config exists, allow local provisioning (no server needed yet)
+        // AWS scanfixes run on the dev machine to provision infrastructure
+        {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
+          const envs = getEnvironmentsForStage(config, stage);
+          const envValues = Object.values(envs) as EnvironmentConfig[];
+          const hasAws = envValues.some((e: EnvironmentConfig) =>
+            !!e.access_key_id || !!e.config
+          );
+          if (hasAws) {
+            return { reachable: true, via: 'local' };
+          }
+        }
+
+        // No SSH key, no password, no AWS — cannot reach this stage
+        {
+          const sshLabel = stage === 'staging' ? 'SSH_STAGING' : 'SSH_PROD';
+          const vaultName = stage === 'staging' ? 'STAGING_SSH' : 'PROD_SSH';
+          return {
+            reachable: false,
+            reason: sshLabel + ' not found (no key at ~/.ssh/' + stage + '_deploy_key).\n' +
+              '   Run: npx stack fix --secrets   (stores key in vault + writes to disk)\n' +
+              '   Or:  npx stack deploy --secrets set ' + vaultName + ' && npx stack deploy --secrets write-ssh-keys',
+          };
+        }
 
       default:
         return { reachable: false, reason: `Unknown stage: ${stage}` };
@@ -233,10 +317,32 @@ class FactiiiPipeline {
   // ============================================================
 
   static readonly fixes: Fix[] = [
+    ...bootstrapFixes,
     ...configFixes,
+    ...domainFixes,
+    ...vaultFixes,
     ...githubCliFixes,
     ...workflowFixes,
     ...secretsFixes,
+    ...envFileFixes,
+    ...portConventionFixes,
+    ...startShFixes,
+    ...dbSeedFixes,
+    // AWS infrastructure provisioning (guarded by isAwsConfigured())
+    ...awsConfigFixes,
+    ...credentialsFixes,
+    ...vpcFixes,
+    ...securityGroupFixes,
+    ...ec2Fixes,
+    ...rdsFixes,
+    ...s3Fixes,
+    ...ecrFixes,
+    ...sesFixes,
+    ...iamFixes,
+    ...dbReplicationFixes,
+    ...sshBridgeFixes,
+    ...route53Fixes,
+    // Vercel fixes loaded via vercel addon plugin
   ];
 
   // ============================================================
@@ -297,7 +403,7 @@ class FactiiiPipeline {
       const dir = path.join(rootDir, loc);
       // Check for prisma.config.ts or prisma/schema.prisma
       if (fs.existsSync(path.join(dir, 'prisma.config.ts')) ||
-          fs.existsSync(path.join(dir, 'prisma', 'schema.prisma'))) {
+        fs.existsSync(path.join(dir, 'prisma', 'schema.prisma'))) {
         return dir;
       }
     }
@@ -335,13 +441,141 @@ class FactiiiPipeline {
         env: { ...process.env, ...envVars },
       });
     } else {
-      // Staging: run inside Docker container
-      const containerName = config.name + '-' + stage;
-      console.log('  Container: ' + containerName);
+      // Staging/Prod: run from repo directory on server (not inside container)
+      // Container may lack node_modules; the repo has deps from pnpm install during deploy
+      const dbDir = FactiiiPipeline.findDbDir(rootDir);
+      const envFile = FactiiiPipeline.getEnvFile(stage);
+      const envVars = FactiiiPipeline.loadEnvFile(rootDir, envFile);
 
-      execSync('docker exec ' + containerName + ' ' + prefix + command, {
+      // Replace docker-internal hostname with localhost for host access
+      // Handles any container hostname: postgres, factiii_postgres, db, etc.
+      if (envVars.DATABASE_URL) {
+        envVars.DATABASE_URL = envVars.DATABASE_URL.replace(/@([^:/@]+):(\d+)/, '@localhost:$2');
+      }
+
+      console.log('  Directory: ' + dbDir);
+      console.log('  Env file: ' + rootDir + '/' + envFile);
+
+      execSync(prefix + command, {
+        cwd: dbDir,
         stdio: 'inherit',
+        env: { ...process.env, ...envVars },
       });
+    }
+  }
+
+  /**
+   * Change the Ansible Vault password for the configured vault file.
+   *
+   * This runs locally on the dev machine (secrets stage) and uses:
+   *   ansible-vault rekey <vault_path> --vault-password-file <old> --new-vault-password-file <new>
+   *
+   * It then overwrites the configured vault_password_file with the new password
+   * so future commands use the updated password.
+   */
+  static async changeVaultPassword(config: FactiiiConfig, rootDir: string): Promise<CommandResult> {
+    try {
+      if (!config.ansible?.vault_path || !config.ansible.vault_password_file) {
+        return {
+          success: false,
+          error:
+            'ansible.vault_path and ansible.vault_password_file must be set in stack.yml before changing the vault password.',
+        };
+      }
+
+      // Lazy-load prompts to avoid circular imports
+      const { promptSingleLine } = await import('../../../utils/secret-prompts.js');
+
+      // Resolve vault path and password file
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const os = require('os') as typeof import('os');
+      const vaultPathRaw = config.ansible.vault_path.replace(/^~/, os.homedir());
+      const passwordFileRaw = config.ansible.vault_password_file.replace(/^~/, os.homedir());
+
+      const vaultPath = path.isAbsolute(vaultPathRaw)
+        ? vaultPathRaw
+        : path.join(rootDir, vaultPathRaw);
+      const passwordFile = path.isAbsolute(passwordFileRaw)
+        ? passwordFileRaw
+        : path.join(rootDir, passwordFileRaw);
+
+      if (!fs.existsSync(vaultPath)) {
+        return {
+          success: false,
+          error: 'Vault file not found at ' + vaultPath,
+        };
+      }
+      if (!fs.existsSync(passwordFile)) {
+        return {
+          success: false,
+          error:
+            'Vault password file not found at ' +
+            passwordFile +
+            '. Update ansible.vault_password_file or create the file first.',
+        };
+      }
+
+      console.log('\n🔐 Change Ansible Vault password');
+      console.log('   Vault file: ' + vaultPath + '\n');
+
+      const newPassword = await promptSingleLine('   New vault password: ', { hidden: true });
+      const confirmPassword = await promptSingleLine('   Confirm new password: ', { hidden: true });
+
+      if (!newPassword || newPassword.trim().length === 0) {
+        return { success: false, error: 'New password cannot be empty.' };
+      }
+      if (newPassword !== confirmPassword) {
+        return { success: false, error: 'Passwords do not match.' };
+      }
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { encryptSync: (data: string) => string; decryptSync: (data: string) => string } };
+
+        // Read vault content
+        const vaultContent = fs.readFileSync(vaultPath, 'utf8');
+
+        // Read old password and decrypt
+        const oldPassword = fs.readFileSync(passwordFile, 'utf8').trim();
+        const oldVault = new Vault({ password: oldPassword });
+
+        console.log('\nRekeying vault...');
+        let decrypted: string;
+        try {
+          decrypted = oldVault.decryptSync(vaultContent);
+        } catch (decErr) {
+          return {
+            success: false,
+            error: 'Failed to decrypt vault with current password: ' + (decErr instanceof Error ? decErr.message : String(decErr)),
+          };
+        }
+
+        // Re-encrypt with new password
+        const newVault = new Vault({ password: newPassword.trim() });
+        const reEncrypted = newVault.encryptSync(decrypted);
+        fs.writeFileSync(vaultPath, reEncrypted + '\n', 'utf8');
+
+        // Overwrite the configured password file with the new password
+        fs.writeFileSync(passwordFile, newPassword.trim() + '\n', {
+          encoding: 'utf8',
+          mode: 0o600,
+        });
+
+        console.log('\n✅ Vault password updated successfully.');
+        console.log('   Updated vault file: ' + vaultPath);
+        console.log('   Updated password file: ' + passwordFile + '\n');
+
+        return { success: true, message: 'Vault password updated successfully.' };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return {
+          success: false,
+          error: 'Vault rekey failed: ' + msg,
+        };
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { success: false, error: msg };
     }
   }
 
@@ -351,20 +585,39 @@ class FactiiiPipeline {
     // ────────────────────────────────────────────────────────────
     {
       name: 'seed',
-      description: 'Seed the database with initial data (dev/staging only)',
+      description: 'Seed database with initial data via pnpm seed (dev/staging only)',
       category: 'db',
       stages: ['dev', 'staging'], // No prod - destructive
       prodSafety: 'destructive',
       execute: async (stage, _options, config, rootDir): Promise<CommandResult> => {
         try {
           if (stage === 'dev') {
-            // Dev: use pnpm
-            FactiiiPipeline.runDbCommand('pnpm db:seed', stage, config, rootDir, false);
-          } else {
-            // Staging: use npm run (more commonly available in Docker)
-            FactiiiPipeline.runDbCommand('npm run db:seed', stage, config, rootDir, false);
+            // Dev: run locally in apps/server
+            FactiiiPipeline.runDbCommand('pnpm seed', stage, config, rootDir, false);
+            return { success: true, message: 'Database seeded successfully' };
           }
-          return { success: true, message: 'Database seeded successfully' };
+
+          // Remote stages (staging/prod): check deployment type
+          const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+          const environments = extractEnvironments(config);
+          const envConfig = environments[stage];
+
+          if (!envConfig) {
+            return { success: false, error: stage + ' environment not configured' };
+          }
+
+          // Check if running on the server already (FACTIII_ON_SERVER or GITHUB_ACTIONS)
+          if (process.env.FACTIII_ON_SERVER || process.env.GITHUB_ACTIONS) {
+            // Run seed directly on host (not inside Docker) — needs access to host filesystem
+            const serverDir = process.env.HOME + '/.factiii/' + config.name + '/apps/server';
+            console.log('  Seeding from: ' + serverDir);
+            execSync('cd ' + serverDir + ' && pnpm seed', { stdio: 'inherit' });
+            return { success: true, message: 'Database seeded successfully' };
+          }
+
+          // Running from dev machine: should be routed via SSH by executePluginCommand
+          // If we reach here, something went wrong with routing
+          return { success: false, error: stage + ' seed requires SSH — run via: npx stack db seed --' + stage };
         } catch (error) {
           return { success: false, error: String(error) };
         }
@@ -372,7 +625,7 @@ class FactiiiPipeline {
     },
     {
       name: 'migrate',
-      description: 'Run pending database migrations',
+      description: 'Apply pending Prisma migrations to the database',
       category: 'db',
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'caution',
@@ -387,7 +640,7 @@ class FactiiiPipeline {
     },
     {
       name: 'reset',
-      description: 'Reset database and re-run all migrations (dev/staging only)',
+      description: 'Drop all tables and re-run migrations from scratch (DATA LOSS, dev/staging only)',
       category: 'db',
       stages: ['dev', 'staging'], // No prod - destructive
       prodSafety: 'destructive',
@@ -402,7 +655,7 @@ class FactiiiPipeline {
     },
     {
       name: 'status',
-      description: 'Check migration status',
+      description: 'Show pending and applied Prisma migration status',
       category: 'db',
       stages: ['dev', 'staging', 'prod'],
       prodSafety: 'safe',
@@ -421,7 +674,7 @@ class FactiiiPipeline {
     // ────────────────────────────────────────────────────────────
     {
       name: 'logs',
-      description: 'View container logs',
+      description: 'Stream or tail Docker container logs',
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',
@@ -447,8 +700,18 @@ class FactiiiPipeline {
       },
     },
     {
+      name: 'change-vault-password',
+      description: 'Change the Ansible Vault encryption password (runs locally)',
+      category: 'ops',
+      stages: ['secrets'],
+      prodSafety: 'safe',
+      execute: async (_stage, _options, config, rootDir): Promise<CommandResult> => {
+        return await FactiiiPipeline.changeVaultPassword(config, rootDir);
+      },
+    },
+    {
       name: 'restart',
-      description: 'Restart application containers',
+      description: 'Restart Docker containers without rebuilding',
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'caution',
@@ -472,7 +735,7 @@ class FactiiiPipeline {
     },
     {
       name: 'shell',
-      description: 'Open a shell in the application container',
+      description: 'Open an interactive shell (/bin/sh) inside the app container',
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'caution',
@@ -489,7 +752,7 @@ class FactiiiPipeline {
     },
     {
       name: 'status',
-      description: 'Show container status',
+      description: 'Show running/stopped status of all Docker containers',
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',
@@ -513,7 +776,7 @@ class FactiiiPipeline {
     // ────────────────────────────────────────────────────────────
     {
       name: 'create',
-      description: 'Create a database backup',
+      description: 'Export database to a SQL dump file via pg_dump',
       category: 'backup',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',
@@ -544,7 +807,7 @@ class FactiiiPipeline {
     },
     {
       name: 'restore',
-      description: 'Restore database from backup (DATA LOSS!)',
+      description: 'Import a SQL dump file into the database (overwrites existing data!)',
       category: 'backup',
       stages: ['staging', 'prod'],
       prodSafety: 'destructive',
@@ -578,7 +841,7 @@ class FactiiiPipeline {
     },
     {
       name: 'health',
-      description: 'Check application and database health',
+      description: 'Check if containers are running and database is reachable',
       category: 'backup',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',
@@ -689,13 +952,13 @@ class FactiiiPipeline {
   }
 
   /**
-   * Trigger a GitHub Actions workflow
+   * Build production Docker image locally on the prod server itself and push to ECR.
+   * Used when deploying directly on the prod server (FACTIII_ON_SERVER=true).
    */
-  static async triggerWorkflow(
-    workflowName: string,
-    inputs: Record<string, string> = {}
-  ): Promise<void> {
-    return workflowUtils.triggerWorkflow(workflowName, inputs);
+  static async buildProductionImageLocally(
+    config: FactiiiConfig
+  ): Promise<DeployResult> {
+    return prodUtils.buildProductionImageLocally(config);
   }
 
   // ============================================================
@@ -729,7 +992,10 @@ class FactiiiPipeline {
     if (reach.via === 'ssh') {
       // Direct SSH to server - the primary deployment path
       console.log(`   Deploying to ${stage} via direct SSH...`);
-      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'deploy --' + stage);
+      let sshCommand = 'deploy --' + stage;
+      if (options.branch) sshCommand += ' --branch ' + options.branch;
+      if (options.commit) sshCommand += ' --commit ' + options.commit;
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, sshCommand);
       return {
         success: sshResult.success,
         message: sshResult.success ? 'Deployment complete via SSH' : undefined,
@@ -737,41 +1003,29 @@ class FactiiiPipeline {
       };
     }
 
-    if (reach.via === 'workflow') {
-      // Fallback: trigger GitHub Actions workflow
-      // Only used when SSH keys are not available but GITHUB_TOKEN is
+    // via: 'local' - we can run directly (dev stage, or on-server in workflow)
+    const localResult = await this.runLocalDeploy(stage, options);
+
+    // Also deploy to Vercel if configured (addon triggered by pipeline)
+    if (this._config.vercel && localResult.success && (stage === 'staging' || stage === 'prod')) {
       try {
-        const monitor = new GitHubWorkflowMonitor();
-        const result = await monitor.triggerAndWatch('factiii-deploy.yml', stage);
-        return {
-          success: result.success,
-          message: result.success ? 'Deployment complete' : undefined,
-          error: result.error,
-        };
-      } catch {
-        // Fall back to API-based trigger without live monitoring
-        console.log(`   Triggering ${stage} deployment via GitHub Actions...`);
-
-        try {
-          await FactiiiPipeline.triggerWorkflow('factiii-deploy.yml', {
-            environment: stage,
+        const { default: VercelAddon } = await import('../../addons/vercel/index.js');
+        if (VercelAddon.isVercelConfigured(this._config)) {
+          console.log('');
+          console.log('   ── Vercel Deployment ──');
+          const vercelResult = await VercelAddon.deployToVercel(this._config, {
+            production: stage === 'prod',
           });
-
-          const repoInfo = GitHubSecretsStore.getRepoInfo();
-          if (repoInfo) {
-            console.log(`   Check: https://github.com/${repoInfo.owner}/${repoInfo.repo}/actions\n`);
+          if (vercelResult.success) {
+            console.log('   [OK] ' + (vercelResult.message ?? 'Vercel deployment complete'));
+          } else {
+            console.log('   [!] Vercel deployment failed: ' + (vercelResult.error ?? 'unknown'));
           }
-
-          return { success: true, message: 'Workflow triggered - check GitHub Actions for progress' };
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return { success: false, error: `Failed to trigger workflow: ${errorMessage}` };
         }
-      }
+      } catch { /* Vercel addon not available, skip */ }
     }
 
-    // via: 'local' - we can run directly (dev stage, or on-server in workflow)
-    return this.runLocalDeploy(stage, options);
+    return localResult;
   }
 
   /**
@@ -784,29 +1038,23 @@ class FactiiiPipeline {
     const reach = FactiiiPipeline.canReach(stage, this._config);
 
     if (!reach.reachable) {
-      console.log('\n[X] Cannot reach ' + stage + ': ' + reach.reason);
       return { handled: true };
     }
 
     if (reach.via === 'ssh') {
-      console.log('   Scanning ' + stage + ' via direct SSH...');
-      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
+      // Get domain for display
+      const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+      const envs = getEnvironmentsForStage(this._config, stage);
+      const envValues = Object.values(envs) as { domain?: string }[];
+      const domain = envValues[0]?.domain || 'unknown';
+
+      console.log('');
+      console.log('┌─ ' + stage.toUpperCase() + ' (via SSH → ' + domain + ')');
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
+      console.log('└─');
+
       if (!sshResult.success) {
         console.log('   [!] ' + stage + ' scan failed: ' + sshResult.stderr);
-      }
-      return { handled: true };
-    }
-
-    if (reach.via === 'workflow') {
-      try {
-        const monitor = new GitHubWorkflowMonitor();
-        console.log('   Triggering ' + stage + ' scan via workflow...');
-        const result = await monitor.triggerAndWatch('factiii-scan.yml', stage);
-        if (!result.success) {
-          console.log('   [!] ' + stage + ' scan failed');
-        }
-      } catch {
-        console.log('   [!] Could not trigger workflow for ' + stage + ' scan');
       }
       return { handled: true };
     }
@@ -821,35 +1069,29 @@ class FactiiiPipeline {
    * Returns { handled: true } if pipeline ran fix remotely.
    * Returns { handled: false } if caller should run fix locally.
    */
-  async fixStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean }> {
+  async fixStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean; success?: boolean; error?: string }> {
     const reach = FactiiiPipeline.canReach(stage, this._config);
 
     if (!reach.reachable) {
-      console.log('\n[X] Cannot reach ' + stage + ': ' + reach.reason);
-      return { handled: true };
+      return { handled: true, success: false, error: reach.reason };
     }
 
     if (reach.via === 'ssh') {
-      console.log('   Fixing ' + stage + ' via direct SSH...');
-      const sshResult = sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
-      if (!sshResult.success) {
-        console.log('   [!] ' + stage + ' fix failed: ' + sshResult.stderr);
-      }
-      return { handled: true };
-    }
+      // Get domain for display
+      const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+      const envs = getEnvironmentsForStage(this._config, stage);
+      const envValues = Object.values(envs) as { domain?: string; ssh_user?: string }[];
+      const domain = envValues[0]?.domain || 'unknown';
 
-    if (reach.via === 'workflow') {
-      try {
-        const monitor = new GitHubWorkflowMonitor();
-        console.log('   Triggering ' + stage + ' fix via workflow...');
-        const result = await monitor.triggerAndWatch('factiii-fix.yml', stage);
-        if (!result.success) {
-          console.log('   [!] ' + stage + ' fix failed');
-        }
-      } catch {
-        console.log('   [!] Could not trigger workflow for ' + stage + ' fix');
-      }
-      return { handled: true };
+      console.log('');
+      console.log('┌─ ' + stage.toUpperCase() + ' (via SSH → ' + domain + ')');
+      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
+      console.log('└─');
+
+      // The remote fix already printed its own summary inline.
+      // Don't double-report: just mark as handled. The user already saw
+      // the server's detailed output (manual fixes, errors, etc.).
+      return { handled: true, success: sshResult.success };
     }
 
     // via: 'local' - caller should run locally
@@ -862,10 +1104,20 @@ class FactiiiPipeline {
   private async runLocalDeploy(stage: Stage, options: DeployOptions): Promise<DeployResult> {
     const rootDir = options.rootDir ?? process.cwd();
 
-    // Load plugins and find server plugin
+    // Load plugins and find the correct server plugin for this stage
     const plugins = await loadRelevantPlugins(rootDir, this._config);
-    const ServerPluginClass = plugins.find((p) => p.category === 'server') as {
-      new (config: FactiiiConfig): {
+
+    // Match server plugin to the environment's server type (e.g., 'ubuntu', 'mac')
+    const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+    const environments = extractEnvironments(this._config);
+    const envConfig = environments[stage];
+    const serverType = envConfig?.server;
+
+    const ServerPluginClass = (serverType
+      ? plugins.find((p) => p.category === 'server' && (p as { id?: string }).id === serverType)
+      : plugins.find((p) => p.category === 'server')
+    ) as {
+      new(config: FactiiiConfig): {
         ensureServerReady?(
           config: FactiiiConfig,
           environment: string,
@@ -885,15 +1137,20 @@ class FactiiiPipeline {
       // Ensure server is ready (install deps, clone repo, etc.)
       if (serverInstance.ensureServerReady) {
         console.log('   Preparing server...');
-        
+
         // Get repo URL from environment or config
         const repoUrl = process.env.GITHUB_REPO || this._config.github_repo || '';
-        
+
         await serverInstance.ensureServerReady(this._config, stage, {
           branch: options.branch ?? 'main',
           commitHash: options.commit ?? '',
           repoUrl: repoUrl,
         });
+
+        // Reload config after checkout — the branch may have a different stack.yml
+        const { loadConfig } = await import('../../../utils/config-helpers.js');
+        const rootDir = options.rootDir ?? process.cwd();
+        this._config = loadConfig(rootDir);
       }
 
       // Build Docker images before deployment
@@ -927,6 +1184,13 @@ class FactiiiPipeline {
             if (!buildResult.success) {
               return buildResult;
             }
+          } else {
+            // No staging server — build locally on prod server as fallback
+            console.log('   🔨 No staging server configured — building on prod server...');
+            const buildResult = await FactiiiPipeline.buildProductionImageLocally(this._config);
+            if (!buildResult.success) {
+              return buildResult;
+            }
           }
         }
       } else {
@@ -934,6 +1198,11 @@ class FactiiiPipeline {
       }
 
       // Run the actual deployment
+      // For prod with AWS config: use AWS prod deployment (pull from ECR, certbot, docker compose up)
+      if (stage === 'prod' && this._config.aws) {
+        const { deployProd } = await import('../aws/prod.js');
+        return deployProd(this._config, stage);
+      }
       return serverInstance.deploy(this._config, stage);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

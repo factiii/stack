@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Validates that stack.yml doesn't contain EXAMPLE- placeholder values
+ * Validates that stack.yml doesn't contain EXAMPLE_ placeholder values
  * This script properly parses YAML and ignores comments
  * Use this in workflows instead of grep to avoid false positives from documentation
  */
@@ -28,10 +28,10 @@ try {
 
   const exampleValues: ExampleValue[] = [];
 
-  // Recursively scan parsed YAML object for EXAMPLE- values
+  // Recursively scan parsed YAML object for EXAMPLE_ values
   // This properly ignores comments since we're scanning the parsed structure
   function scanForExamples(obj: unknown, path: string = ''): void {
-    if (typeof obj === 'string' && obj.includes('EXAMPLE-')) {
+    if (typeof obj === 'string' && obj.includes('EXAMPLE_')) {
       exampleValues.push({ path: path || 'root', value: obj });
     } else if (typeof obj === 'object' && obj !== null) {
       for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
@@ -44,17 +44,17 @@ try {
   scanForExamples(config);
 
   if (exampleValues.length > 0) {
-    console.log('❌ Found EXAMPLE- placeholder values in ' + configPath);
+    console.log('❌ Found EXAMPLE_ placeholder values in ' + configPath);
     console.log('');
     exampleValues.forEach(({ path, value }) => {
       console.log(`   ${path}: ${value}`);
     });
     console.log('');
-    console.log('💡 Please replace all EXAMPLE- values with your actual configuration.');
+    console.log('💡 Please replace all EXAMPLE_ values with your actual configuration.');
     process.exit(1);
   }
 
-  console.log('✅ No EXAMPLE- placeholder values found');
+  console.log('✅ No EXAMPLE_ placeholder values found');
   process.exit(0);
 } catch (error) {
   const errorMessage = error instanceof Error ? error.message : String(error);

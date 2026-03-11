@@ -24,6 +24,11 @@ export interface ScanOptions extends BaseOptions {
   stages?: Stage[];
   commit?: string;
   silent?: boolean;
+  /**
+   * Target deployment stage (staging or prod)
+   * Used to filter secret-stage fixes - only run secrets for this target
+   */
+  targetStage?: 'staging' | 'prod';
 }
 
 /**

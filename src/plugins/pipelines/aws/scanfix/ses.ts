@@ -3,10 +3,21 @@
  *
  * Configures Simple Email Service for transactional email.
  * Handles domain verification, DKIM setup, and sandbox status.
+ * Uses AWS SDK v3.
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { awsExec, awsExecSafe, getAwsConfig, isOnServer } from '../utils/aws-helpers.js';
+import {
+  getAwsConfig,
+  isAwsConfigured,
+  isDomainVerified,
+  hasDkim,
+  getSESClient,
+  VerifyDomainIdentityCommand,
+  GetIdentityVerificationAttributesCommand,
+  VerifyDomainDkimCommand,
+  GetSendQuotaCommand,
+} from '../utils/aws-helpers.js';
 
 /**
  * Get the production domain from config
@@ -17,46 +28,8 @@ function getProdDomain(config: FactiiiConfig): string | null {
   const environments = extractEnvironments(config);
   const prodEnv = environments.prod ?? environments.production;
   const domain = prodEnv?.domain;
-  if (!domain || domain.startsWith('EXAMPLE-')) return null;
+  if (!domain || domain.toUpperCase().startsWith('EXAMPLE')) return null;
   return domain;
-}
-
-/**
- * Check if domain is verified in SES
- */
-function isDomainVerified(domain: string, region: string): boolean {
-  const result = awsExecSafe(
-    'aws ses get-identity-verification-attributes --identities ' + domain +
-    ' --query "VerificationAttributes.' + domain + '.VerificationStatus" --output text',
-    region
-  );
-  return result === 'Success';
-}
-
-/**
- * Check if DKIM is configured for domain
- */
-function hasDkim(domain: string, region: string): boolean {
-  const result = awsExecSafe(
-    'aws ses get-identity-dkim-attributes --identities ' + domain +
-    ' --query "DkimAttributes.' + domain + '.DkimEnabled" --output text',
-    region
-  );
-  return result === 'true' || result === 'True';
-}
-
-/**
- * Check if AWS is configured for this project
- */
-function isAwsConfigured(config: FactiiiConfig): boolean {
-  if (isOnServer()) return false;
-  if (config.aws) return true;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { extractEnvironments } = require('../../../../utils/config-helpers.js');
-  const environments = extractEnvironments(config);
-  return Object.values(environments).some(
-    (e: unknown) => (e as { pipeline?: string }).pipeline === 'aws'
-  );
 }
 
 export const sesFixes: Fix[] = [
@@ -64,36 +37,33 @@ export const sesFixes: Fix[] = [
     id: 'aws-ses-domain-missing',
     stage: 'prod',
     severity: 'warning',
-    description: 'SES domain identity not verified for email',
+    description: '📧 SES domain identity not verified for email',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const domain = getProdDomain(config);
       if (!domain) return false;
-      return !isDomainVerified(domain, region);
+      return !(await isDomainVerified(domain, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const domain = getProdDomain(config);
       if (!domain) {
-        console.log('   Set production domain in factiii.yml first');
+        console.log('   Set production domain in stack.yml first');
         return false;
       }
 
       try {
+        const ses = getSESClient(region);
+
         // Start domain verification
-        awsExec(
-          'aws ses verify-domain-identity --domain ' + domain,
-          region
-        );
+        await ses.send(new VerifyDomainIdentityCommand({ Domain: domain }));
 
         // Get the verification token
-        const tokenResult = awsExec(
-          'aws ses get-identity-verification-attributes --identities ' + domain +
-          ' --query "VerificationAttributes.' + domain + '.VerificationToken" --output text',
-          region
-        );
-        const token = tokenResult.replace(/"/g, '');
+        const tokenResult = await ses.send(new GetIdentityVerificationAttributesCommand({
+          Identities: [domain],
+        }));
+        const token = tokenResult.VerificationAttributes?.[domain]?.VerificationToken ?? '';
 
         console.log('   Started domain verification for: ' + domain);
         console.log('');
@@ -116,14 +86,14 @@ export const sesFixes: Fix[] = [
     id: 'aws-ses-dkim-missing',
     stage: 'prod',
     severity: 'info',
-    description: 'SES DKIM not configured (improves email deliverability)',
+    description: '📧 SES DKIM not configured (improves email deliverability)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const domain = getProdDomain(config);
       if (!domain) return false;
-      if (!isDomainVerified(domain, region)) return false; // Domain must be verified first
-      return !hasDkim(domain, region);
+      if (!(await isDomainVerified(domain, region))) return false;
+      return !(await hasDkim(domain, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
@@ -131,13 +101,11 @@ export const sesFixes: Fix[] = [
       if (!domain) return false;
 
       try {
+        const ses = getSESClient(region);
+
         // Generate DKIM tokens
-        const result = awsExec(
-          'aws ses verify-domain-dkim --domain ' + domain,
-          region
-        );
-        const parsed = JSON.parse(result);
-        const tokens: string[] = parsed.DkimTokens ?? [];
+        const result = await ses.send(new VerifyDomainDkimCommand({ Domain: domain }));
+        const tokens: string[] = result.DkimTokens ?? [];
 
         console.log('   Generated DKIM tokens for: ' + domain);
         console.log('');
@@ -162,28 +130,29 @@ export const sesFixes: Fix[] = [
     id: 'aws-ses-sandbox',
     stage: 'prod',
     severity: 'info',
-    description: 'SES is in sandbox mode (can only send to verified emails)',
+    description: '📧 SES is in sandbox mode (can only send to verified emails)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const domain = getProdDomain(config);
       if (!domain) return false;
-      if (!isDomainVerified(domain, region)) return false;
+      if (!(await isDomainVerified(domain, region))) return false;
 
       // Check sending quota — sandbox has max 200/day
-      const result = awsExecSafe(
-        'aws ses get-send-quota --query "Max24HourSend" --output text',
-        region
-      );
-      if (!result) return false;
-      const maxSend = parseFloat(result);
-      return maxSend <= 200; // Sandbox limit
+      try {
+        const ses = getSESClient(region);
+        const result = await ses.send(new GetSendQuotaCommand({}));
+        const maxSend = result.Max24HourSend ?? 0;
+        return maxSend <= 200;
+      } catch {
+        return false;
+      }
     },
     fix: null,
     manualFix: [
       'SES is in sandbox mode. To send to unverified emails:',
       '',
-      '1. Go to AWS Console → SES → Account dashboard',
+      '1. Go to AWS Console > SES > Account dashboard',
       '2. Click "Request production access"',
       '3. Fill in the form with your use case',
       '4. AWS typically approves within 24 hours',

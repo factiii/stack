@@ -467,7 +467,16 @@ export const macFixes: Fix[] = [
         return false;
       }
     },
-    fix: null,
+    fix: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      try {
+        console.log('   Disabling Bluetooth...');
+        execSync('sudo defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0', { stdio: 'inherit' });
+        try { execSync('sudo killall -HUP bluetoothd 2>/dev/null', { stdio: 'pipe' }); } catch { /* ok */ }
+        return true;
+      } catch {
+        return false;
+      }
+    },
     manualFix:
       'Disable Bluetooth (only if no BT keyboard/mouse): System Settings > Bluetooth > Turn Off. ' +
       'Or: sudo defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0 && sudo killall -HUP bluetoothd',
@@ -489,7 +498,19 @@ export const macFixes: Fix[] = [
         return true;
       }
     },
-    fix: null,
+    fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      try {
+        // Use ssh_user from staging config, or fall back to current user
+        const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+        const envs = extractEnvironments(config);
+        const loginUser = envs.staging?.ssh_user ?? envs.prod?.ssh_user ?? process.env.USER ?? 'admin';
+        console.log('   Setting auto-login for user: ' + loginUser);
+        execSync('sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string "' + loginUser + '"', { stdio: 'inherit' });
+        return true;
+      } catch {
+        return false;
+      }
+    },
     manualFix:
       'Set auto-login: System Settings > Users & Groups > Login Options > Automatic login > select user. ' +
       'Or: sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string "admin" (then reboot)',

@@ -258,10 +258,10 @@ check_vault_secret() {
     local secret_name="$1"
     # Use factiii CLI to check if available
     if command -v npx &> /dev/null; then
-        if npx stack secrets list 2>/dev/null | grep -q "$secret_name"; then
+        if npx stack deploy --secrets list 2>/dev/null | grep -q "$secret_name"; then
             pass "Vault contains: $secret_name"
         else
-            warn "Cannot verify vault secret: $secret_name (run 'npx stack secrets list' manually)"
+            warn "Cannot verify vault secret: $secret_name (run 'npx stack deploy --secrets list' manually)"
         fi
     else
         warn "npx not available - cannot verify vault secrets"

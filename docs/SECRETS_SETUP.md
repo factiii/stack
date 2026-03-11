@@ -23,26 +23,26 @@ ansible:
 
 ```bash
 # SSH keys
-npx stack secrets set STAGING_SSH
-npx stack secrets set PROD_SSH
+npx stack deploy --secrets set STAGING_SSH
+npx stack deploy --secrets set PROD_SSH
 
 # Environment variables
-npx stack secrets set-env DATABASE_URL --staging
-npx stack secrets set-env JWT_SECRET --staging
-npx stack secrets set-env DATABASE_URL --prod
-npx stack secrets set-env JWT_SECRET --prod
+npx stack deploy --secrets set-env DATABASE_URL --staging
+npx stack deploy --secrets set-env JWT_SECRET --staging
+npx stack deploy --secrets set-env DATABASE_URL --prod
+npx stack deploy --secrets set-env JWT_SECRET --prod
 ```
 
 ## Deploy
 
 ```bash
-npx stack secrets deploy --staging   # staging only
-npx stack secrets deploy --prod      # prod only
-npx stack secrets deploy --all       # both
+npx stack deploy --secrets deploy --staging   # staging only
+npx stack deploy --secrets deploy --prod      # prod only
+npx stack deploy --secrets deploy --all       # both
 ```
 
 ## Check Status
 
 ```bash
-npx stack secrets list
+npx stack deploy --secrets list
 ```

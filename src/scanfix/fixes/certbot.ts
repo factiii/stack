@@ -31,7 +31,7 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
         ? ((config as Record<string, unknown>).production as Record<string, unknown> | undefined)?.domain as string | undefined
         : ((config as Record<string, unknown>)[envKey] as Record<string, unknown> | undefined)?.domain as string | undefined;
 
-      if (!domain || domain.startsWith('EXAMPLE-')) return false;
+      if (!domain || domain.toUpperCase().startsWith('EXAMPLE')) return false;
 
       // Skip SSL for IP addresses (certs only work with domain names)
       if (/^\d+\.\d+\.\d+\.\d+$/.test(domain)) return false;
@@ -52,7 +52,8 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
       const domain = envKey === 'production'
         ? ((config as Record<string, unknown>).production as Record<string, unknown> | undefined)?.domain as string | undefined
         : ((config as Record<string, unknown>)[envKey] as Record<string, unknown> | undefined)?.domain as string | undefined;
-      const sslEmail = config.ssl_email;
+      const envObj = (config as Record<string, unknown>)[envKey] as Record<string, unknown> | undefined;
+      const sslEmail = (envObj?.ssl_email as string | undefined) ?? config.ssl_email;
 
       if (!domain) {
         console.log('   No ' + stageLabel + ' domain configured');
@@ -60,8 +61,8 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
       }
 
       if (!sslEmail) {
-        console.log('   No ssl_email configured in factiii.yml');
-        console.log('   Add ssl_email: your@email.com to factiii.yml');
+        console.log('   No ssl_email configured in stack.yml');
+        console.log('   Add ssl_email: your@email.com to your environment config in stack.yml');
         return false;
       }
 
@@ -101,16 +102,52 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
           ].join(' ');
         }
 
-        execSync(certbotCmd, { stdio: 'inherit' });
+        // Capture both stdout AND stderr (certbot writes renewal info to stderr)
+        let fullOutput = '';
+        try {
+          fullOutput = execSync(certbotCmd + ' 2>&1', { encoding: 'utf8' }) || '';
+        } catch (cmdErr) {
+          // execSync throws on non-zero exit, but output may still be useful
+          const cmdMsg = cmdErr instanceof Error ? (cmdErr as any).stdout || (cmdErr as any).stderr || cmdErr.message : String(cmdErr);
+          if (typeof cmdMsg === 'string' &&
+              (cmdMsg.includes('not yet due for renewal') || cmdMsg.includes('no action taken'))) {
+            console.log('   [OK] SSL certificate is valid and not yet due for renewal');
+            return true;
+          }
+          fullOutput = typeof cmdMsg === 'string' ? cmdMsg : '';
+        }
+
+        // "Certificate not yet due for renewal" means cert already exists and is valid
+        if (fullOutput.includes('not yet due for renewal') || fullOutput.includes('Certificate not yet due') || fullOutput.includes('no action taken')) {
+          console.log('   [OK] SSL certificate is valid and not yet due for renewal');
+          return true;
+        }
 
         // Verify certificate was created and is valid
         const certResult = checkCertificate(domain);
         if (!certResult.exists || !certResult.valid) {
+          // Double-check: cert might actually be valid but certbot output went to stderr/docker TTY
+          const recheck = checkCertificate(domain, 7);
+          if (recheck.exists && recheck.valid) {
+            console.log('   [OK] SSL certificate is valid (expires in ' + recheck.expiresInDays + ' days)');
+            return true;
+          }
+          // Final check: try openssl s_client to verify cert is actually serving
+          try {
+            const sslCheck = execSync(
+              'echo | openssl s_client -connect ' + domain + ':443 -servername ' + domain + ' 2>/dev/null | openssl x509 -noout -dates 2>/dev/null',
+              { encoding: 'utf8', timeout: 10000 }
+            );
+            if (sslCheck.includes('notAfter')) {
+              console.log('   [OK] SSL certificate is serving correctly on ' + domain);
+              return true;
+            }
+          } catch { /* ignore — cert may not be serving yet */ }
           console.log('   Certificate was not created or is invalid');
           return false;
         }
 
-        console.log('   SSL certificate obtained successfully');
+        console.log('   [OK] SSL certificate obtained successfully');
 
         // Reload nginx if running (it will pick up new certs)
         if (nginxRunning) {
@@ -127,6 +164,11 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
         return true;
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
+        // Check if the error output contains renewal message (certbot exits 0 but stderr has info)
+        if (errorMessage.includes('not yet due for renewal') || errorMessage.includes('no action taken')) {
+          console.log('   [OK] SSL certificate is valid and not yet due for renewal');
+          return true;
+        }
         console.log('   Failed to obtain certificate: ' + errorMessage);
         console.log('   Make sure port 80 is accessible and not in use');
         return false;

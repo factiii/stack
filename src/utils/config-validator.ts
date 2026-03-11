@@ -53,7 +53,7 @@ export function extractWorkflowConfig(workflowPath: string): WorkflowConfig | nu
     const workflow = yaml.load(content) as Workflow | null;
 
     // Extract relevant config from workflow
-    // Look for yq commands that read from factiii.yml
+    // Look for yq commands that read from stack.yml
     const config: WorkflowConfig = {
       environments: {},
       repoName: null,

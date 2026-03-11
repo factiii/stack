@@ -25,19 +25,59 @@ export interface CertCheckResult {
 export function checkCertificate(domain: string, warnDays: number = 7): CertCheckResult {
   const certPath = '/etc/letsencrypt/live/' + domain + '/fullchain.pem';
 
-  if (!fs.existsSync(certPath)) {
+  // Try reading cert file directly (may fail without root on macOS)
+  let canReadFile = fs.existsSync(certPath);
+
+  // Fallback: try with sudo (cert dirs are often root-only on macOS)
+  if (!canReadFile) {
+    try {
+      execSync('sudo test -f "' + certPath + '"', { stdio: 'pipe', timeout: 5000 });
+      canReadFile = true;
+    } catch {
+      // sudo not available or file truly doesn't exist
+    }
+  }
+
+  if (!canReadFile) {
+    // Final fallback: check via openssl s_client (network-based, no file perms needed)
+    try {
+      const sslOutput = execSync(
+        'echo | openssl s_client -connect ' + domain + ':443 -servername ' + domain + ' 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null',
+        { encoding: 'utf8', timeout: 10000 }
+      );
+      const match = sslOutput.match(/notAfter=(.+)/);
+      if (match && match[1]) {
+        const expiryDate = new Date(match[1]);
+        const daysUntilExpiry = Math.floor(
+          (expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+        );
+        return {
+          exists: true,
+          valid: daysUntilExpiry > warnDays,
+          expiresInDays: daysUntilExpiry,
+        };
+      }
+    } catch {
+      // SSL not serving — cert truly doesn't exist
+    }
     return { exists: false, valid: false };
   }
+
+  // Read cert with sudo if needed
+  const readCmd = fs.existsSync(certPath)
+    ? 'openssl x509'
+    : 'sudo openssl x509';
+  const fileArg = ' -in "' + certPath + '"';
 
   try {
     // Check if cert is valid for at least warnDays more
     const checkSeconds = warnDays * 24 * 60 * 60;
-    execSync('openssl x509 -checkend ' + checkSeconds + ' -noout -in "' + certPath + '"', {
+    execSync(readCmd + ' -checkend ' + checkSeconds + ' -noout' + fileArg, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     // Get exact expiration for reporting
-    const expiryOutput = execSync('openssl x509 -enddate -noout -in "' + certPath + '"', {
+    const expiryOutput = execSync(readCmd + ' -enddate -noout' + fileArg, {
       encoding: 'utf8',
     });
     const expiryMatch = expiryOutput.match(/notAfter=(.+)/);
@@ -54,7 +94,7 @@ export function checkCertificate(domain: string, warnDays: number = 7): CertChec
     // openssl returns non-zero if cert expires within checkSeconds
     // Try to get the actual expiry date for the error message
     try {
-      const expiryOutput = execSync('openssl x509 -enddate -noout -in "' + certPath + '"', {
+      const expiryOutput = execSync(readCmd + ' -enddate -noout' + fileArg, {
         encoding: 'utf8',
       });
       const expiryMatch = expiryOutput.match(/notAfter=(.+)/);

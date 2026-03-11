@@ -1,7 +1,7 @@
 /**
  * Config Schema Validator
  *
- * Validates factiii.yml against schema definitions for each version.
+ * Validates stack.yml against schema definitions for each version.
  * Detects missing required fields, deprecated fields, and new optional fields.
  */
 
@@ -59,7 +59,7 @@ const FIELD_DESCRIPTIONS: Record<string, string> = {
 
 /**
  * Validate config against schema
- * @param config - Parsed factiii.yml config
+ * @param config - Parsed stack.yml config
  * @param targetVersion - Target schema version (defaults to current)
  * @returns Validation result
  */

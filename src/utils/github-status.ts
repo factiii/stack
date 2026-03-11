@@ -10,20 +10,16 @@
 import * as fs from 'fs';
 import { Octokit } from '@octokit/rest';
 import { execSync } from 'child_process';
-import { GitHubSecretsStore } from '../plugins/pipelines/factiii/github-secrets-store.js';
+import { getRepoInfo as _getRepoInfo } from './git-repo-info.js';
+export type { RepoInfo } from './git-repo-info.js';
 
 export type CommitStatusState = 'pending' | 'success' | 'failure' | 'error';
 
-export interface RepoInfo {
-  owner: string;
-  repo: string;
-}
-
 /**
- * Get repo info from git remote (reuses GitHubSecretsStore pattern)
+ * Get repo info from git remote
  */
-export function getRepoInfo(): RepoInfo | null {
-  return GitHubSecretsStore.getRepoInfo();
+export function getRepoInfo() {
+  return _getRepoInfo();
 }
 
 /**

@@ -92,7 +92,7 @@ class MacPlugin {
   // Env vars this plugin requires
   static readonly requiredEnvVars: string[] = [];
 
-  // Schema for factiii.yml (user-editable)
+  // Schema for stack.yml (user-editable)
   static readonly configSchema: Record<string, unknown> = {
     // No user config needed - uses staging.host
     container_exclusions: 'array of container names to exclude from cleanup',
@@ -120,7 +120,7 @@ class MacPlugin {
       }
 
       // Load if staging environment has local/private IP or staging domain
-      if (name.startsWith('staging') && env.domain && !env.domain.startsWith('EXAMPLE-')) {
+      if (name.startsWith('staging') && env.domain && !env.domain.toUpperCase().startsWith('EXAMPLE')) {
         const isLocal =
           /^192\.168\./.test(env.domain) ||
           /^10\./.test(env.domain) ||

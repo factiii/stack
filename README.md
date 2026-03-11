@@ -16,7 +16,7 @@ npx stack init
 # - stackAuto.yml (auto-detected config)
 # - .github/workflows/ (CI/CD workflows)
 
-# Edit stack.yml to replace EXAMPLE- values
+# Edit stack.yml to replace EXAMPLE_ values
 # Then run:
 npx stack scan    # Check for issues
 npx stack fix     # Auto-fix issues
@@ -159,30 +159,30 @@ Manage secrets via Ansible Vault and deploy them directly to servers:
 
 ```bash
 # List all secrets (SSH keys + environment variables)
-npx stack secrets list
+npx stack deploy --secrets list
 
 # Set SSH keys (required for deployment)
-npx stack secrets set STAGING_SSH
-npx stack secrets set PROD_SSH
+npx stack deploy --secrets set STAGING_SSH
+npx stack deploy --secrets set PROD_SSH
 
 # Set environment variables for each stage
-npx stack secrets set-env DATABASE_URL --staging
-npx stack secrets set-env JWT_SECRET --staging
-npx stack secrets set-env DATABASE_URL --prod
-npx stack secrets set-env JWT_SECRET --prod
+npx stack deploy --secrets set-env DATABASE_URL --staging
+npx stack deploy --secrets set-env JWT_SECRET --staging
+npx stack deploy --secrets set-env DATABASE_URL --prod
+npx stack deploy --secrets set-env JWT_SECRET --prod
 
 # List environment variables
-npx stack secrets list-env --staging
-npx stack secrets list-env --prod
+npx stack deploy --secrets list-env --staging
+npx stack deploy --secrets list-env --prod
 
 # Deploy secrets to servers via SSH
-npx stack secrets deploy --staging  # Deploy to staging server
-npx stack secrets deploy --prod     # Deploy to production server
-npx stack secrets deploy --all      # Deploy to all servers
+npx stack deploy --secrets deploy --staging  # Deploy to staging server
+npx stack deploy --secrets deploy --prod     # Deploy to production server
+npx stack deploy --secrets deploy --all      # Deploy to all servers
 
 # Options
-npx stack secrets deploy --staging --restart   # Restart container after deploy
-npx stack secrets deploy --staging --dry-run   # Show what would be deployed
+npx stack deploy --secrets deploy --staging --restart   # Restart container after deploy
+npx stack deploy --secrets deploy --staging --dry-run   # Show what would be deployed
 ```
 
 **How it works:**
@@ -360,16 +360,16 @@ Provide the vault password via one of:
 
 ```bash
 # List all secrets
-npx stack secrets list
+npx stack deploy --secrets list
 
 # Set a secret (interactive prompt)
-npx stack secrets set STAGING_SSH
+npx stack deploy --secrets set STAGING_SSH
 
 # Set a secret (non-interactive)
-npx stack secrets set STAGING_SSH --value "your-key-here"
+npx stack deploy --secrets set STAGING_SSH --value "your-key-here"
 
 # Check if secrets exist
-npx stack secrets check
+npx stack deploy --secrets check
 ```
 
 ### Required Secrets
@@ -385,7 +385,7 @@ In GitHub Actions workflows, provide the vault password as a GitHub secret:
 1. Add `ANSIBLE_VAULT_PASSWORD` to your repository secrets
 2. Workflows automatically load SSH keys from Ansible Vault using this password
 
-The workflow step `npx stack secrets write-ssh-keys` extracts secrets from the vault and writes SSH keys to `~/.ssh/` for deployment steps.
+The workflow step `npx stack deploy --secrets write-ssh-keys` extracts secrets from the vault and writes SSH keys to `~/.ssh/` for deployment steps.
 
 ## Environment Variables
 

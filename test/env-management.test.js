@@ -76,7 +76,7 @@ describe('Environment File Management', () => {
 
   describe('looksLikePlaceholder', () => {
     test('should detect EXAMPLE values', () => {
-      expect(looksLikePlaceholder('EXAMPLE-value')).toBe(true);
+      expect(looksLikePlaceholder('EXAMPLE_value')).toBe(true);
       expect(looksLikePlaceholder('EXAMPLE.com')).toBe(true);
     });
 

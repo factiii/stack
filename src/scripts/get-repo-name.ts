@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Gets the repo name from stack.yml (or factiii.yml)
+ * Gets the repo name from stack.yml (or stack.yml)
  */
 
 import * as fs from 'fs';

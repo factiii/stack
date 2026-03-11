@@ -308,5 +308,5 @@ aws iam list-attached-user-policies --user-name factiii-admin
 The SSH key is automatically stored in Ansible Vault. Make sure you have the vault password configured:
 ```bash
 # Check if vault is accessible
-npx stack secrets list
+npx stack deploy --secrets list
 ```

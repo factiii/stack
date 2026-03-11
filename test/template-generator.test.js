@@ -11,8 +11,8 @@ describe('Template Generator', () => {
     it('should generate staging template from dev env', () => {
       const devEnv = { 
         NODE_ENV: 'development',
-        DATABASE_URL: 'EXAMPLE-url',
-        JWT_SECRET: 'EXAMPLE-secret'
+        DATABASE_URL: 'EXAMPLE_url',
+        JWT_SECRET: 'EXAMPLE_secret'
       };
       const template = generateEnvTemplate('staging', devEnv);
       
@@ -27,8 +27,8 @@ describe('Template Generator', () => {
     it('should generate prod template from dev env', () => {
       const devEnv = { 
         NODE_ENV: 'development',
-        DATABASE_URL: 'EXAMPLE-url',
-        API_KEY: 'EXAMPLE-key'
+        DATABASE_URL: 'EXAMPLE_url',
+        API_KEY: 'EXAMPLE_key'
       };
       const template = generateEnvTemplate('prod', devEnv);
       
