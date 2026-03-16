@@ -459,37 +459,122 @@ export async function deployProd(
       return { success: false, error: 'Failed to get ECR auth token. Check AWS credentials on dev machine.' };
     }
 
-    // Step 1: Regenerate unified docker-compose.yml (generic, uses build context)
-    console.log('   🔄 Regenerating unified docker-compose.yml...');
-    const repos = scanRepos();
-    const configs = loadConfigs(repos);
-    generateDockerCompose(configs);
-    generateNginx(configs);
-
-    // Step 2: Update docker-compose.yml to use ECR image for prod services
-    console.log('   🔄 Updating docker-compose.yml with ECR image references...');
-    await updateComposeForECR(envConfig, config, ecrRegistry);
-
-    // Step 3: Login to ECR (token obtained on dev machine via SDK) and pull latest image
-    console.log('   🔐 Logging in to ECR and pulling image...');
-    await sshExecCommand(
+    // Check if docker-compose.yml already exists on server (preserves existing configs)
+    const composeCheck = await sshExecCommand(
       envConfig,
-      'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry + ' && ' +
-      'cd ~/.factiii && ' +
-      'docker compose pull ' + repoName + '-prod'
+      'test -f ~/docker-compose.yml && echo "HOME_EXISTS" || (test -f ~/.factiii/docker-compose.yml && echo "FACTIII_EXISTS" || echo "NOT_FOUND")'
     );
 
-    // Step 4: Manage SSL certificates
-    console.log('   🔐 Managing SSL certificates...');
-    await runCertbot(envConfig, config);
-    await setupCertbotRenewal(envConfig);
+    const ecrRepository = config.ecr_repository ?? repoName;
+    const imageTag = `${ecrRegistry}/${ecrRepository}:latest`;
 
-    // Step 5: Start containers using unified docker-compose.yml
-    console.log('   🚀 Starting containers with unified docker-compose.yml...');
-    await sshExecCommand(
-      envConfig,
-      `cd ~/.factiii && docker compose up -d ${repoName}-prod`
-    );
+    if (composeCheck.includes('HOME_EXISTS')) {
+      // Existing production setup: docker-compose.yml in ~/
+      // Preserve existing configs — only pull new image and restart
+      console.log('   ✅ Found existing docker-compose.yml in ~/ — preserving configs');
+
+      // Detect the prod service name using docker compose (most reliable)
+      // Falls back to parsing docker-compose.yml if docker compose is unavailable
+      let composeServiceKey: string;
+      try {
+        // Use docker compose to find the service that uses our ECR image
+        const serviceList = await sshExecCommand(envConfig,
+          'cd ~ && docker compose ps --format json 2>/dev/null || docker compose ps'
+        );
+        // Look for the service using our ECR image (factiii-server)
+        const ecrImagePattern = ecrRepository ?? repoName;
+        const jsonServices = serviceList.split('\n').filter(l => l.startsWith('{'));
+        let foundService = '';
+        for (const line of jsonServices) {
+          try {
+            const svc = JSON.parse(line);
+            if (svc.Image && svc.Image.includes(ecrImagePattern)) {
+              foundService = svc.Service || svc.Name || '';
+              break;
+            }
+          } catch { /* skip non-JSON lines */ }
+        }
+        composeServiceKey = foundService || 'prodFactiii';
+      } catch {
+        composeServiceKey = 'prodFactiii';
+      }
+
+      console.log(`   📦 Detected prod service: ${composeServiceKey}`);
+
+      // Step 1: Login to ECR and pull latest image
+      console.log('   🔐 Logging in to ECR and pulling image...');
+      await sshExecCommand(
+        envConfig,
+        'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry + ' && ' +
+        'cd ~ && ' +
+        'docker compose pull ' + composeServiceKey
+      );
+
+      // Step 2: Restart only the prod container (nginx, certbot untouched)
+      console.log('   🚀 Restarting prod container...');
+      await sshExecCommand(
+        envConfig,
+        'cd ~ && docker compose up -d ' + composeServiceKey
+      );
+    } else if (composeCheck.includes('FACTIII_EXISTS')) {
+      // Managed by stack: docker-compose.yml in ~/.factiii/
+      // Regenerate configs and deploy
+      console.log('   🔄 Regenerating unified docker-compose.yml...');
+      const repos = scanRepos();
+      const configs = loadConfigs(repos);
+      generateDockerCompose(configs);
+      generateNginx(configs);
+
+      console.log('   🔄 Updating docker-compose.yml with ECR image references...');
+      await updateComposeForECR(envConfig, config, ecrRegistry);
+
+      console.log('   🔐 Logging in to ECR and pulling image...');
+      await sshExecCommand(
+        envConfig,
+        'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry + ' && ' +
+        'cd ~/.factiii && ' +
+        'docker compose pull ' + repoName + '-prod'
+      );
+
+      console.log('   🔐 Managing SSL certificates...');
+      await runCertbot(envConfig, config);
+      await setupCertbotRenewal(envConfig);
+
+      console.log('   🚀 Starting containers with unified docker-compose.yml...');
+      await sshExecCommand(
+        envConfig,
+        `cd ~/.factiii && docker compose up -d ${repoName}-prod`
+      );
+    } else {
+      // Fresh server: no docker-compose.yml found
+      // Generate everything from scratch
+      console.log('   🆕 No docker-compose.yml found — generating fresh configs...');
+      const repos = scanRepos();
+      const configs = loadConfigs(repos);
+      generateDockerCompose(configs);
+      generateNginx(configs);
+
+      console.log('   🔄 Updating docker-compose.yml with ECR image references...');
+      await updateComposeForECR(envConfig, config, ecrRegistry);
+
+      console.log('   🔐 Logging in to ECR and pulling image...');
+      await sshExecCommand(
+        envConfig,
+        'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry + ' && ' +
+        'cd ~/.factiii && ' +
+        'docker compose pull ' + repoName + '-prod'
+      );
+
+      console.log('   🔐 Managing SSL certificates...');
+      await runCertbot(envConfig, config);
+      await setupCertbotRenewal(envConfig);
+
+      console.log('   🚀 Starting containers...');
+      await sshExecCommand(
+        envConfig,
+        `cd ~/.factiii && docker compose up -d ${repoName}-prod`
+      );
+    }
 
     // Step 6: Post-deploy health check
     console.log('   🔍 Running post-deploy health check...');

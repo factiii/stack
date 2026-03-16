@@ -990,7 +990,44 @@ class FactiiiPipeline {
     }
 
     if (reach.via === 'ssh') {
-      // Direct SSH to server - the primary deployment path
+      // For prod with AWS config: build locally on dev machine, then SSH only for pull+restart
+      // This avoids building Docker on resource-constrained prod servers (e.g., t3.micro 1GB RAM)
+      if (stage === 'prod' && this._config.aws) {
+        console.log(`   Deploying to ${stage} via local build + SSH pull...`);
+
+        // Step 1: Build Docker image locally and push to ECR (on dev machine)
+        if (!process.env.SKIP_BUILD) {
+          const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+          const environments = extractEnvironments(this._config);
+          const stagingConfig = environments.staging;
+
+          if (stagingConfig?.domain) {
+            console.log('   🔨 Building production image on staging server...');
+            const buildResult = await FactiiiPipeline.buildProductionImage(
+              this._config,
+              stagingConfig
+            );
+            if (!buildResult.success) {
+              return buildResult;
+            }
+          } else {
+            // No staging server — build locally on dev machine
+            console.log('   🔨 Building production image locally...');
+            const buildResult = await FactiiiPipeline.buildProductionImageLocally(this._config);
+            if (!buildResult.success) {
+              return buildResult;
+            }
+          }
+        } else {
+          console.log('   ⏭️  Skipping build step (SKIP_BUILD is set)');
+        }
+
+        // Step 2: SSH to prod server only for pull + restart (deployProd handles this)
+        const { deployProd } = await import('../aws/prod.js');
+        return deployProd(this._config, stage);
+      }
+
+      // For non-prod or non-AWS: use the original SSH remote command flow
       console.log(`   Deploying to ${stage} via direct SSH...`);
       let sshCommand = 'deploy --' + stage;
       if (options.branch) sshCommand += ' --branch ' + options.branch;

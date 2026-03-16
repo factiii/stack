@@ -174,43 +174,78 @@ function generateFullStartSh(rootDir: string): string {
     '  cd "$REPO_DIR" && docker compose -f ' + composeFile + ' up -d\n' +
     'fi\n' +
     '\n' +
-    '# ── init.sql detection ──────────────────────────────────────\n' +
-    'if [ -f "$REPO_DIR/init.sql" ]; then\n' +
-    '  echo ""\n' +
-    '  echo "init.sql detected. How to set up the database?"\n' +
-    '  echo "  1) Inject init.sql into the database container"\n' +
-    '  echo "  2) Use the seed script (pnpm prisma db seed / pnpm seed)"\n' +
-    '  echo "  3) Skip"\n' +
-    '  read -p "  Choose (1/2/3): " DB_CHOICE\n' +
+    '# ── Database setup ──────────────────────────────────────────\n' +
+    'DB_CONTAINER=$(docker compose -f "$REPO_DIR/' + composeFile + '" ps --format "{{.Name}}" 2>/dev/null | grep -iE "db|postgres|mysql" | head -1 || echo "")\n' +
     '\n' +
-    '  case "$DB_CHOICE" in\n' +
-    '    1)\n' +
-    '      DB_CONTAINER=$(docker compose -f "$REPO_DIR/' + composeFile + '" ps --format "{{.Name}}" 2>/dev/null | grep -iE "db|postgres|mysql" | head -1 || echo "")\n' +
-    '      [ -z "$DB_CONTAINER" ] && read -p "  DB container name: " DB_CONTAINER\n' +
-    '      if [ -n "$DB_CONTAINER" ]; then\n' +
-    '        sleep 3\n' +
-    '        if docker exec "$DB_CONTAINER" psql --version &>/dev/null; then\n' +
-    '          DB_USER=$(grep "POSTGRES_USER" "$REPO_DIR/.env" 2>/dev/null | cut -d= -f2 || echo "postgres")\n' +
-    '          DB_NAME=$(grep "POSTGRES_DB" "$REPO_DIR/.env" 2>/dev/null | cut -d= -f2 || echo "postgres")\n' +
-    '          docker exec -i "$DB_CONTAINER" psql -U "${DB_USER:-postgres}" -d "${DB_NAME:-postgres}" < "$REPO_DIR/init.sql"\n' +
-    '          echo "init.sql injected into PostgreSQL"\n' +
-    '        elif docker exec "$DB_CONTAINER" mysql --version &>/dev/null; then\n' +
-    '          DB_NAME=$(grep "MYSQL_DATABASE" "$REPO_DIR/.env" 2>/dev/null | cut -d= -f2 || echo "app")\n' +
-    '          docker exec -i "$DB_CONTAINER" mysql -u root "${DB_NAME:-app}" < "$REPO_DIR/init.sql"\n' +
-    '          echo "init.sql injected into MySQL"\n' +
+    'run_seed() {\n' +
+    '  cd "$REPO_DIR"\n' +
+    '  if [ -f "prisma/schema.prisma" ] || [ -f "prisma/schema" ]; then\n' +
+    '    echo "Running Prisma migrations + seed..."\n' +
+    '    pnpm prisma migrate deploy 2>/dev/null || npx prisma migrate deploy 2>/dev/null || true\n' +
+    '    pnpm prisma db seed 2>/dev/null || npx prisma db seed 2>/dev/null || echo "Seed failed"\n' +
+    '  elif grep -q "\\"seed\\"" package.json 2>/dev/null; then\n' +
+    '    pnpm seed 2>/dev/null || npm run seed 2>/dev/null || echo "Seed failed"\n' +
+    '  fi\n' +
+    '}\n' +
+    '\n' +
+    'run_init_sql() {\n' +
+    '  if [ -n "$DB_CONTAINER" ]; then\n' +
+    '    if docker exec "$DB_CONTAINER" psql --version &>/dev/null; then\n' +
+    '      DB_USER=$(grep "POSTGRES_USER" "$REPO_DIR/.env" 2>/dev/null | cut -d= -f2 || echo "postgres")\n' +
+    '      DB_NAME=$(grep "POSTGRES_DB" "$REPO_DIR/.env" 2>/dev/null | cut -d= -f2 || echo "postgres")\n' +
+    '      docker exec -i "$DB_CONTAINER" psql -U "${DB_USER:-postgres}" -d "${DB_NAME:-postgres}" < "$REPO_DIR/init.sql"\n' +
+    '      echo "init.sql injected into PostgreSQL"\n' +
+    '    elif docker exec "$DB_CONTAINER" mysql --version &>/dev/null; then\n' +
+    '      DB_NAME=$(grep "MYSQL_DATABASE" "$REPO_DIR/.env" 2>/dev/null | cut -d= -f2 || echo "app")\n' +
+    '      docker exec -i "$DB_CONTAINER" mysql -u root "${DB_NAME:-app}" < "$REPO_DIR/init.sql"\n' +
+    '      echo "init.sql injected into MySQL"\n' +
+    '    fi\n' +
+    '  fi\n' +
+    '}\n' +
+    '\n' +
+    'if [ -n "$DB_CONTAINER" ]; then\n' +
+    '  sleep 3\n' +
+    '  # Check if DB has any tables (existing data)\n' +
+    '  HAS_TABLES=false\n' +
+    '  if docker exec "$DB_CONTAINER" psql --version &>/dev/null; then\n' +
+    '    TABLE_COUNT=$(docker exec "$DB_CONTAINER" psql -U "${DB_USER:-postgres}" -d "${DB_NAME:-postgres}" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema=\'public\'" 2>/dev/null || echo "0")\n' +
+    '    [ "$TABLE_COUNT" -gt 0 ] 2>/dev/null && HAS_TABLES=true\n' +
+    '  fi\n' +
+    '\n' +
+    '  if [ "$HAS_TABLES" = "false" ]; then\n' +
+    '    # No DB yet — auto-seed without asking\n' +
+    '    echo "No database found. Running seed..."\n' +
+    '    run_seed\n' +
+    '  else\n' +
+    '    # DB exists — ask what to do\n' +
+    '    echo ""\n' +
+    '    echo "Existing database detected."\n' +
+    '    echo "  1) Do nothing"\n' +
+    '    echo "  2) Reseed (drop + recreate)"\n' +
+    '    if [ -f "$REPO_DIR/init.sql" ]; then\n' +
+    '      echo "  3) Seed from init.sql"\n' +
+    '    fi\n' +
+    '    read -p "  Choose: " DB_CHOICE\n' +
+    '\n' +
+    '    case "$DB_CHOICE" in\n' +
+    '      1) echo "Keeping existing database" ;;\n' +
+    '      2)\n' +
+    '        echo "Reseeding database..."\n' +
+    '        cd "$REPO_DIR"\n' +
+    '        pnpm prisma migrate reset --force 2>/dev/null || npx prisma migrate reset --force 2>/dev/null || true\n' +
+    '        run_seed\n' +
+    '        ;;\n' +
+    '      3)\n' +
+    '        if [ -f "$REPO_DIR/init.sql" ]; then\n' +
+    '          echo "Seeding from init.sql..."\n' +
+    '          run_init_sql\n' +
+    '        else\n' +
+    '          echo "init.sql not found"\n' +
     '        fi\n' +
-    '      fi\n' +
-    '      ;;\n' +
-    '    2)\n' +
-    '      cd "$REPO_DIR"\n' +
-    '      if [ -f "prisma/schema.prisma" ]; then\n' +
-    '        pnpm prisma db seed 2>/dev/null || npx prisma db seed 2>/dev/null || echo "Seed failed"\n' +
-    '      elif grep -q "\\"seed\\"" package.json 2>/dev/null; then\n' +
-    '        pnpm seed 2>/dev/null || npm run seed 2>/dev/null || echo "Seed failed"\n' +
-    '      fi\n' +
-    '      ;;\n' +
-    '    *) echo "Skipping database setup" ;;\n' +
-    '  esac\n' +
+    '        ;;\n' +
+    '      *) echo "Keeping existing database" ;;\n' +
+    '    esac\n' +
+    '  fi\n' +
     'fi\n' +
     '\n' +
     'echo ""\n' +

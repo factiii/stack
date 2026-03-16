@@ -298,6 +298,8 @@ export async function buildProductionImageLocally(
 ): Promise<DeployResult> {
   const repoName = config.name ?? 'app';
   const region = config.aws?.region ?? 'us-east-1';
+  const isWindows = process.platform === 'win32';
+  const shellOption = isWindows ? 'cmd.exe' : '/bin/bash';
 
   // Get ECR registry
   let ecrRegistry: string;
@@ -312,27 +314,31 @@ export async function buildProductionImageLocally(
 
   const ecrRepository = config.ecr_repository ?? repoName;
   const imageTag = ecrRegistry + '/' + ecrRepository + ':latest';
-  const repoDir = (process.env.HOME ?? '') + '/.factiii/' + repoName;
-  const dockerfile = getDockerfilePath(repoDir);
+
+  // On Windows, build from current working directory; on Linux, use ~/.factiii/<repo>
+  const repoDir = isWindows ? process.cwd() : ((process.env.HOME ?? '') + '/.factiii/' + repoName);
+  const dockerfile = isWindows ? 'apps/server/Dockerfile' : getDockerfilePath(repoDir);
 
   console.log('      Image: ' + imageTag);
 
   try {
-    // Add swap space if not already present (t3.micro has only 1GB RAM)
-    try {
-      const swapCheck = execSync('swapon --show', { encoding: 'utf8', stdio: 'pipe' });
-      if (!swapCheck.trim()) {
-        console.log('   Adding 2GB swap space for Docker build...');
-        execSync(
-          'sudo fallocate -l 2G /swapfile && ' +
-          'sudo chmod 600 /swapfile && ' +
-          'sudo mkswap /swapfile && ' +
-          'sudo swapon /swapfile',
-          { stdio: 'inherit', shell: '/bin/bash' }
-        );
-        console.log('   [OK] Swap space added');
-      }
-    } catch { /* swap setup is best-effort */ }
+    // Add swap space if not already present (Linux only, t3.micro has only 1GB RAM)
+    if (!isWindows) {
+      try {
+        const swapCheck = execSync('swapon --show', { encoding: 'utf8', stdio: 'pipe' });
+        if (!swapCheck.trim()) {
+          console.log('   Adding 2GB swap space for Docker build...');
+          execSync(
+            'sudo fallocate -l 2G /swapfile && ' +
+            'sudo chmod 600 /swapfile && ' +
+            'sudo mkswap /swapfile && ' +
+            'sudo swapon /swapfile',
+            { stdio: 'inherit', shell: '/bin/bash' }
+          );
+          console.log('   [OK] Swap space added');
+        }
+      } catch { /* swap setup is best-effort */ }
+    }
 
     // Get ECR auth token
     const { getEcrAuthToken } = await import('../aws/utils/aws-helpers.js');
@@ -341,23 +347,32 @@ export async function buildProductionImageLocally(
       return { success: false, error: 'Failed to get ECR auth token. Check AWS credentials.' };
     }
 
-    const pathEnv = '/usr/local/bin:' + (process.env.PATH ?? '');
-
     // Step 1: Build image
     console.log('   Building Docker image: ' + imageTag + '...');
+    const buildCmd = 'docker build --platform linux/amd64 -t ' + imageTag + ' -f ' + dockerfile + ' .';
     execSync(
-      'cd ' + repoDir + ' && docker build -t ' + imageTag + ' -f ' + dockerfile + ' .',
-      { stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } }
+      isWindows ? buildCmd : ('cd ' + repoDir + ' && ' + buildCmd),
+      { stdio: 'inherit', shell: shellOption, cwd: isWindows ? repoDir : undefined }
     );
 
-    // Step 2: Login to ECR
+    // Step 2: Login to ECR (uses AWS SDK token, no CLI needed)
     console.log('   Logging in to ECR...');
-    const ecrLoginCmd = 'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry;
-    execSync(ecrLoginCmd, { stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } });
+    if (isWindows) {
+      // On Windows, use echo pipe through cmd.exe for --password-stdin
+      execSync(
+        'echo ' + ecrAuth.password + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry,
+        { stdio: 'inherit', shell: 'cmd.exe' }
+      );
+    } else {
+      execSync(
+        'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry,
+        { stdio: 'inherit', shell: '/bin/bash' }
+      );
+    }
 
     // Step 3: Push to ECR
     console.log('   Pushing image to ECR: ' + imageTag + '...');
-    execSync('docker push ' + imageTag, { stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } });
+    execSync('docker push ' + imageTag, { stdio: 'inherit', shell: shellOption });
 
     console.log('   Production image built and pushed: ' + imageTag);
     return { success: true, message: 'Production image built and pushed: ' + imageTag };

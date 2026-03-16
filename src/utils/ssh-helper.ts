@@ -1082,7 +1082,8 @@ export async function sshRemoteFactiiiCommand(
   // Dev machine is the source of truth — server may not have these in git
   const configRoot = rootDir ?? process.cwd();
   const remoteProjectDir = '~/.factiii/' + repoName;
-  const filesToSync = ['stack.yml', 'stackAuto.yml', '.env.prod', '.env.staging'];
+  const stageEnvFile = '.env.' + stage;
+  const filesToSync = ['stack.yml', 'stackAuto.yml', stageEnvFile];
   const existingFiles = filesToSync.filter(f => fs.existsSync(path.join(configRoot, f)));
   if (existingFiles.length > 0) {
     // Ensure remote project dir exists
