@@ -27,6 +27,10 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
     description: 'SSL certificates missing or expiring soon for ' + stageLabel + ' domain',
 
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      // SSL scan/fix only makes sense on the actual server, not on a dev machine
+      const isOnServer = process.env.GITHUB_ACTIONS === 'true' || process.env.FACTIII_ON_SERVER === 'true';
+      if (!isOnServer) return false;
+
       const domain = envKey === 'production'
         ? ((config as Record<string, unknown>).production as Record<string, unknown> | undefined)?.domain as string | undefined
         : ((config as Record<string, unknown>)[envKey] as Record<string, unknown> | undefined)?.domain as string | undefined;
