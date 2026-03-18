@@ -157,7 +157,7 @@ export const iamFixes: Fix[] = [
     id: 'aws-iam-dev-user-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: '👤 IAM dev user not created (read-only access)',
+    description: '👤 IAM dev user not created (read-only access for dev workflows)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -168,6 +168,27 @@ export const iamFixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const userName = 'factiii-' + projectName + '-dev';
+
+      console.log('');
+      console.log('   ============================================================');
+      console.log('   CREATE IAM DEV USER');
+      console.log('   ============================================================');
+      console.log('   Will create IAM user "' + userName + '" with read-only policy:');
+      console.log('   - ECR: pull images, list repositories');
+      console.log('   - S3: read objects from project bucket');
+      console.log('   - EC2/RDS: describe (view) resources');
+      console.log('');
+      console.log('   This user is for local development and CI read-only access.');
+      console.log('   ============================================================');
+      console.log('');
+
+      const { confirm } = await import('../../../../utils/secret-prompts.js');
+      const proceed = await confirm('   Create IAM dev user "' + userName + '"?', true);
+
+      if (!proceed) {
+        console.log('   [--] Skipped — you can create it later with: npx stack fix --secrets');
+        return true;
+      }
 
       try {
         const iam = getIAMClient(region);
@@ -210,13 +231,31 @@ export const iamFixes: Fix[] = [
         return false;
       }
     },
-    manualFix: 'Create IAM dev user with read-only policy for ECR, S3, EC2, RDS',
+    manualFix: [
+      '============================================================',
+      'IAM DEV USER SETUP',
+      '============================================================',
+      '',
+      '  This creates a read-only IAM user for local dev and CI.',
+      '  Permissions: ECR pull, S3 read, EC2/RDS describe.',
+      '',
+      '  Auto-fix:  npx stack fix --secrets  (creates user + policy + access key)',
+      '',
+      '  Or manually in AWS Console:',
+      '  1. Go to IAM > Users > Create user',
+      '  2. Name: factiii-{project}-dev',
+      '  3. Attach inline policy with read-only ECR, S3, EC2, RDS access',
+      '  4. Create access key: User > Security credentials > Create access key > CLI',
+      '  5. Store secret in vault: npx stack deploy --secrets set AWS_DEV_SECRET_ACCESS_KEY',
+      '',
+      '============================================================',
+    ].join('\n'),
   },
   {
     id: 'aws-iam-prod-user-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: '👤 IAM prod user not created (deployment access)',
+    description: '👤 IAM prod user not created (deployment access for staging/prod)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -227,6 +266,29 @@ export const iamFixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const userName = 'factiii-' + projectName + '-prod';
+
+      console.log('');
+      console.log('   ============================================================');
+      console.log('   CREATE IAM PROD USER');
+      console.log('   ============================================================');
+      console.log('   Will create IAM user "' + userName + '" with deployment policy:');
+      console.log('   - ECR: full access (push/pull images)');
+      console.log('   - S3: full access to project bucket');
+      console.log('   - EC2: describe + start/stop/reboot instances');
+      console.log('   - RDS: describe + start/stop/reboot + snapshots');
+      console.log('   - SES: full email sending access');
+      console.log('');
+      console.log('   This user is for CI/CD pipelines and production deployments.');
+      console.log('   ============================================================');
+      console.log('');
+
+      const { confirm } = await import('../../../../utils/secret-prompts.js');
+      const proceed = await confirm('   Create IAM prod user "' + userName + '"?', true);
+
+      if (!proceed) {
+        console.log('   [--] Skipped — you can create it later with: npx stack fix --secrets');
+        return true;
+      }
 
       try {
         const iam = getIAMClient(region);
@@ -269,6 +331,24 @@ export const iamFixes: Fix[] = [
         return false;
       }
     },
-    manualFix: 'Create IAM prod user with deployment policy for ECR, S3, EC2, RDS, SES',
+    manualFix: [
+      '============================================================',
+      'IAM PROD USER SETUP',
+      '============================================================',
+      '',
+      '  This creates a deployment IAM user for CI/CD and prod deploys.',
+      '  Permissions: ECR full, S3 full, EC2/RDS manage, SES send.',
+      '',
+      '  Auto-fix:  npx stack fix --secrets  (creates user + policy + access key)',
+      '',
+      '  Or manually in AWS Console:',
+      '  1. Go to IAM > Users > Create user',
+      '  2. Name: factiii-{project}-prod',
+      '  3. Attach inline policy with ECR, S3, EC2, RDS, SES access',
+      '  4. Create access key: User > Security credentials > Create access key > CLI',
+      '  5. Store secret in vault: npx stack deploy --secrets set AWS_PROD_SECRET_ACCESS_KEY',
+      '',
+      '============================================================',
+    ].join('\n'),
   },
 ];
