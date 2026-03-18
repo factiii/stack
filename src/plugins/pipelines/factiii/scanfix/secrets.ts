@@ -778,7 +778,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ssh-key-staging',
     stage: 'secrets',
     severity: 'critical',
-    description: '🔑 SSH_STAGING key file not on disk (required for staging access)',
+    description: '🔑 STAGING_SSH key file not on disk (required for staging access)',
     targetStage: 'staging', // Only run when targeting staging deployment
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
@@ -813,7 +813,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ssh-key-prod',
     stage: 'secrets',
     severity: 'critical',
-    description: '🔑 SSH_PROD key file not on disk (required for prod access)',
+    description: '🔑 PROD_SSH key file not on disk (required for prod access)',
     targetStage: 'prod', // Only run when targeting prod deployment
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;

@@ -843,6 +843,21 @@ The system automatically generates fixes to validate these exist in:
 - `.env.staging` (staging stage)
 - `.env.prod` (prod stage)
 
+## Secret & Key Naming Convention
+
+Ansible Vault secrets and SSH key references use `{STAGE}_{TYPE}` format — stage comes first:
+
+| Secret | Description |
+|--------|-------------|
+| `STAGING_SSH` | SSH private key for staging (vault) |
+| `PROD_SSH` | SSH private key for production (vault) |
+| `STAGING_SSH_PASSWORD` | SSH password fallback for staging (vault) |
+| `PROD_SSH_PASSWORD` | SSH password fallback for production (vault) |
+
+**On-disk key paths** follow `~/.ssh/{stage}_deploy_key` (e.g., `~/.ssh/prod_deploy_key`).
+
+**Scanfix descriptions** must use the vault name (e.g., `PROD_SSH`), not inverted forms like `SSH_PROD`.
+
 ## Factiii Pipeline Port Convention
 
 ### Slot-Based PORT System

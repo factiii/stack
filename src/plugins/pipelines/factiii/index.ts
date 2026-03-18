@@ -295,11 +295,10 @@ class FactiiiPipeline {
 
         // No SSH key, no password, no AWS — cannot reach this stage
         {
-          const sshLabel = stage === 'staging' ? 'SSH_STAGING' : 'SSH_PROD';
           const vaultName = stage === 'staging' ? 'STAGING_SSH' : 'PROD_SSH';
           return {
             reachable: false,
-            reason: sshLabel + ' not found (no key at ~/.ssh/' + stage + '_deploy_key).\n' +
+            reason: vaultName + ' not found (no key at ~/.ssh/' + stage + '_deploy_key).\n' +
               '   Run: npx stack fix --secrets   (stores key in vault + writes to disk)\n' +
               '   Or:  npx stack deploy --secrets set ' + vaultName + ' && npx stack deploy --secrets write-ssh-keys',
           };
