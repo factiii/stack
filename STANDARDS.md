@@ -9,8 +9,6 @@ All plugins must belong to one of four categories:
 ### 1. PIPELINES
 CI/CD systems that trigger deployments.
 
-**Examples:** GitHub Actions, GitLab CI, Jenkins
-
 **Responsibilities:**
 - Generate workflow files (ultra-thin, only trigger + pass secrets)
 - Manage pipeline secrets (SSH keys, API tokens)
@@ -18,31 +16,29 @@ CI/CD systems that trigger deployments.
 - **Control routing** via `canReach()` and `deployStage()` methods
 - Orchestrate plugin execution via scan/fix/deploy
 
-**Required Methods for Pipeline Plugins:**
-
-Pipeline plugins MUST implement these methods:
+**Required Methods:**
 
 ```typescript
 // STATIC: How can this pipeline reach each stage?
 static canReach(stage: Stage, config: FactiiiConfig): Reachability {
-  // Returns: { reachable: true, via: 'local' | 'workflow' | 'github-api' }
-  // Or:      { reachable: false, reason: 'Missing GITHUB_TOKEN' }
+  // Returns: { reachable: true, via: 'local' | 'ssh' | 'workflow' }
+  // Or:      { reachable: false, reason: 'PROD_SSH not found' }
 }
 
 // INSTANCE: Deploy to a stage - handles routing
 async deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult> {
   const reach = MyPipeline.canReach(stage, this.config);
-  
+
   if (!reach.reachable) {
     return { success: false, error: reach.reason };
   }
-  
-  if (reach.via === 'workflow') {
-    // Trigger workflow instead of direct execution
-    await this.triggerWorkflow('deploy.yml', { environment: stage });
-    return { success: true, message: 'Workflow triggered' };
+
+  if (reach.via === 'ssh') {
+    // SSH to server, run CLI there
+    await sshExec(envConfig, 'npx stack deploy --staging');
+    return { success: true, message: 'Deployed via SSH' };
   }
-  
+
   // via: 'local' - execute directly
   return this.runLocalDeploy(stage, options);
 }
@@ -50,382 +46,66 @@ async deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult> {
 
 **The Four Stages:**
 
-All pipelines must understand these stages and how to reach them:
-
 | Stage | Description | Typical Access |
 |-------|-------------|----------------|
 | `dev` | Local development | Always local |
-| `secrets` | Secret store (GitHub Secrets, Vault, etc.) | API access |
-| `staging` | Staging server | Workflow or local (if on server) |
-| `prod` | Production server | Workflow or local (if on server) |
+| `secrets` | Ansible Vault secrets | Always local |
+| `staging` | Staging server | SSH key → password fallback → unreachable |
+| `prod` | Production server | SSH key → password fallback → unreachable |
 
-**Example: GitHub Actions Pipeline Routing:**
+**Factiii Pipeline Routing (actual implementation):**
 
 ```typescript
 static canReach(stage: Stage, config: FactiiiConfig): Reachability {
   switch (stage) {
     case 'dev':
-      return { reachable: true, via: 'local' };
-    
     case 'secrets':
-      if (!process.env.GITHUB_TOKEN) {
-        return { reachable: false, reason: 'Missing GITHUB_TOKEN' };
-      }
-      return { reachable: true, via: 'github-api' };
-    
+      return { reachable: true, via: 'local' };
+
     case 'staging':
     case 'prod':
-      // On server (in workflow): run locally
-      if (process.env.GITHUB_ACTIONS) {
+      // On server (in workflow or direct): run locally
+      if (process.env.GITHUB_ACTIONS || process.env.FACTIII_ON_SERVER) {
         return { reachable: true, via: 'local' };
       }
-      // On dev machine: trigger workflow
-      return { reachable: true, via: 'workflow' };
+
+      // On dev machine: check for SSH key (~/.ssh/{stage}_deploy_key)
+      const sshKey = findSshKeyForStage(stage, config.name);
+      if (sshKey) return { reachable: true, via: 'ssh' };
+
+      // Fallback: check vault for {STAGE}_SSH_PASSWORD
+      // ... vault password check → returns via: 'ssh' if found
+
+      // AWS environments: allow local provisioning
+      // ... AWS config check → returns via: 'local' if found
+
+      // Nothing available
+      return { reachable: false, reason: '{STAGE}_SSH not found' };
   }
 }
 ```
-
-## Stage Execution Pattern
-
-**Environment Variables That Affect Routing:**
-
-| Variable | Purpose |
-|----------|---------|
-| `GITHUB_ACTIONS` | Set in GitHub Actions. `canReach()` returns `'local'` for all stages. |
-| `FACTIII_ON_SERVER` | Set when running on server (non-GitHub). `canReach()` returns `'local'`. |
-
-**CRITICAL: This pattern has been broken 500+ times. Read carefully.**
-
-### How Commands Work
-
-All commands (scan, fix, deploy) follow this pattern:
-
-1. User specifies stage: `--dev`, `--secrets`, `--staging`, `--prod` (or no flag = all stages)
-2. Command groups all plugin fixes by their `stage` property
-3. For each requested stage, asks **pipeline plugin**: `canReach(stage)?`
-   - `{ reachable: true, via: 'local' }` → run fixes locally
-   - `{ reachable: true, via: 'workflow' }` → pipeline triggers workflow with `--staging` or `--prod`
-   - `{ reachable: false, reason: '...' }` → show error, stop
-
-### Key Principle: Commands are DUMB
-
-- `scan.ts`, `fix.ts`, `deploy.ts` do NOT know about GITHUB_TOKEN, SSH, workflows
-- They ONLY ask the pipeline plugin: "can you reach this stage?"
-- The **pipeline plugin** decides what's needed (tokens, SSH keys, etc.)
-- This keeps commands compatible with ANY pipeline plugin
-
-### Command Responsibilities
-
-**init** (first-time setup)
-- Scans codebase and creates stack.yml with EXAMPLE_ vars
-- Interactive vault/secrets setup (password, SSH keys, credentials)
-- Only runs once (or with --force to regenerate)
-
-**scan** (read-only — MUST NOT modify any files, ever)
-- Only runs scan() functions to detect problems
-- Reports issues with severity levels (critical, warning, info)
-- Returns problems list for fix/deploy to act on
-- If scan modifies anything, it is a bug
-
-**fix** (safe changes only — MUST NOT touch deployment artifacts)
-- Creates/updates config files (stack.yml, stackAuto.yml, stack.local.yml)
-- Installs CLI tools (brew, ansible, eas-cli, docker, etc)
-- Creates workflow files, start.sh, .gitignore entries
-- MUST NOT touch:
-  - docker-compose.yml (generated by deploy)
-  - nginx configs (generated by deploy)
-  - Docker containers (managed by deploy)
-  - SSL certificates (managed by deploy)
-- If a deployment artifact is broken, fix should tell user:
-  "Run `npx stack deploy --{stage}` to regenerate"
-
-**deploy** (deployment changes)
-- Modifies deployment artifacts: docker-compose, nginx, containers, SSL
-- Delegates to pipeline plugin's deployStage()
-- Runs scan first — blocks on critical issues
-- Handles: docker build, compose up/down, nginx reload, SSL setup
-
-### Pipeline Plugin Responsibilities
-
-The pipeline plugin implements `canReach()` which returns how to reach each stage:
-
-```typescript
-canReach(stage: Stage, config: FactiiiConfig): Reachability {
-  // For Factiii (GitHub Actions) pipeline:
-  //   - dev: always local
-  //   - secrets: needs GITHUB_TOKEN
-  //   - staging/prod: 
-  //       - If GITHUB_ACTIONS=true → local (we're on the server)
-  //       - Else → workflow (trigger GitHub Actions)
-}
-```
-
-### When Pipeline Triggers a Workflow
-
-When `canReach()` returns `via: 'workflow'`, the pipeline triggers a workflow that:
-1. SSHs to the target server
-2. Runs the command with the specific stage flag: `npx stack fix --staging`
-
-**CRITICAL: Workflows MUST specify --staging or --prod**
-
-```bash
-# Correct - specifies which stage to run
-GITHUB_ACTIONS=true npx stack fix --staging
-
-# WRONG - will try to run all stages, may trigger more workflows
-npx stack fix
-```
-
-On the server, the command:
-- Doesn't know it's on a remote server
-- Just runs staging fixes locally
-- `canReach('staging')` returns 'local' because `GITHUB_ACTIONS=true`
-
-### Dependency Chain
-
-```
-dev      → Always reachable locally
-secrets  → Needs GITHUB_TOKEN (to access GitHub Secrets API)
-staging  → Needs workflow OR GITHUB_ACTIONS=true
-prod     → Needs workflow OR GITHUB_ACTIONS=true
-```
-
-## Stage Batching Architecture
-
-**CRITICAL: Avoid multiple SSH connections per stage.**
-
-All scan/fix operations must be batched by stage to minimize SSH overhead and maintain clean execution flow.
-
-### Scan Batching Flow
-
-1. **Collect** - Gather all fixes for requested stages from all plugins
-2. **Bundle** - Group fixes by stage (all dev, all staging, all prod)
-3. **Execute** - CLI asks pipeline `canReach(stage)` for each stage:
-   - `via: 'local'` → run all scans locally in one pass
-   - `via: 'workflow'` → trigger workflow (workflow SSHs once and runs with `--staging` or `--prod`)
-4. **Return** - Results per stage: `{dev: Fix[], secrets: Fix[], staging: Fix[], prod: Fix[]}`
-
-### Fix Batching Flow
-
-1. **Scan first** - Get bundled results from scan
-2. **Execute fixes** - For each stage with problems:
-   - Run all fixes for that stage in ONE session
-   - No SSH calls from individual fix functions
-3. **Return** - Per stage: `{fixed: N, manual: N, failed: N}`
-
-### Deploy Flow
-
-1. **Scan with bundler** - Check all stages
-2. **Block if issues** - Show why, exit
-3. **Deploy if clean** - Proceed with deployment
-
-### Individual Fix Function Rules
-
-**NEVER in fix scan/fix functions:**
-- Check `GITHUB_ACTIONS` or other env vars to determine context
-- Call SSH or remote execution
-- Assume execution context
-
-**ALWAYS in fix scan/fix functions:**
-- Assume running locally on target machine
-- Use `execSync` for local commands
-- Return boolean (scan) or boolean (fix)
-
-**CLI/Workflow handles:**
-- Asking pipeline `canReach(stage)` to determine execution method
-- SSH execution (via workflow, ONE call per stage)
-- Workflow triggering for remote stages
-
-### Result Format
-
-Clean, per-stage breakdown showing **what was fixed and how to fix manual issues**:
-
-```
-────────────────────────────────────────────────────────────
-RESULTS BY STAGE
-────────────────────────────────────────────────────────────
-
-DEV:
-   ✅ Fixed: GitHub workflows may be outdated
-   ✅ Fixed: Missing .env.example entries
-
-STAGING:
-   📝 Manual: Commit workflows
-      → git add .github/workflows/ && git commit -m "Update workflows" && git push
-
-────────────────────────────────────────────────────────────
-TOTAL: Fixed: 2, Manual: 1, Failed: 0
-```
-
-**CRITICAL: Always show issue details, not just counts. Users need to know WHAT was fixed and HOW to fix manual issues.**
-
-**CRITICAL: Workflow Files Must Be Ultra-Thin**
-
-Pipeline plugins generate workflow files, but these files should contain MINIMAL logic:
-
-**Workflows should ONLY:**
-- Trigger the deployment
-- Pass secrets (SSH keys, AWS credentials)
-- **Bootstrap Node.js (one-time prerequisite)** - Check if Node.js exists, install if missing
-- SSH to server and run CLI command
-
-**Workflows should NEVER contain:**
-- Server setup logic (Docker, git installation, pnpm, etc.)
-- Repository cloning/pulling
-- Dependency installation
-- Build logic
-- Bash scripts longer than 10 lines
-
-**Why?** All logic belongs in plugins (scan/fix/deploy methods), not workflows.
-
-**Exception: Node.js Bootstrap**
-
-Workflows include a one-time Node.js bootstrap step to solve the chicken-and-egg problem:
-- `npx stack` requires Node.js to run
-- But we want plugins to handle Node.js installation
-- Solution: Workflows check if Node.js exists and install if missing (one-time)
-- After bootstrap, plugins verify Node.js is present for ongoing operations
-
-This is the ONLY server setup logic allowed in workflows.
-
-**Versioning Generated Files**
-
-All files generated by Factiii Stack MUST include a version comment for audit purposes:
-
-**Format:**
-```yaml
-# Generated by @factiii/stack v2.0.0
-```
-
-**Why:**
-- Enables version mismatch detection (outdated workflows)
-- Provides audit trail for debugging
-- Allows automated validation during scan/fix
-- Makes it clear which version of the tool generated the file
-
-**Applies to:**
-- GitHub workflow files (`.github/workflows/*.yml`)
-- Docker compose files (`docker-compose.yml`)
-- Nginx configs (`nginx.conf`)
-- Any other generated configuration files
-
-**Implementation:**
-Plugins that generate files should:
-1. Read the package version from `package.json`
-2. Inject a version comment at the top of generated files
-3. Update the version comment when regenerating files
-4. Provide a fix to detect version mismatches
-
-**Correct workflow pattern:**
-```yaml
-ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
-  "COMMIT_HASH=$COMMIT_HASH BRANCH=$BRANCH GITHUB_REPO=$GITHUB_REPO \
-   npx stack deploy --staging --commit=$COMMIT_HASH --branch=$BRANCH"
-```
-
-**The CLI handles everything:**
-1. `deploy.js` runs `scan` first (checks all plugins for issues)
-2. If issues found: abort or fix (depending on command)
-3. If no issues: delegates to pipeline plugin's `deployStage()` method
-4. Pipeline checks `canReach()` to determine routing:
-   - `via: 'local'` → Calls server plugin's `ensureServerReady()` then `deploy()`
-   - `via: 'workflow'` → Triggers workflow (which runs CLI on server)
-
-**Plugin Orchestration:**
-
-Pipeline plugins must implement scan/fix/deploy methods that check their own prerequisites:
-
-```javascript
-static fixes = [
-  {
-    id: 'node-not-installed-staging',
-    stage: 'staging',
-    severity: 'critical',
-    description: 'Node.js not installed on staging server',
-    scan: async (config, rootDir) => {
-      // Check if Node.js exists on server
-      const { sshExec } = require('../../utils/ssh-helper');
-      try {
-        await sshExec(config.environments.staging, 'which node');
-        return false; // Node.js exists
-      } catch {
-        return true; // Node.js missing
-      }
-    },
-    fix: async (config, rootDir) => {
-      // Install Node.js on server
-      const { sshExec } = require('../../utils/ssh-helper');
-      await sshExec(config.environments.staging, 'brew install node || ...');
-      return true;
-    }
-  }
-]
-```
-
-**How Plugins Merge:**
-
-When `deploy.js` runs, it:
-1. Loads ALL plugins (pipeline, server, framework, addon)
-2. Collects ALL fixes from all plugins
-3. Runs scan on all fixes
-4. Merges results by stage (dev, secrets, staging, prod)
-5. If blocking issues found: abort or fix
-6. If no issues: proceed with deployment
-
-This ensures:
-- Pipeline checks Node.js availability
-- Server plugins check Docker, git, pnpm
-- Framework plugins check dependencies, configs
-- All checks run together, issues reported together
 
 ### 2. SERVERS (OS Types)
 Operating system types that handle OS-specific commands and package management.
 
 **Available OS Types:**
-- `mac` - macOS (Homebrew, launchctl)
-- `ubuntu` - Ubuntu Linux (apt, systemd)
-- `windows` - Windows Server (Chocolatey, Windows Services)
-- `amazon-linux` - Amazon Linux 2023 (dnf, systemd)
-- `alpine` - Alpine Linux (apk) - for containers
+- `mac` — macOS (Homebrew, launchctl)
+- `ubuntu` — Ubuntu Linux (apt, systemd)
+- `windows` — Windows Server (Chocolatey, Windows Services)
+- `amazon-linux` — Amazon Linux 2023 (dnf, systemd)
+- `alpine` — Alpine Linux (apk) — for containers
 
-**Responsibilities:**
-- OS-specific package installation commands (Docker, Node.js, git)
-- OS-specific service management
-- Provide OS-specific scan/fix operations
+**Server plugins are NOT deployment targets.** They define how to interact with a specific OS. Pipelines handle deployment orchestration.
 
-**Server plugins are NOT deployment targets.** They define how to interact with
-a specific operating system. Pipelines (like AWS, factiii) handle deployment
-orchestration and specify which OS types they support.
-
-**Required Static Properties for Server Plugins:**
+**Required Static Properties:**
 ```typescript
-static readonly os: ServerOS = 'ubuntu';           // OS type
-static readonly packageManager: PackageManager = 'apt';  // Package manager
-static readonly serviceManager: ServiceManager = 'systemd'; // Service manager
-```
-
-**OS-Specific Installation Examples:**
-```typescript
-// Ubuntu
-static getDockerInstallCommand(): string {
-  return 'sudo apt-get update && sudo apt-get install -y docker.io';
-}
-
-// macOS
-static getDockerInstallCommand(): string {
-  return 'brew install --cask docker';
-}
-
-// Windows
-static getDockerInstallCommand(): string {
-  return 'choco install docker-desktop -y';
-}
+static readonly os: ServerOS = 'ubuntu';
+static readonly packageManager: PackageManager = 'apt';
+static readonly serviceManager: ServiceManager = 'systemd';
 ```
 
 ### 3. FRAMEWORKS
 Application frameworks and databases.
-
-**Examples:** Prisma+tRPC, Next.js, Expo
 
 **Responsibilities:**
 - Detect framework presence
@@ -435,417 +115,196 @@ Application frameworks and databases.
 ### 4. ADDONS
 Extensions to frameworks and infrastructure.
 
-**Examples:** Auth (Clerk, Auth.js), Payments (Stripe), Storage (S3), Server Mode
-
 **Responsibilities:**
-- Configure integrations
+- Configure integrations (auth, payments, storage)
 - Validate API keys
-- Setup SDK clients
-- Provide cross-cutting functionality
+- Provide cross-cutting functionality (e.g., server-mode for server hardening)
 
-**Server Mode Addon:**
+## Stage Execution
 
-The `server-mode` addon configures machines as deployment servers:
-- Disables sleep/suspend
-- Enables SSH
-- Configures firewall rules
-- Provides OS-specific server hardening
+**Environment Variables That Affect Routing:**
 
-Enable in stack.yml:
-```yaml
-staging:
-  domain: 192.168.1.100
-  server: mac
-  server_mode: true   # Enable server hardening (default: true)
+| Variable | Purpose |
+|----------|---------|
+| `GITHUB_ACTIONS` | Set in GitHub Actions. `canReach()` returns `'local'` for all stages. |
+| `FACTIII_ON_SERVER` | Set when running on server (non-GitHub). `canReach()` returns `'local'`. |
+
+### How Commands Work
+
+1. User specifies stage: `--dev`, `--secrets`, `--staging`, `--prod` (or no flag = all stages)
+2. Command groups all plugin fixes by their `stage` property
+3. For each requested stage, asks **pipeline plugin**: `canReach(stage)?`
+   - `{ reachable: true, via: 'local' }` → run fixes locally
+   - `{ reachable: true, via: 'ssh' }` → SSH to server, run with `--staging` or `--prod`
+   - `{ reachable: false, reason: '...' }` → show error, stop
+
+### Commands Are Dumb
+
+- `scan.ts`, `fix.ts`, `deploy.ts` do NOT know about GITHUB_TOKEN, SSH, workflows
+- They ONLY ask the pipeline plugin: "can you reach this stage?"
+- The **pipeline plugin** decides what's needed (SSH keys, tokens, etc.)
+
+### Command Responsibilities
+
+**init** — First-time vault/secrets setup. Only runs once (or with --force).
+
+**scan** — Read-only issue detection. MUST NOT modify any files. If scan modifies anything, it is a bug.
+
+**fix** — Safe changes only. Creates/updates config files, installs CLI tools, creates workflow files. MUST NOT touch deployment artifacts (docker-compose.yml, nginx configs, containers, SSL certs). If a deployment artifact is broken, fix should say: "Run `npx stack deploy --{stage}` to regenerate"
+
+**deploy** — Modifies deployment artifacts. Runs scan first, blocks on critical issues. Handles: docker build, compose up/down, nginx reload, SSL setup.
+
+### Workflow Pattern (ultra-thin)
+
+Workflows MUST specify `--staging` or `--prod`:
+
+```bash
+# Correct
+GITHUB_ACTIONS=true npx stack deploy --staging
+
+# WRONG — will try all stages, may trigger more workflows
+npx stack fix
 ```
 
-Server-mode fixes are OS-aware and only run relevant fixes for the target OS.
+**Workflows should ONLY:** trigger + pass secrets + SSH to server + run CLI command.
+
+**Workflows should NEVER contain:** server setup, repo cloning, dependency install, build logic, bash >5 lines.
+
+**Exception:** Node.js bootstrap — workflows can check if Node.js exists and install if missing (chicken-and-egg: `npx stack` requires Node.js).
+
+## Stage Batching
+
+All scan/fix operations are batched by stage to minimize SSH overhead.
+
+1. **Collect** — Gather all fixes for requested stages from all plugins
+2. **Bundle** — Group fixes by stage (all dev, all staging, all prod)
+3. **Execute** — CLI asks pipeline `canReach(stage)` for each stage:
+   - `via: 'local'` → run all scans locally in one pass
+   - `via: 'ssh'` → SSH once and run with `--staging` or `--prod`
+4. **Return** — Results per stage with issue details (not just counts)
+
+### Fix Function Rules
+
+**NEVER in fix scan/fix functions:**
+- Check `GITHUB_ACTIONS` or other env vars to determine context
+- Call SSH or remote execution
+- Assume execution context
+
+**ALWAYS in fix scan/fix functions:**
+- Assume running locally on target machine
+- Use `execSync` for local commands
+- Return boolean (scan: true = issue exists, fix: true = resolved)
 
 ## Plugin Structure
 
 ### Required Static Properties
 
-```javascript
+```typescript
 class MyPlugin {
-  // REQUIRED
-  static id = 'my-plugin';           // Unique identifier
-  static category = 'framework';      // pipeline|server|framework|addon
-  static version = '1.0.0';          // Semantic version
-  
-  // REQUIRED: Config schemas
-  static configSchema = {};          // User-editable (stack.yml)
-  static autoConfigSchema = {};      // Auto-detected (stackAuto.yml)
-  
-  // REQUIRED: Fixes array
-  static fixes = [];                 // Issues this plugin can detect/fix
-  
-  // REQUIRED: shouldLoad method
-  static async shouldLoad(rootDir, config = {}) {
-    // Return true if plugin is relevant to this project
+  static readonly id = 'my-plugin';
+  static readonly name = 'My Plugin';
+  static readonly category: PluginCategory = 'framework';
+  static readonly version = '1.0.0';
+
+  static readonly configSchema: Record<string, unknown> = {};
+  static readonly autoConfigSchema: Record<string, string> = {};
+  static readonly fixes: Fix[] = [];
+  static readonly requiredEnvVars: string[] = [];
+
+  static async shouldLoad(rootDir: string, config: FactiiiConfig): Promise<boolean> {
     return false;
   }
-  
-  // OPTIONAL
-  static requiredEnvVars = [];       // Environment variables needed
-  static helpText = {};              // Help text for secrets/config
 }
 ```
 
-### Plugin File Organization Standard
-
-For plugins with substantial code (1000+ lines), organize files using this standard structure:
+### File Organization (>1000 lines)
 
 ```
 src/plugins/{category}/{plugin-name}/
-├── index.ts                    # Main plugin class, imports everything
-├── scanfix/                    # Scan/fix operations organized by concern
-│   ├── docker.ts              # Docker-related fixes
-│   ├── node.ts                # Node.js/pnpm fixes
-│   ├── git.ts                 # Git-related fixes
-│   ├── containers.ts          # Container management fixes
-│   └── config.ts              # Configuration checks
-├── staging.ts                 # Staging-specific operations (if applicable)
-├── dev.ts                     # Dev-specific operations (if applicable)
-├── prod.ts                    # Production-specific operations (if applicable)
-└── secrets.ts                 # Secrets-specific operations (if applicable)
+├── index.ts          # Main class, imports everything, exports fixes[]
+├── scanfix/          # Scan/fix operations organized by concern
+│   ├── docker.ts     # Docker-related fixes
+│   ├── node.ts       # Node.js/pnpm fixes
+│   └── config.ts     # Configuration checks
+├── staging.ts        # Staging-specific operations (only if needed)
+├── prod.ts           # Production operations (only if needed)
+└── utils/            # Helper functions (only if needed)
 ```
 
-**Structure Guidelines:**
-
-1. **scanfix/** folder - Scan/fix operations organized by concern
-   - Each file exports an array of `Fix[]` objects
-   - Files group related fixes together (e.g., all Docker fixes in `docker.ts`)
-   - Import and combine all arrays in `index.ts`: `static readonly fixes = [...dockerFixes, ...nodeFixes, ...]`
-
-2. **Environment-specific files** - Operations for each environment
-   - `dev.ts` - Dev environment operations (e.g., `deployDev`)
-   - `staging.ts` - Staging operations (e.g., `deployStaging`, `ensureServerReady`)
-   - `prod.ts` - Production operations (e.g., `buildProdImage`)
-   - `secrets.ts` - Secrets operations (if plugin handles secrets)
-   - **Only create files if they have content** (no blank files)
-
-3. **index.ts** - Main plugin class
-   - Static metadata (id, name, category, version)
-   - `shouldLoad()` - Determines if plugin should load
-   - Imports and combines all scanfix arrays into `static readonly fixes`
-   - Imports and uses environment-specific methods
-   - Maintains public API compatibility
-   - **Must include documentation at top** explaining the plugin structure standard
-
-**When each environment file is used:**
-- `dev.ts`: When deploying to local dev environment
-- `staging.ts`: When deploying to staging server or preparing staging server
-- `prod.ts`: When deploying to production or building production images
-- `secrets.ts`: When managing secrets for the plugin
-
-**How scanfix files are organized:**
-- Group fixes by the tool/technology they check (docker, node, git, containers, config)
-- Each file should have a clear, single responsibility
-- Use descriptive file names that indicate what types of fixes they contain
-
-**Example index.ts structure:**
-
-```typescript
-/**
- * My Plugin
- *
- * ============================================================
- * PLUGIN STRUCTURE STANDARD
- * ============================================================
- *
- * This plugin follows a standardized structure for clarity and maintainability:
- *
- * **scanfix/** - Scan/fix operations organized by concern
- *   - Each file exports an array of Fix[] objects
- *   - Files group related fixes together
- *   - All fixes are combined in the main plugin class
- *
- * **Environment-specific files** - Operations for each environment
- *   - dev.ts - Dev environment operations
- *   - staging.ts - Staging operations
- *   - prod.ts - Production operations
- *   - Only create files if they have content (no blank files)
- *
- * **index.ts** - Main plugin class
- *   - Static metadata, shouldLoad(), imports everything
- *   - Maintains public API compatibility
- * ============================================================
- */
-
-import { dockerFixes } from './scanfix/docker.js';
-import { nodeFixes } from './scanfix/node.js';
-import { deployDev } from './dev.js';
-import { deployStaging } from './staging.js';
-
-class MyPlugin {
-  static readonly id = 'my-plugin';
-  static readonly fixes = [...dockerFixes, ...nodeFixes];
-  
-  async deploy(config, environment) {
-    if (environment === 'dev') {
-      return deployDev();
-    } else if (environment === 'staging') {
-      return deployStaging(config);
-    }
-  }
-}
-```
-
-**Benefits of this structure:**
-- **Clarity**: Easy to find what runs in which environment
-- **Maintainability**: Related code is grouped together
-- **Scalability**: Easy to add new fixes or environment operations
-- **Consistency**: All plugins follow the same pattern
+**Guidelines:**
+- `scanfix/` files each export `Fix[]` arrays, combined in `index.ts`
+- Environment-specific files only created if they have content
+- `index.ts` imports and combines all scanfix arrays: `static readonly fixes = [...dockerFixes, ...nodeFixes]`
 
 ### Config Schemas
 
-#### configSchema - User-Editable Settings
-
-Define settings that users must or can configure:
-
-```javascript
-static configSchema = {
+**configSchema** — User-editable settings merged into `stack.yml`:
+```typescript
+static readonly configSchema = {
   my_plugin: {
-    api_key: 'EXAMPLE_your-api-key',  // EXAMPLE_ prefix for required
-    endpoint: 'https://api.example.com',
-    timeout: 5000                       // Optional with default
+    api_key: 'EXAMPLE-your-api-key',  // EXAMPLE- prefix = required
+    timeout: 5000                       // No prefix = optional with default
   }
 };
 ```
 
-This gets merged into `stack.yml`:
-
-```yaml
-name: my-app
-environments: {...}
-my_plugin:
-  api_key: EXAMPLE_your-api-key
-  endpoint: https://api.example.com
-  timeout: 5000
-```
-
-#### autoConfigSchema - Auto-Detected Settings
-
-Define what your plugin can auto-detect:
-
-```javascript
-static autoConfigSchema = {
+**autoConfigSchema** — Auto-detected values for `stackAuto.yml`:
+```typescript
+static readonly autoConfigSchema = {
   has_my_plugin: 'boolean',
-  my_plugin_version: 'string',
-  my_plugin_config_path: 'string'
+  my_plugin_version: 'string'
 };
 ```
 
-#### shouldLoad() - Plugin Relevance Detection
+### shouldLoad()
 
-Determine if this plugin should be loaded for the project:
+Called during scan/fix/deploy to determine if plugin is relevant:
 
-```javascript
-static async shouldLoad(rootDir, config = {}) {
-  // Check if this plugin is relevant to the project
-  // Called during 'npx stack init' to decide which plugins to include
-  
-  const pkgPath = path.join(rootDir, 'package.json');
-  if (!fs.existsSync(pkgPath)) return false;
-  
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-  
-  // Return true if plugin's dependencies are present
-  return !!deps['my-plugin'];
-}
-```
+```typescript
+// Pipeline: always load
+static async shouldLoad(): Promise<boolean> { return true; }
 
-**When shouldLoad() is called:**
-- During `npx stack init` - to determine which plugins to include in configs
-- During `npx stack scan/fix/deploy` - to load only relevant plugins
-
-**Examples:**
-
-```javascript
-// Always load (pipeline plugins)
-static async shouldLoad(rootDir, config = {}) {
-  return true;
-}
-
-// Load if detected in package.json (framework plugins)
-static async shouldLoad(rootDir, config = {}) {
+// Framework: load if detected in package.json
+static async shouldLoad(rootDir: string): Promise<boolean> {
   const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
   return !!deps['my-framework'];
 }
-
-// Load if config exists or as default (server plugins)
-static async shouldLoad(rootDir, config = {}) {
-  // If config has our settings, load
-  if (config?.my_server?.api_key) return true;
-  
-  // On init (no config), load as default
-  return Object.keys(config).length === 0;
-}
 ```
 
-#### detectConfig() - Auto-Detection Logic
+## Fix Format
 
-Implement detection logic:
-
-```javascript
-static async detectConfig(rootDir) {
-  const pkgPath = path.join(rootDir, 'package.json');
-  if (!fs.existsSync(pkgPath)) return null;
-  
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-  
-  if (!deps['my-plugin']) return null;
-  
-  return {
-    has_my_plugin: true,
-    my_plugin_version: deps['my-plugin'].replace(/^[\^~]/, ''),
-    my_plugin_config_path: this.findConfig(rootDir)
-  };
-}
-```
-
-## Fixes Array
-
-The `fixes` array is the core of the plugin system. Each fix defines:
-- What to scan for (the `scan()` function)
-- How to fix it (the `fix()` function)
-- Manual instructions if auto-fix not possible
-
-### Fix Structure
-
-```javascript
-static fixes = [
-  {
-    id: 'unique-fix-id',
-    stage: 'dev',              // dev|secrets|staging|prod
-    severity: 'critical',      // critical|warning|info
-    description: 'Human-readable description',
-
-    // Optional: Only run on specific OS types
-    os: 'ubuntu',              // mac|ubuntu|windows|amazon-linux|alpine
-    // Or multiple OS types:
-    // os: ['ubuntu', 'amazon-linux'],
-
-    // Scan function - returns true if problem exists
-    scan: async (config, rootDir) => {
-      return !config.my_plugin?.api_key;
-    },
-
-    // Fix function - returns true if fixed successfully
-    fix: async (config, rootDir) => {
-      // Auto-fix logic
-      return true;
-    },
-
-    // Manual fix instructions
-    manualFix: 'Add api_key to stack.yml'
-  }
-];
-```
-
-**OS Filtering:**
-
-Fixes can optionally specify which OS types they apply to:
-- If `os` is not set, the fix runs on all OS types
-- If `os` is a string, the fix only runs on that OS
-- If `os` is an array, the fix runs on any of those OS types
-
-The pipeline filters fixes based on the target environment's `server` field.
-
-### The Four Stages
-
-Every fix must specify which stage it applies to:
-
-**dev** - Local development
-- Check local dependencies
-- Validate configuration files
-- Ensure dev tools installed
-
-**secrets** - GitHub/Pipeline secrets
-- Validate GitHub secrets exist
-- Check API keys are set
-- Verify credentials
-
-**staging** - Staging server
-- Check server connectivity
-- Validate staging environment
-- Ensure staging database exists
-
-**prod** - Production server
-- Check production connectivity
-- Validate production environment
-- Ensure production database exists
-
-### Severity Levels
-
-**critical** - Blocks deployment
-- Missing required configuration
-- Invalid credentials
-- Server unreachable
-
-**warning** - Should be fixed but not blocking
-- Outdated dependencies
-- Suboptimal configuration
-- Missing optional features
-
-**info** - Informational only
-- Suggestions for improvement
-- Best practice recommendations
-
-## Deploy Method
-
-Every plugin must implement a `deploy()` method:
-
-```javascript
-async deploy(config, environment) {
-  if (environment === 'dev') {
-    // Start local development
-    return this.deployDev(config);
-  } else if (environment === 'staging') {
-    // Deploy to staging
-    return this.deployStaging(config);
-  } else if (environment === 'prod') {
-    // Deploy to production
-    return this.deployProd(config);
-  }
-  
-  return { success: false, error: 'Unsupported environment' };
-}
-```
-
-Return format:
-
-```javascript
+```typescript
 {
-  success: true|false,
-  message: 'Optional success message',
-  error: 'Optional error message'
+  id: 'missing-env-file',
+  stage: 'dev',
+  severity: 'warning',
+  description: '📋 .env file not found',
+  // Optional: os: 'mac' as ServerOS,
+  // Optional: targetStage: 'staging',
+  scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+    return !fs.existsSync(path.join(rootDir, '.env'));  // true = issue exists
+  },
+  fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+    fs.copyFileSync(path.join(rootDir, '.env.example'), path.join(rootDir, '.env'));
+    return true;  // true = fixed
+  },
+  manualFix: 'Copy .env.example to .env and fill in values',
 }
 ```
 
-## Environment Variables
+**OS Filtering:** Fixes can specify `os` (string or array) to run only on matching OS types. Pipeline filters based on the target environment's `server` field.
 
-Plugins can declare required environment variables:
+**Severity:**
+- `critical` — Blocks deployment (missing config, server unreachable)
+- `warning` — Should fix but not blocking (outdated deps, suboptimal config)
+- `info` — Informational only (suggestions, best practices)
 
-```javascript
-static requiredEnvVars = [
-  'DATABASE_URL',
-  'API_KEY',
-  'SECRET_TOKEN'
-];
-```
+## Naming Conventions
 
-The system automatically generates fixes to validate these exist in:
-- `.env.example` (dev stage)
-- `.env.staging` (staging stage)
-- `.env.prod` (prod stage)
+### Secret & Key Naming
 
-## Secret & Key Naming Convention
-
-Ansible Vault secrets and SSH key references use `{STAGE}_{TYPE}` format — stage comes first:
+`{STAGE}_{TYPE}` format — stage comes first:
 
 | Secret | Description |
 |--------|-------------|
@@ -854,38 +313,45 @@ Ansible Vault secrets and SSH key references use `{STAGE}_{TYPE}` format — sta
 | `STAGING_SSH_PASSWORD` | SSH password fallback for staging (vault) |
 | `PROD_SSH_PASSWORD` | SSH password fallback for production (vault) |
 
-**On-disk key paths** follow `~/.ssh/{stage}_deploy_key` (e.g., `~/.ssh/prod_deploy_key`).
+**On-disk key paths:** `~/.ssh/{stage}_deploy_key` (e.g., `~/.ssh/prod_deploy_key`)
 
-**Scanfix descriptions** must use the vault name (e.g., `PROD_SSH`), not inverted forms like `SSH_PROD`.
+### Config Value Conventions
 
-## Factiii Pipeline Port Convention
+- Required values: `EXAMPLE-` prefix (e.g., `domain: EXAMPLE-myapp.com`)
+- Auto-detected: `OVERRIDE` pattern (user can override auto-detected values)
+
+### Generated Files
+
+All generated files MUST include a version header:
+```yaml
+# Generated by @factiii/stack v0.1.148
+```
+
+## Port Convention
 
 ### Slot-Based PORT System
 
-Each repo in a multi-repo setup gets a **slot number** (1-5). The slot determines all ports:
+Each repo in a multi-repo setup gets a **slot number** (1-5):
 
 | Slot (PORT=N) | Client Port (300N) | Server Port (500N) |
 |---------------|--------------------|--------------------|
 | 1             | 3001               | 5001               |
 | 2             | 3002               | 5002               |
 | 3             | 3003               | 5003               |
-| 4             | 3004               | 5004               |
-| 5             | 3005               | 5005               |
 
 **Rules:**
 - `.env.example` and `.env` contain `PORT=N` (the slot number, NOT a full port)
 - App code derives actual ports: `clientPort = 3000 + PORT`, `serverPort = 5000 + PORT`
-- Docker compose and nginx configs use the same derived ports
-- Never hardcode 3001, 5001, etc. in source — always derive from `PORT`
+- Never hardcode 3001, 5001, etc. — always derive from `PORT`
 
 ### IP Detection
 
-For multi-device development (e.g., mobile app connecting to local server):
+For multi-device dev (mobile app → local server):
 - `start.sh` auto-detects the machine's local network IP
 - Replaces `localhost`/`127.0.0.1` in `.env` with the real IP
 - URL variables use `YOUR_IP` as placeholder in `.env.example`
 
-### Protocol Rules (http vs https)
+### Protocol Rules
 
 | Stage   | Protocol | Enforcement      |
 |---------|----------|------------------|
@@ -893,473 +359,65 @@ For multi-device development (e.g., mobile app connecting to local server):
 | staging | https:// | Scanfix warning  |
 | prod    | https:// | Scanfix critical |
 
-URL variables checked: `*_URL`, `*_HOST`, `API_URL`, `NEXT_PUBLIC_API_URL`, `EXPO_PUBLIC_API_URL`, etc.
-
-### Adding a New Repo
-
-1. Pick an unused slot number (1-5)
-2. Create `stack.yml` in the repo root
-3. Create `.env.example` with `PORT=<slot>`
-4. Run `./start.sh` — it scans sibling repos, injects IP + PORT, installs deps, starts Docker
-5. Commit `.env.example` (never commit `.env`)
-
-### init.sql Handling
-
-When `start.sh` detects `init.sql` in the repo root, it prompts:
-1. **Inject** — pipes init.sql directly into the running DB container (`docker exec -i <container> psql ...`)
-2. **Seed** — runs `pnpm prisma db seed` or `pnpm seed` (uses the app's seed script)
-3. **Skip** — do nothing
-
-The DB container is auto-detected by scanning docker-compose.yml for postgres/mysql images.
-
-### start.sh Quick Reference
-
-```bash
-./start.sh
-# 1. Detects system IP
-# 2. Scans ../*/stack.yml for sibling repos
-# 3. Reads/prompts for PORT slot
-# 4. Creates .env from .env.example, injects IP + PORT
-# 5. Validates .env (http/https, EXAMPLE_ values)
-# 6. Runs pnpm install
-# 7. Runs docker compose up
-# 8. Handles init.sql if present
-```
-
-## Plugin Lifecycle
-
-### 1. Load
-Plugins are loaded from:
-- `src/plugins/pipelines/`
-- `src/plugins/servers/`
-- `src/plugins/frameworks/`
-- `src/plugins/addons/`
-- `node_modules/@factiii/stack-plugin-*`
-
-### 2. Scan
-When `npx stack scan` runs:
-1. All plugins' `fixes` arrays are collected
-2. Each fix's `scan()` function is called
-3. Problems are grouped by stage
-4. Results are displayed to user
-
-### 3. Fix
-When `npx stack fix` runs:
-1. Scan is run first to find problems
-2. Fixes are reordered by stage (dev → secrets → staging → prod)
-3. Each fix's `fix()` function is called
-4. Manual fixes are displayed for unfixable issues
-
-### 4. Deploy
-When `npx stack deploy --{env}` runs:
-1. Scan is run first - aborts if problems found
-2. Environment-specific `.env` file is loaded
-3. Each plugin's `deploy()` method is called
-4. Health checks are performed
-
-## Example Plugin Implementation
-
-```javascript
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
-
-class MyFrameworkPlugin {
-  // ============================================================
-  // STATIC METADATA
-  // ============================================================
-  
-  static id = 'my-framework';
-  static name = 'My Framework';
-  static category = 'framework';
-  static version = '1.0.0';
-  
-  static requiredEnvVars = ['DATABASE_URL'];
-  
-  // ============================================================
-  // CONFIG SCHEMAS
-  // ============================================================
-  
-  static configSchema = {
-    my_framework: {
-      migrations_path: null  // Optional override
-    }
-  };
-  
-  static autoConfigSchema = {
-    has_my_framework: 'boolean',
-    my_framework_version: 'string'
-  };
-  
-  // ============================================================
-  // AUTO-DETECTION
-  // ============================================================
-  
-  static async detectConfig(rootDir) {
-    const pkgPath = path.join(rootDir, 'package.json');
-    if (!fs.existsSync(pkgPath)) return null;
-    
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    
-    if (!deps['my-framework']) return null;
-    
-    return {
-      has_my_framework: true,
-      my_framework_version: deps['my-framework'].replace(/^[\^~]/, '')
-    };
-  }
-  
-  // ============================================================
-  // FIXES
-  // ============================================================
-  
-  static fixes = [
-    {
-      id: 'missing-my-framework',
-      stage: 'dev',
-      severity: 'info',
-      description: 'My Framework not detected',
-      scan: async (config, rootDir) => {
-        const detected = await this.detectConfig(rootDir);
-        return !detected;
-      },
-      fix: null,
-      manualFix: 'Install: npm install my-framework'
-    },
-    {
-      id: 'pending-migrations-staging',
-      stage: 'staging',
-      severity: 'warning',
-      description: 'Database migrations pending on staging',
-      scan: async (config, rootDir) => {
-        // Check if migrations are pending
-        return await this.hasPendingMigrations('staging');
-      },
-      fix: async (config, rootDir) => {
-        await this.runMigrations('staging');
-        return true;
-      },
-      manualFix: 'Run: npx my-framework migrate'
-    }
-  ];
-  
-  // ============================================================
-  // DEPLOYMENT
-  // ============================================================
-  
-  async deploy(config, environment) {
-    if (environment === 'dev') {
-      console.log('   Running dev migrations...');
-      execSync('npx my-framework migrate:dev', { stdio: 'inherit' });
-    } else {
-      console.log(`   Running ${environment} migrations...`);
-      execSync('npx my-framework migrate:deploy', { stdio: 'inherit' });
-    }
-    
-    return { success: true, message: 'Migrations complete' };
-  }
-  
-  // ============================================================
-  // HELPER METHODS
-  // ============================================================
-  
-  async hasPendingMigrations(environment) {
-    // Implementation
-  }
-  
-  async runMigrations(environment) {
-    // Implementation
-  }
-}
-
-module.exports = MyFrameworkPlugin;
-```
-
-## External Plugin Development
-
-### 1. Create Plugin Package
-
-```bash
-mkdir my-factiii-plugin
-cd my-factiii-plugin
-npm init -y
-```
-
-### 2. Implement Plugin
-
-Create `index.js` following the structure above.
-
-### 3. Export Plugin
-
-```javascript
-// index.js
-class MyPlugin {
-  // ... implementation
-}
-
-module.exports = MyPlugin;
-```
-
-### 4. Publish
-
-```bash
-npm publish
-```
-
-### 5. Use in Projects
-
-```bash
-npm install my-factiii-plugin
-```
-
-Add to `stack.yml`:
-
-```yaml
-plugins:
-  - my-factiii-plugin
-```
-
-## Best Practices
-
-### 1. Single Responsibility
-Each plugin should handle one domain (one framework, one server type, etc.)
-
-### 2. Idempotent Operations
-Fixes and deployments should be safe to run multiple times.
-
-### 3. Clear Error Messages
-Always provide actionable error messages and manual fix instructions.
-
-### 4. Fail Fast
-Validate configuration early in the scan phase, not during deployment.
-
-### 5. Minimal Workflows
-Keep GitHub Actions workflows thin - just SSH and call CLI.
-
-### 6. Test Locally
-All deployment logic should be testable locally via `npx stack deploy --dev`.
-
-### 7. Document Everything
-Provide clear `helpText` for all secrets and configuration options.
-
-## Plugin Approval
-
-To get your plugin approved and listed in `approved.json`:
-
-1. Open a PR to this repository
-2. Add your plugin to `src/plugins/approved.json`
-3. Include:
-   - Plugin source code or npm package link
-   - Documentation
-   - Example usage
-   - Test results
-
-Approved plugins load without warnings. Unapproved plugins show a warning but still work.
-
 ## Server-Side Architecture
 
 ### Multi-Repo Deployment
 
-Factiii Stack supports deploying multiple repos to the same server. Each server runs a single nginx reverse proxy that routes to all deployed apps.
+Each server runs a single nginx reverse proxy routing to all deployed apps.
 
 ### Server Directory Structure
 
 ```
 ~/.factiii/                          # Root infrastructure directory
 ├── repo-name/                       # Each deployed repo
-│   ├── stack.yml                    # Repo config (scanned by generate-all.js)
-   │   ├── stackAuto.yml              # Auto-detected config
+│   ├── stack.yml                    # Repo config
+│   ├── stackAuto.yml               # Auto-detected config
 │   ├── .env.staging                 # Secrets (staging server only)
-│   ├── .env.prod                    # Secrets (prod server only)
 │   └── ... (source code if requiresFullRepo=true)
-├── repo-name-2/                     # Another deployed repo
-│   ├── stack.yml
-│   └── ...
 ├── scripts/
-│   └── generate-all.js              # Regenerates merged configs
+│   └── generate-all.ts             # Regenerates merged configs
 ├── docker-compose.yml               # MERGED from all repos (generated)
 └── nginx.conf                       # MERGED from all repos (generated)
 ```
 
-**Key principle**: Staging and prod are **independent servers**. Each server only has its own environment's secrets.
+**Key principle:** Staging and prod are **independent servers**. Each server only has its own environment's secrets.
 
-### Pipeline Plugin: requiresFullRepo()
-
-Pipeline plugins can declare whether they need the full repo cloned on the server:
-
-```javascript
-static requiresFullRepo(environment) {
-  // Return true if full repo needed (for building from source)
-  // Return false if only stack.yml + env file needed (pulls pre-built images)
-  return environment === 'staging';
-}
-```
-
-**Factiii Pipeline defaults:**
-- `staging` -> `true` (needs full repo to build locally)
-- `prod` -> `false` (pulls pre-built images from ECR)
-
-### The generate-all.js Script
-
-This is the core server-side script that:
-
-1. Scans `~/.factiii/*/stack.yml` (or factiii.yml) for all deployed repos
-2. Generates a unified `docker-compose.yml` with all services
-3. Generates a unified `nginx.conf` routing to all domains
-
-Run it after any deployment to update configs:
-
-```bash
-node ~/.factiii/scripts/generate-all.js
-```
-
-### Server Plugin Docker Compose Modifications
-
-Server plugins are responsible for generating and modifying docker-compose.yml files. After calling `generate-all.js`, server plugins can modify the compose file for:
-
-- **Server-specific needs**: Updating image references (e.g., ECR image paths for production)
-- **Environment-specific needs**: Adding services required for specific environments (e.g., postgres for staging)
-
-**Standard Pattern:**
+### requiresFullRepo()
 
 ```typescript
-// 1. Generate base docker-compose.yml
-await runGenerateAll();
-
-// 2. Modify for environment-specific needs (e.g., add postgres for staging)
-await addPostgresServiceForStaging(config, envConfig);
-
-// 3. Modify for server-specific needs (e.g., update image tags)
-await updateComposeForStagingImage(config, envConfig);
-
-// 4. Start containers
-await dockerComposeUp();
-```
-
-**Example: Adding Postgres Service for Staging**
-
-Server plugins can add services to docker-compose.yml based on environment configuration:
-
-```typescript
-async function addPostgresServiceForStaging(
-  envConfig: EnvironmentConfig,
-  config: FactiiiConfig
-): Promise<void> {
-  // Read DATABASE_URL from .env.staging
-  const databaseUrl = await readEnvFile('.env.staging', 'DATABASE_URL');
-  
-  // Parse connection details
-  const dbConfig = parseDatabaseUrl(databaseUrl);
-  
-  // Add postgres service to compose
-  compose.services.postgres = {
-    image: 'postgres:16-alpine',
-    environment: {
-      POSTGRES_USER: dbConfig.user,
-      POSTGRES_PASSWORD: dbConfig.password,
-      POSTGRES_DB: dbConfig.database,
-    },
-    ports: [`${dbConfig.port}:5432`],
-    volumes: ['postgres_data:/var/lib/postgresql/data'],
-    networks: ['factiii'],
-  };
+static requiresFullRepo(environment: string): boolean {
+  // staging → true (build from source)
+  // prod → false (pull pre-built images from ECR)
 }
 ```
-
-**When to Modify Compose:**
-
-- **Do modify** for environment-specific services (postgres for staging, redis for caching)
-- **Do modify** for server-specific image references (ECR paths, local image tags)
-- **Don't modify** for deployment-agnostic services (those should be in generate-all.js)
-- **Don't modify** for production managed services (use RDS, ElastiCache, etc. instead of containers)
-
-**Production Considerations:**
-
-Production environments typically use managed services (RDS, ElastiCache) rather than local containers. Server plugins should only add containerized services for staging/development environments where local services are appropriate.
 
 ### Deployment Flows
 
 **Staging (requiresFullRepo = true):**
-1. Workflow SSHs to staging server
+1. SSH to staging server
 2. Clone/pull full repo to `~/.factiii/{repo}/`
-3. Write secrets to `~/.factiii/{repo}/.env.staging`
-4. Run `generate-all.js` to regenerate merged configs
+3. Write secrets to `.env.staging`
+4. Run `generate-all.ts` to regenerate merged configs
 5. Build and start: `docker compose up -d {repo}-staging`
 
 **Production (requiresFullRepo = false):**
-1. Workflow SSHs to production server
+1. SSH to production server
 2. Create `~/.factiii/{repo}/` with just `stack.yml`
-3. Write secrets to `~/.factiii/{repo}/.env.prod`
-4. Run `generate-all.js` to regenerate merged configs
+3. Write secrets to `.env.prod`
+4. Run `generate-all.ts` to regenerate merged configs
 5. Pull image from ECR and start: `docker compose up -d {repo}-prod`
 
-## Architecture Diagrams
+### Docker Compose Modifications
 
-### Plugin Lifecycle
+After `generate-all.ts`, pipeline plugins can modify compose for:
+- **Environment-specific services** (postgres for staging, not prod which uses RDS)
+- **Image references** (ECR paths for production)
 
-```
-┌─────────────┐
-│   npx       │
-│  factiii    │
-└──────┬──────┘
-       │
-       ├─ scan ──────┐
-       │             │
-       ├─ fix ───────┼──► Load Plugins
-       │             │
-       └─ deploy ────┘
-                     │
-                     ▼
-            ┌────────────────┐
-            │ Plugin Loader  │
-            └────────┬───────┘
-                     │
-         ┌───────────┼───────────┐
-         │           │           │
-    ┌────▼────┐ ┌───▼────┐ ┌───▼────┐
-    │Pipeline │ │ Server │ │Framework│
-    │ Plugins │ │Plugins │ │ Plugins │
-    └─────────┘ └────────┘ └─────────┘
-```
+## Best Practices
 
-### Config Generation
-
-```
-Plugin.configSchema ──┐
-                      ├──► Merge ──► stack.yml
-Plugin.configSchema ──┘
-
-Plugin.detectConfig() ──┐
-                        ├──► Merge ──► stackAuto.yml
-Plugin.detectConfig() ──┘
-```
-
-### Deployment Flow
-
-```
-npx stack deploy --staging
-         │
-         ├─ 1. Scan (abort if problems)
-         │
-         ├─ 2. Load .env.staging
-         │
-         ├─ 3. Call Plugin.deploy(config, 'staging')
-         │      │
-         │      ├─ Pipeline: Trigger workflow
-         │      ├─ Server: Build & start containers
-         │      └─ Framework: Run migrations
-         │
-         └─ 4. Health checks
-```
-
-## Summary
-
-Factiii Stack's plugin architecture enables:
-- **Modularity**: Each plugin handles one domain
-- **Extensibility**: Easy to add new frameworks/servers
-- **Testability**: All logic in JavaScript, not bash
-- **Clarity**: Clear separation of concerns
-- **Maintainability**: Config logic lives with the plugin
-
-For questions or contributions, see the main repository.
+1. **Single Responsibility** — Each plugin handles one domain
+2. **Idempotent Operations** — Fixes and deployments safe to run multiple times
+3. **Clear Error Messages** — Always provide actionable `manualFix` instructions
+4. **Fail Fast** — Validate configuration in scan phase, not during deployment
+5. **Test Locally** — All deployment logic testable via `npx stack deploy --dev`
+6. **YAML String Building** — Use string concat (`'key: ' + var`), NOT template literals (breaks YAML indentation)

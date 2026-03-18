@@ -40,6 +40,7 @@ import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import {
   IAMClient,
   GetUserCommand,
+  ListUsersCommand,
   CreateUserCommand,
   PutUserPolicyCommand,
   CreateAccessKeyCommand,
@@ -284,6 +285,32 @@ export async function getAwsAccountId(region: string): Promise<string | null> {
     return result.Account ?? null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Get the ARN of the current AWS caller (for display purposes)
+ */
+export async function getCallerArn(region: string): Promise<string | null> {
+  try {
+    const sts = getSTSClient(region);
+    const result = await sts.send(new GetCallerIdentityCommand({}));
+    return result.Arn ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if current AWS credentials have IAM management permissions
+ */
+export async function canManageIam(region: string): Promise<boolean> {
+  try {
+    const iam = getIAMClient(region);
+    await iam.send(new ListUsersCommand({ MaxItems: 1 }));
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -749,6 +776,7 @@ export {
   // IAM
   IAMClient,
   GetUserCommand,
+  ListUsersCommand,
   CreateUserCommand,
   PutUserPolicyCommand,
   CreateAccessKeyCommand,
