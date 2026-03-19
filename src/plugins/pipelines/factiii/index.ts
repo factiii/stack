@@ -45,7 +45,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import type {
   FactiiiConfig,
   Stage,
@@ -682,17 +682,62 @@ class FactiiiPipeline {
         { flags: '-f, --follow', description: 'Follow log output' },
         { flags: '-n, --lines <number>', description: 'Number of lines to show', defaultValue: '100' },
         { flags: '-s, --service <name>', description: 'Service name (default: app container)' },
+        { flags: '-t, --timestamps', description: 'Show timestamps on each log line' },
+        { flags: '--grep <pattern>', description: 'Filter logs by pattern' },
+        { flags: '-o, --output <file>', description: 'Save logs to a file' },
+        { flags: '--since <time>', description: 'Show logs since timestamp or relative (e.g. 1h, 30m, 2024-01-01)' },
       ],
       execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
         const serviceName = (options.service as string) ?? config.name + '-' + stage;
         const followFlag = options.follow ? '-f' : '';
         const lines = (options.lines as string) ?? '100';
+        const timestampFlag = options.timestamps ? '--timestamps' : '';
+        const sinceFlag = options.since ? '--since ' + String(options.since) : '';
+        const grepPattern = options.grep ? String(options.grep) : '';
+        const outputFile = options.output ? String(options.output) : '';
+
+        const dockerCmd = 'docker logs ' + followFlag + ' ' + timestampFlag + ' ' + sinceFlag + ' --tail ' + lines + ' ' + serviceName;
 
         try {
-          execSync(
-            'docker logs ' + followFlag + ' --tail ' + lines + ' ' + serviceName,
-            { stdio: 'inherit' }
-          );
+          if (!grepPattern && !outputFile) {
+            execSync(dockerCmd, { stdio: 'inherit' });
+            return { success: true };
+          }
+
+          if (grepPattern && outputFile) {
+            if (options.follow) {
+              execSync(dockerCmd + ' 2>&1 | grep --line-buffered ' + JSON.stringify(grepPattern) + ' | tee ' + JSON.stringify(outputFile), { stdio: 'inherit', shell: 'bash' });
+            } else {
+              const result = spawnSync('bash', ['-c', dockerCmd + ' 2>&1 | grep ' + JSON.stringify(grepPattern)], { encoding: 'utf8' });
+              const output = (result.stdout || '') + (result.stderr || '');
+              fs.writeFileSync(outputFile, output, 'utf8');
+              process.stdout.write(output);
+            }
+            return { success: true };
+          }
+
+          if (grepPattern) {
+            if (options.follow) {
+              execSync(dockerCmd + ' 2>&1 | grep --line-buffered ' + JSON.stringify(grepPattern), { stdio: 'inherit', shell: 'bash' });
+            } else {
+              const result = spawnSync('bash', ['-c', dockerCmd + ' 2>&1 | grep ' + JSON.stringify(grepPattern)], { encoding: 'utf8', stdio: 'pipe' });
+              process.stdout.write(result.stdout || '');
+            }
+            return { success: true };
+          }
+
+          if (outputFile) {
+            if (options.follow) {
+              execSync(dockerCmd + ' 2>&1 | tee ' + JSON.stringify(outputFile), { stdio: 'inherit', shell: 'bash' });
+            } else {
+              const result = spawnSync('bash', ['-c', dockerCmd + ' 2>&1'], { encoding: 'utf8', stdio: 'pipe' });
+              const output = result.stdout || '';
+              fs.writeFileSync(outputFile, output, 'utf8');
+              process.stdout.write(output);
+            }
+            return { success: true };
+          }
+
           return { success: true };
         } catch (error) {
           return { success: false, error: String(error) };

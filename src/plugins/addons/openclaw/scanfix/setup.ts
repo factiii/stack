@@ -15,7 +15,7 @@
  * The host only needs Tart installed.
  */
 
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -31,7 +31,7 @@ const DEFAULT_MODEL = 'qwen2.5-coder:7b';
  * Get OpenClaw config merged from stack.yml and stack.local.yml
  * Local config wins (per-developer override)
  */
-function getOpenClawConfig(config: FactiiiConfig, rootDir: string): { model: string } {
+async function getOpenClawConfig(config: FactiiiConfig, rootDir: string): Promise<{ model: string }> {
   const defaults = { model: DEFAULT_MODEL };
 
   // Check stack.yml (supports openclaw: true shorthand)
@@ -43,7 +43,7 @@ function getOpenClawConfig(config: FactiiiConfig, rootDir: string): { model: str
   // Check stack.local.yml (supports openclaw: true shorthand)
   let localConf: { model?: string } | undefined;
   try {
-    const { loadLocalConfig } = require('../../../../utils/config-helpers.js');
+    const { loadLocalConfig } = await import('../../../../utils/config-helpers.js');
     const local = loadLocalConfig(rootDir);
     const rawLocal = (local as Record<string, unknown>).openclaw;
     localConf = (typeof rawLocal === 'object' && rawLocal !== null)
@@ -61,8 +61,9 @@ function getOpenClawConfig(config: FactiiiConfig, rootDir: string): { model: str
 /**
  * Get the model name from config
  */
-function getModelName(config: FactiiiConfig, rootDir: string): string {
-  return getOpenClawConfig(config, rootDir).model;
+async function getModelName(config: FactiiiConfig, rootDir: string): Promise<string> {
+  const ocConfig = await getOpenClawConfig(config, rootDir);
+  return ocConfig.model;
 }
 
 /**
@@ -80,49 +81,55 @@ function isTartInstalled(): boolean {
 /**
  * Auto-detect the first Tart VM name from `tart list`
  */
-function getTartVmName(): string | null {
+/**
+ * Parse tart list output by finding column positions from the header row.
+ * Returns array of { name, state } objects.
+ */
+function parseTartList(): { name: string; state: string }[] {
   try {
     const output = execSync('tart list', {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const lines = output.trim().split('\n');
+    if (lines.length < 2) return [];
+
+    const header = lines[0] ?? '';
+    const headerParts = header.trim().split(/\s+/);
+    const nameIdx = headerParts.indexOf('Name');
+    const stateIdx = headerParts.indexOf('State');
+
+    // Fallback to positional if headers not found
+    const nIdx = nameIdx >= 0 ? nameIdx : 1;
+    const sIdx = stateIdx >= 0 ? stateIdx : 3;
+
+    const results: { name: string; state: string }[] = [];
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       if (!line) continue;
       const parts = line.trim().split(/\s+/);
-      if (parts.length >= 2 && parts[1]) {
-        return parts[1];
-      }
+      const name = parts[nIdx];
+      const state = parts[sIdx] ?? '';
+      if (name) results.push({ name, state });
     }
-    return null;
+    return results;
   } catch {
-    return null;
+    return [];
   }
+}
+
+function getTartVmName(): string | null {
+  const vms = parseTartList();
+  return vms.length > 0 ? (vms[0]?.name ?? null) : null;
 }
 
 /**
  * Check if a Tart VM is currently running
  */
 function isVmRunning(vmName: string): boolean {
-  try {
-    const output = execSync('tart list', {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    const lines = output.trim().split('\n');
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line) continue;
-      const parts = line.trim().split(/\s+/);
-      if (parts.length >= 4 && parts[1] === vmName) {
-        return parts[3] === 'running';
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
+  const vms = parseTartList();
+  const vm = vms.find(v => v.name === vmName);
+  return vm?.state === 'running';
 }
 
 /**
@@ -172,7 +179,8 @@ function isInstalledInVm(ip: string, binary: string): boolean {
  */
 function isOllamaRunningInVm(ip: string): boolean {
   try {
-    sshVm(ip, 'ollama list');
+    // Check the actual HTTP endpoint — ollama list works even when serve is not running
+    sshVm(ip, 'curl -sf http://localhost:11434/api/tags > /dev/null');
     return true;
   } catch {
     return false;
@@ -281,16 +289,21 @@ export const openclawFixes: Fix[] = [
         console.log('   Starting Tart VM: ' + vmName + ' (headless)...');
         // Use spawn to run in background — execSync + & doesn't work reliably
         // --no-graphics for headless servers (Mac Mini etc.)
-        const { spawn } = require('child_process');
         const child = spawn('tart', ['run', '--no-graphics', vmName], {
           stdio: 'ignore',
           detached: true,
         });
         child.unref();
-        // Wait for VM to boot
-        console.log('   Waiting for VM to boot (15s)...');
-        execSync('sleep 15', { stdio: 'ignore' });
-        return isVmRunning(vmName);
+        // Wait for VM to boot — retry every 5s up to 60s
+        console.log('   Waiting for VM to boot...');
+        for (let attempt = 0; attempt < 12; attempt++) {
+          execSync('sleep 5', { stdio: 'ignore' });
+          if (isVmRunning(vmName)) {
+            console.log('   VM is running after ' + ((attempt + 1) * 5) + 's');
+            return true;
+          }
+        }
+        return false;
       } catch {
         return false;
       }
@@ -386,13 +399,13 @@ export const openclawFixes: Fix[] = [
       const ip = getReadyVmIp();
       if (!ip) return false;
       if (!isOllamaRunningInVm(ip)) return false;
-      const model = getModelName(config, rootDir);
+      const model = await getModelName(config, rootDir);
       return !isModelPulledInVm(ip, model);
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const ip = getReadyVmIp();
       if (!ip) return false;
-      const model = getModelName(config, rootDir);
+      const model = await getModelName(config, rootDir);
       try {
         console.log('   Pulling model ' + model + ' inside VM (this may take several minutes)...');
         execSync(
@@ -449,7 +462,7 @@ export const openclawFixes: Fix[] = [
         sshVm(ip, 'test -f ~/.openclaw/openclaw.json');
         // Config exists — check if it points to the correct model
         const content = sshVm(ip, 'cat ~/.openclaw/openclaw.json');
-        const model = getModelName(config, rootDir);
+        const model = await getModelName(config, rootDir);
         return !content.includes(model);
       } catch {
         return true; // Config missing
@@ -458,22 +471,21 @@ export const openclawFixes: Fix[] = [
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const ip = getReadyVmIp();
       if (!ip) return false;
-      const model = getModelName(config, rootDir);
+      const model = await getModelName(config, rootDir);
       try {
         // Create config directory
         sshVm(ip, 'mkdir -p ~/.openclaw');
         // Write OpenClaw config pointing to local Ollama
+        // Pipe JSON via stdin to avoid shell escaping issues
         const configJson = JSON.stringify({
           provider: 'ollama',
           model: model,
           baseUrl: 'http://localhost:11434',
         }, null, 2);
-        // Escape double quotes for SSH command
-        const escaped = configJson.replace(/"/g, '\\"');
         execSync(
           'ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 admin@' + ip +
-            " 'echo \"" + escaped + "\" > ~/.openclaw/openclaw.json'",
-          { stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000 }
+            " 'cat > ~/.openclaw/openclaw.json'",
+          { input: configJson, stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000 }
         );
         console.log('   Configured OpenClaw to use Ollama model: ' + model);
         console.log('   Config written to ~/.openclaw/openclaw.json inside VM');
@@ -520,13 +532,13 @@ export const openclawFixes: Fix[] = [
       }
 
       if (!uiPort) {
-        console.log('   Could not detect moltbot web UI port.');
+        console.log('   Could not detect OpenClaw web UI port.');
         console.log('   Tried ports: ' + candidatePorts.join(', '));
-        console.log('   Make sure the moltbot config server is running inside the VM.');
+        console.log('   Make sure the OpenClaw config server is running inside the VM.');
         return false;
       }
 
-      console.log('   Detected moltbot web UI on VM port ' + uiPort);
+      console.log('   Detected OpenClaw web UI on VM port ' + uiPort);
 
       // Write nginx config snippet
       const confDir = path.join(os.homedir(), '.factiii');
@@ -536,7 +548,7 @@ export const openclawFixes: Fix[] = [
 
       const confPath = path.join(confDir, 'nginx-openclaw.conf');
       const conf =
-        '# OpenClaw (moltbot) web UI proxy\n' +
+        '# OpenClaw (OpenClaw) web UI proxy\n' +
         '# Generated by @factiii/stack — include in main nginx.conf server block\n' +
         '#\n' +
         '# Add inside your HTTPS server block:\n' +
@@ -556,15 +568,22 @@ export const openclawFixes: Fix[] = [
 
       fs.writeFileSync(confPath, conf, 'utf8');
       console.log('   Wrote nginx config: ' + confPath);
-      console.log('');
-      console.log('   To activate, add this inside your HTTPS server block in nginx.conf:');
-      console.log('     include ' + confPath + ';');
-      console.log('');
-      console.log('   Then reload nginx: docker exec nginx nginx -s reload');
+
+      // Try to reload nginx if running in Docker
+      try {
+        execSync('docker exec nginx nginx -s reload', { stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000 });
+        console.log('   Reloaded nginx successfully');
+      } catch {
+        console.log('');
+        console.log('   To activate, add this inside your HTTPS server block in nginx.conf:');
+        console.log('     include ' + confPath + ';');
+        console.log('');
+        console.log('   Then reload nginx: docker exec nginx nginx -s reload');
+      }
       return true;
     },
     manualFix:
       'Create ~/.factiii/nginx-openclaw.conf with a location /openclaw/ block\n' +
-      '      proxying to the Tart VM IP and moltbot UI port, then include it in nginx.conf.',
+      '      proxying to the Tart VM IP and OpenClaw UI port, then include it in nginx.conf.',
   },
 ];
