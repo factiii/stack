@@ -18,6 +18,7 @@ const { upgrade } = require('../dist/cli/upgrade');
 const { validate } = require('../dist/cli/validate');
 const { checkConfig } = require('../dist/cli/check-config');
 const { devSync } = require('../dist/cli/dev-sync');
+const { devReset } = require('../dist/cli/dev-reset');
 
 // Read version from package.json
 const packageJson = require('../package.json');
@@ -205,6 +206,15 @@ if (process.env.DEV_MODE === 'true') {
     });
 }
 
+// Dev reset command
+program
+  .command('dev-reset')
+  .description('Reset local config/secrets to test 0-to-deployed flow')
+  .option('--dry-run', 'Show what would be deleted without doing it')
+  .action(async (options) => {
+    await devReset(options);
+  });
+
 // Legacy commands (for backwards compatibility)
 program
   .command('validate')
@@ -242,6 +252,7 @@ program.addHelpText('after', '\n' +
   '  npx stack fix [--stage]            Auto-fix detected issues (installs tools, creates configs)\n' +
   '  npx stack deploy --<stage>         Build and deploy to an environment\n' +
   '  npx stack undeploy --<stage>       Remove deployment from a server\n' +
+  '  npx stack dev-reset [--dry-run]    Reset local config/secrets for fresh bootstrap\n' +
   '\n' +
   'SECRETS — npx stack deploy --secrets <action>\n' +
   '  list                               Show all stored vault secrets\n' +

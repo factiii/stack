@@ -65,11 +65,16 @@ export async function ensureDockerRunning(
   const checkCmd = 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && docker info > /dev/null 2>&1 && echo "running" || echo "stopped"';
   
   // Start Docker and wait up to 60 seconds for it to be ready
+  // Use headless binary start over SSH since `open -a Docker` requires a GUI session
   const startCmd = `
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
     if ! docker info > /dev/null 2>&1; then
       echo "Starting Docker Desktop..." && \
-      open -a Docker && \
+      if [ -n "$SSH_CONNECTION" ] || [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ]; then
+        nohup /Applications/Docker.app/Contents/MacOS/Docker --unattended > /dev/null 2>&1 &
+      else
+        open -a Docker
+      fi && \
       for i in {1..60}; do
         sleep 1
         if docker info > /dev/null 2>&1; then

@@ -47,6 +47,15 @@ Stages: `dev` | `secrets` | `staging` | `prod`
 2. Re-loads config
 3. Runs all remaining scanfixes
 
+## AWS Account Separation (2 IAM Users)
+
+| Account | IAM User | Environments | S3 Bucket |
+|---------|----------|-------------|-----------|
+| Dev | `factiii-{project}-dev` | dev + staging | `factiii-{project}-dev` |
+| Prod | `factiii-{project}-prod` | prod only | `factiii-{project}` |
+
+All AWS resources tagged with `factiii:project = {project-name}`.
+
 ## Workflow Pattern (ultra-thin)
 ```yaml
 ssh -i ~/.ssh/deploy_key "$USER@$HOST" \

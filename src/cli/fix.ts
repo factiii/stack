@@ -266,8 +266,16 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   const onServer = process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true';
   if (isDevOnly(config) && !onServer) {
     if (stages.some(s => s !== 'dev' && s !== 'secrets')) {
-      console.log('ℹ️  Dev-only mode (set dev_only: false in stack.local to unlock staging/prod)\n');
-      stages = stages.filter(s => s === 'dev' || s === 'secrets');
+      // User explicitly passed --staging or --prod — auto-unlock
+      const localPath = path.join(rootDir, 'stack.local.yml');
+      if (fs.existsSync(localPath)) {
+        let localContent = fs.readFileSync(localPath, 'utf8');
+        if (localContent.includes('dev_only: true')) {
+          localContent = localContent.replace('dev_only: true', 'dev_only: false');
+          fs.writeFileSync(localPath, localContent);
+          console.log('ℹ️  Unlocked staging/prod in stack.local.yml\n');
+        }
+      }
     }
   }
 

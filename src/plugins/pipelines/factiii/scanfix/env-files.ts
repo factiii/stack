@@ -90,11 +90,24 @@ export const envFileFixes: Fix[] = [
       if (!envs.staging) return false; // staging not configured, skip
       return !fs.existsSync(path.join(rootDir, '.env.staging'));
     },
-    fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const examplePath = path.join(rootDir, '.env.example');
       if (!fs.existsSync(examplePath)) return false;
-      fs.copyFileSync(examplePath, path.join(rootDir, '.env.staging'));
-      console.log('   Copied .env.example to .env.staging - edit with real staging values');
+
+      let content = fs.readFileSync(examplePath, 'utf8');
+
+      // Auto-fill URL vars from stack.yml staging domain
+      const envs = extractEnvironments(config);
+      const domain = envs.staging?.domain as string | undefined;
+      if (domain && !domain.toUpperCase().startsWith('EXAMPLE')) {
+        const urlKeys = ['NEXTAUTH_URL', 'NEXT_PUBLIC_API_URL', 'NEXT_PUBLIC_APP_URL', 'API_URL', 'APP_URL', 'CORS_ORIGIN', 'BASE_URL', 'SITE_URL'];
+        for (const key of urlKeys) {
+          content = content.replace(new RegExp('^(' + key + '=).*$', 'm'), '$1https://' + domain);
+        }
+      }
+
+      fs.writeFileSync(path.join(rootDir, '.env.staging'), content);
+      console.log('   Created .env.staging from .env.example' + (domain && !domain.toUpperCase().startsWith('EXAMPLE') ? ' (auto-filled domain URLs)' : ''));
       return true;
     },
     manualFix: 'Copy .env.example to .env.staging and fill in staging values',
@@ -111,11 +124,25 @@ export const envFileFixes: Fix[] = [
       if (!hasProd) return false; // prod not configured, skip
       return !fs.existsSync(path.join(rootDir, '.env.prod'));
     },
-    fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const examplePath = path.join(rootDir, '.env.example');
       if (!fs.existsSync(examplePath)) return false;
-      fs.copyFileSync(examplePath, path.join(rootDir, '.env.prod'));
-      console.log('   Copied .env.example to .env.prod - edit with real production values');
+
+      let content = fs.readFileSync(examplePath, 'utf8');
+
+      // Auto-fill URL vars from stack.yml prod domain
+      const envs = extractEnvironments(config);
+      const prodEnv = envs.prod ?? envs.production;
+      const domain = prodEnv?.domain as string | undefined;
+      if (domain && !domain.toUpperCase().startsWith('EXAMPLE')) {
+        const urlKeys = ['NEXTAUTH_URL', 'NEXT_PUBLIC_API_URL', 'NEXT_PUBLIC_APP_URL', 'API_URL', 'APP_URL', 'CORS_ORIGIN', 'BASE_URL', 'SITE_URL'];
+        for (const key of urlKeys) {
+          content = content.replace(new RegExp('^(' + key + '=).*$', 'm'), '$1https://' + domain);
+        }
+      }
+
+      fs.writeFileSync(path.join(rootDir, '.env.prod'), content);
+      console.log('   Created .env.prod from .env.example' + (domain && !domain.toUpperCase().startsWith('EXAMPLE') ? ' (auto-filled domain URLs)' : ''));
       return true;
     },
     manualFix: 'Copy .env.example to .env.prod and fill in production values',

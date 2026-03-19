@@ -3,9 +3,6 @@ config_version: 0.1.0
 github_repo: factiii/stack
 ssl_email: EXAMPLE_admin@yourdomain.com
 pipeline: factiii
-ansible:
-  vault_path: group_vars/all/vault.yml
-  vault_password_file: ~/.vault_pass
 staging:
   server: mac
   domain: EXAMPLE_staging.yourdomain.com

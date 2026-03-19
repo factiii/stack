@@ -413,6 +413,20 @@ After `generate-all.ts`, pipeline plugins can modify compose for:
 - **Environment-specific services** (postgres for staging, not prod which uses RDS)
 - **Image references** (ECR paths for production)
 
+## AWS Account Separation
+
+Two IAM users per project, one per AWS account:
+
+| Account | IAM User | Environments | S3 Bucket | ECR |
+|---------|----------|-------------|-----------|-----|
+| Dev | `factiii-{project}-dev` | dev + staging | `factiii-{project}-dev` | `factiii-{project}-dev` |
+| Prod | `factiii-{project}-prod` | prod only | `factiii-{project}` | `factiii-{project}` |
+
+- All AWS resources tagged with `factiii:project = {project-name}`
+- Dev account handles both local development and staging infrastructure
+- Prod account is isolated for production security
+- AWS credentials stored in `~/.aws/credentials` with named profiles
+
 ## Best Practices
 
 1. **Single Responsibility** — Each plugin handles one domain

@@ -50,6 +50,13 @@ Node.js + TypeScript, pnpm, Commander.js, YAML config (stack.yml/stackAuto.yml/s
 | `npx stack db <cmd> --<stage>` | Database operations (migrate, seed, reset, status) |
 | `npx stack ops <cmd> --<stage>` | Server operations (logs, restart, shell, status) |
 | `npx stack backup <cmd> --<stage>` | Database backup/restore |
+| `npx stack dev-reset [--dry-run]` | Reset local config/secrets for fresh bootstrap |
+
+**AWS Strategy (2 IAM users):**
+- Dev account (dev + staging): `factiii-{project}-dev` user, `factiii-{project}-dev` S3 bucket
+- Prod account (prod only): `factiii-{project}-prod` user, `factiii-{project}` S3 bucket
+
+**Deployment flow:** See `.spec/flow.md` for 4-step 0-to-deployed process and fix vs deploy boundary.
 
 ## Structure
 ```

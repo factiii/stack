@@ -61,6 +61,7 @@ import { loadRelevantPlugins } from '../../index.js';
 import { findSshKeyForStage, sshRemoteFactiiiCommand } from '../../../utils/ssh-helper.js';
 
 // Import scanfix arrays
+import { preflightFixes } from './scanfix/preflight.js';
 import { bootstrapFixes } from './scanfix/bootstrap.js';
 import { configFixes } from './scanfix/config.js';
 import { githubCliFixes } from './scanfix/github-cli.js';
@@ -316,6 +317,7 @@ class FactiiiPipeline {
   // ============================================================
 
   static readonly fixes: Fix[] = [
+    ...preflightFixes,
     ...bootstrapFixes,
     ...configFixes,
     ...domainFixes,

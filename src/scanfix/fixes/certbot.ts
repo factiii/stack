@@ -70,6 +70,14 @@ export function createCertbotFix(stage: Stage, envKey: EnvKey): Fix {
         return false;
       }
 
+      // Certbot runs via Docker — skip if Docker isn't running
+      try {
+        execSync('docker info', { stdio: 'pipe' });
+      } catch {
+        console.log('   Docker is not running — skipping SSL certificate fix');
+        return false;
+      }
+
       try {
         const nginxRunning = isNginxRunning();
         console.log('   Obtaining SSL certificate for ' + domain + ' via Docker...');
