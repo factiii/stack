@@ -14,7 +14,10 @@ import {
   isAwsConfigured,
   findIamUser,
   getAwsAccountId,
+  getCallerArn,
+  canManageIam,
   getIAMClient,
+  writeAwsCredentials,
   CreateUserCommand,
   PutUserPolicyCommand,
   CreateAccessKeyCommand,
@@ -152,12 +155,114 @@ function getProdPolicy(projectName: string, region: string, accountId: string): 
   });
 }
 
+/**
+ * Ensure current AWS credentials can manage IAM.
+ * If not, show current identity and offer to update credentials.
+ * Returns true if IAM access is available, false otherwise.
+ */
+async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<boolean> {
+  if (await canManageIam(region)) return true;
+
+  const callerArn = await getCallerArn(region);
+  const { confirm } = await import('../../../../utils/secret-prompts.js');
+
+  console.log('');
+  console.log('   ============================================================');
+  console.log('   AWS CREDENTIALS CANNOT CREATE IAM USERS');
+  console.log('   ============================================================');
+  console.log('   Logged in as: ' + (callerArn ?? 'unknown'));
+  console.log('   This account does not have permission to create IAM users.');
+  console.log('   You need admin credentials to continue.');
+  console.log('   ============================================================');
+  console.log('');
+
+  // Check if vault has credentials we can swap to
+  const hasVault = !!config.ansible?.vault_path;
+  let vaultHasCreds = false;
+
+  if (hasVault) {
+    try {
+      const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+      const vault = new AnsibleVaultSecrets({
+        vault_path: config.ansible!.vault_path!,
+        vault_password_file: config.ansible!.vault_password_file,
+      });
+      const check = await vault.checkSecrets(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']);
+      vaultHasCreds = !!(check.status?.AWS_ACCESS_KEY_ID && check.status?.AWS_SECRET_ACCESS_KEY);
+    } catch {
+      // vault unreadable — treat as no creds
+    }
+  }
+
+  if (vaultHasCreds) {
+    const swap = await confirm('   Load admin credentials from Ansible Vault?', true);
+
+    if (swap) {
+      try {
+        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+        const vault = new AnsibleVaultSecrets({
+          vault_path: config.ansible!.vault_path!,
+          vault_password_file: config.ansible!.vault_password_file,
+        });
+        const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
+        const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
+
+        if (!accessKeyId || !secretKey) {
+          console.log('   Failed to read credentials from vault.');
+          return false;
+        }
+
+        writeAwsCredentials(accessKeyId, secretKey, region);
+        const newArn = await getCallerArn(region);
+        console.log('   [OK] Switched to: ' + (newArn ?? 'unknown'));
+
+        if (await canManageIam(region)) {
+          console.log('   [OK] IAM access confirmed');
+          return true;
+        }
+
+        console.log('');
+        console.log('   Still no IAM permission. The vault credentials need admin access.');
+        console.log('');
+        console.log('   To fix, update the vault credentials:');
+        console.log('     npx stack deploy --secrets set AWS_ACCESS_KEY_ID');
+        console.log('     npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY');
+        console.log('   Then run: npx stack fix');
+        return false;
+      } catch (e) {
+        console.log('   Error: ' + (e instanceof Error ? e.message : String(e)));
+        return false;
+      }
+    }
+  }
+
+  // User skipped or no vault creds available — show clear instructions
+  console.log('');
+  console.log('   To fix this, do ONE of the following:');
+  console.log('');
+  if (hasVault) {
+    console.log('   Option 1: Store admin credentials in vault');
+    console.log('     npx stack deploy --secrets set AWS_ACCESS_KEY_ID');
+    console.log('     npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY');
+    console.log('');
+    console.log('   Option 2: Configure AWS CLI directly');
+    console.log('     aws configure   (paste admin access key + secret)');
+  } else {
+    console.log('   Configure AWS CLI with admin credentials:');
+    console.log('     aws configure   (paste admin access key + secret)');
+  }
+  console.log('');
+  console.log('   Then run: npx stack fix');
+  console.log('');
+  return false;
+}
+
 export const iamFixes: Fix[] = [
   {
     id: 'aws-iam-dev-user-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: '👤 IAM dev user not created (read-only access)',
+    description: '👤 IAM dev user not created (read-only access for dev workflows)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -168,6 +273,29 @@ export const iamFixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const userName = 'factiii-' + projectName + '-dev';
+
+      if (!(await ensureIamAccess(config, region))) return false;
+
+      console.log('');
+      console.log('   ============================================================');
+      console.log('   CREATE IAM DEV USER');
+      console.log('   ============================================================');
+      console.log('   Will create IAM user "' + userName + '" with read-only policy:');
+      console.log('   - ECR: pull images, list repositories');
+      console.log('   - S3: read objects from project bucket');
+      console.log('   - EC2/RDS: describe (view) resources');
+      console.log('');
+      console.log('   This user is for local development and CI read-only access.');
+      console.log('   ============================================================');
+      console.log('');
+
+      const { confirm } = await import('../../../../utils/secret-prompts.js');
+      const proceed = await confirm('   Create IAM dev user "' + userName + '"?', true);
+
+      if (!proceed) {
+        console.log('   [--] Skipped — you can create it later with: npx stack fix --secrets');
+        return true;
+      }
 
       try {
         const iam = getIAMClient(region);
@@ -210,13 +338,31 @@ export const iamFixes: Fix[] = [
         return false;
       }
     },
-    manualFix: 'Create IAM dev user with read-only policy for ECR, S3, EC2, RDS',
+    manualFix: [
+      '============================================================',
+      'IAM DEV USER SETUP',
+      '============================================================',
+      '',
+      '  This creates a read-only IAM user for local dev and CI.',
+      '  Permissions: ECR pull, S3 read, EC2/RDS describe.',
+      '',
+      '  Auto-fix:  npx stack fix --secrets  (creates user + policy + access key)',
+      '',
+      '  Or manually in AWS Console:',
+      '  1. Go to IAM > Users > Create user',
+      '  2. Name: factiii-{project}-dev',
+      '  3. Attach inline policy with read-only ECR, S3, EC2, RDS access',
+      '  4. Create access key: User > Security credentials > Create access key > CLI',
+      '  5. Store secret in vault: npx stack deploy --secrets set AWS_DEV_SECRET_ACCESS_KEY',
+      '',
+      '============================================================',
+    ].join('\n'),
   },
   {
     id: 'aws-iam-prod-user-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: '👤 IAM prod user not created (deployment access)',
+    description: '👤 IAM prod user not created (deployment access for staging/prod)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -227,6 +373,31 @@ export const iamFixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const userName = 'factiii-' + projectName + '-prod';
+
+      if (!(await ensureIamAccess(config, region))) return false;
+
+      console.log('');
+      console.log('   ============================================================');
+      console.log('   CREATE IAM PROD USER');
+      console.log('   ============================================================');
+      console.log('   Will create IAM user "' + userName + '" with deployment policy:');
+      console.log('   - ECR: full access (push/pull images)');
+      console.log('   - S3: full access to project bucket');
+      console.log('   - EC2: describe + start/stop/reboot instances');
+      console.log('   - RDS: describe + start/stop/reboot + snapshots');
+      console.log('   - SES: full email sending access');
+      console.log('');
+      console.log('   This user is for CI/CD pipelines and production deployments.');
+      console.log('   ============================================================');
+      console.log('');
+
+      const { confirm } = await import('../../../../utils/secret-prompts.js');
+      const proceed = await confirm('   Create IAM prod user "' + userName + '"?', true);
+
+      if (!proceed) {
+        console.log('   [--] Skipped — you can create it later with: npx stack fix --secrets');
+        return true;
+      }
 
       try {
         const iam = getIAMClient(region);
@@ -269,6 +440,24 @@ export const iamFixes: Fix[] = [
         return false;
       }
     },
-    manualFix: 'Create IAM prod user with deployment policy for ECR, S3, EC2, RDS, SES',
+    manualFix: [
+      '============================================================',
+      'IAM PROD USER SETUP',
+      '============================================================',
+      '',
+      '  This creates a deployment IAM user for CI/CD and prod deploys.',
+      '  Permissions: ECR full, S3 full, EC2/RDS manage, SES send.',
+      '',
+      '  Auto-fix:  npx stack fix --secrets  (creates user + policy + access key)',
+      '',
+      '  Or manually in AWS Console:',
+      '  1. Go to IAM > Users > Create user',
+      '  2. Name: factiii-{project}-prod',
+      '  3. Attach inline policy with ECR, S3, EC2, RDS, SES access',
+      '  4. Create access key: User > Security credentials > Create access key > CLI',
+      '  5. Store secret in vault: npx stack deploy --secrets set AWS_PROD_SECRET_ACCESS_KEY',
+      '',
+      '============================================================',
+    ].join('\n'),
   },
 ];

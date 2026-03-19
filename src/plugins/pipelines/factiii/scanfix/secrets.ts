@@ -9,7 +9,7 @@ import * as path from 'path';
 import { execSync, spawnSync } from 'child_process';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
-import { promptForSecret, promptSingleLine } from '../../../../utils/secret-prompts.js';
+import { promptForSecret, promptSingleLine, confirm } from '../../../../utils/secret-prompts.js';
 import { extractEnvironments, hasEnvironments } from '../../../../utils/config-helpers.js';
 import { findSshKeyForStage, writeSecureKeyFile } from '../../../../utils/ssh-helper.js';
 
@@ -446,6 +446,13 @@ export const secretsFixes: Fix[] = [
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
 
+      console.log('');
+      const pasteExisting = await confirm('      Do you have an existing SSH key to paste?', false);
+      if (pasteExisting) {
+        return await manualSshKeyEntry('staging', config, store);
+      }
+
+      console.log('      Auto-generating and deploying a new SSH key...');
       return await autoGenerateAndDeploySshKey('staging', config, rootDir, store);
     },
     manualFix:
@@ -483,6 +490,13 @@ export const secretsFixes: Fix[] = [
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
+
+      // Ask upfront if user wants to paste an existing key
+      console.log('');
+      const pasteExisting = await confirm('      Do you have an existing SSH key to paste?', false);
+      if (pasteExisting) {
+        return await manualSshKeyEntry('prod', config, store);
+      }
 
       try {
         // Check if AWS is configured for this project
@@ -557,6 +571,7 @@ export const secretsFixes: Fix[] = [
         }
 
         // Fallback: auto-generate key (non-AWS projects or key pair already exists)
+        console.log('      Auto-generating and deploying a new SSH key...');
         return await autoGenerateAndDeploySshKey('prod', config, rootDir, store);
       } catch {
         return false;
@@ -778,7 +793,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ssh-key-staging',
     stage: 'secrets',
     severity: 'critical',
-    description: '🔑 SSH_STAGING key file not on disk (required for staging access)',
+    description: '🔑 STAGING_SSH key file not on disk (required for staging access)',
     targetStage: 'staging', // Only run when targeting staging deployment
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
@@ -795,7 +810,12 @@ export const secretsFixes: Fix[] = [
       try {
         const key = await store.getSecret('STAGING_SSH');
         if (!key) {
-          console.log('      STAGING_SSH not in vault yet — set it first: npx stack deploy --secrets set STAGING_SSH');
+          console.log('      STAGING_SSH not in vault — paste it now to store and write to disk.');
+          const wantPaste = await confirm('      Paste your staging SSH key now?', true);
+          if (wantPaste) {
+            return await manualSshKeyEntry('staging', config, store);
+          }
+          console.log('      Skipped. Run `npx stack fix --secrets` again when ready.');
           return false;
         }
 
@@ -813,7 +833,7 @@ export const secretsFixes: Fix[] = [
     id: 'missing-ssh-key-prod',
     stage: 'secrets',
     severity: 'critical',
-    description: '🔑 SSH_PROD key file not on disk (required for prod access)',
+    description: '🔑 PROD_SSH key file not on disk (required for prod access)',
     targetStage: 'prod', // Only run when targeting prod deployment
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
@@ -830,7 +850,12 @@ export const secretsFixes: Fix[] = [
       try {
         const key = await store.getSecret('PROD_SSH');
         if (!key) {
-          console.log('      PROD_SSH not in vault yet — set it first: npx stack deploy --secrets set PROD_SSH');
+          console.log('      PROD_SSH not in vault — paste it now to store and write to disk.');
+          const wantPaste = await confirm('      Paste your prod SSH key now?', true);
+          if (wantPaste) {
+            return await manualSshKeyEntry('prod', config, store);
+          }
+          console.log('      Skipped. Run `npx stack fix --secrets` again when ready.');
           return false;
         }
 

@@ -183,6 +183,13 @@ async function runLocalFixes(
               fixedAny = true;
             } else {
               console.log('│  ❌ ' + problem.description + timeSuffix);
+              if (problem.manualFix) {
+                const hint = problem.manualFix.trim().split('\n')
+                  .map((l: string) => l.trim())
+                  .filter((l: string) => l.length > 0)[0];
+                if (hint) console.log('│     → ' + hint);
+              }
+              console.log('│     Run `npx stack fix` again to retry');
               result.failed++;
               result.fixes.push({
                 id: problem.id,
