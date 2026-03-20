@@ -23,7 +23,15 @@ jest.mock('fs', () => {
       }
       return false;
     },
-    readFileSync: actual.readFileSync,
+    readFileSync: (p: string, ...args: any[]) => {
+      const filePath = String(p).replace(/\\/g, '/');
+      for (const mock of mockExistingFiles) {
+        if (mock.replace(/\\/g, '/') === filePath) {
+          return '-----BEGIN OPENSSH PRIVATE KEY-----\nfake-key-content\n-----END OPENSSH PRIVATE KEY-----\n';
+        }
+      }
+      return actual.readFileSync(p, ...args);
+    },
   };
 });
 
