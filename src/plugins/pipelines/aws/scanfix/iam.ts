@@ -213,8 +213,8 @@ async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<b
         }
 
         writeAwsCredentials(accessKeyId, secretKey, region);
-        const newArn = await getCallerArn(region);
-        console.log('   [OK] Switched to: ' + (newArn ?? 'unknown'));
+        const newIdentity = await getCallerArn(region);
+        console.log('   [OK] Switched to: ' + (newIdentity ?? 'unknown'));
 
         if (await canManageIam(region)) {
           console.log('   [OK] IAM access confirmed');
@@ -259,38 +259,38 @@ async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<b
 
 export const iamFixes: Fix[] = [
   {
-    id: 'aws-iam-dev-user-missing',
+    id: 'aws-iam-admin-user-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: '👤 IAM dev user not created (read-only access for dev workflows)',
+    description: '👤 IAM admin user not created (recess for dev workflows)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      return !(await findIamUser('factiii-' + projectName + '-dev', region));
+      return !(await findIamUser('factiii-' + projectName + '-admin', region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const userName = 'factiii-' + projectName + '-dev';
+      const userName = 'factiii-' + projectName + '-admin';
 
       if (!(await ensureIamAccess(config, region))) return false;
 
       console.log('');
       console.log('   ============================================================');
-      console.log('   CREATE IAM DEV USER');
+      console.log('   CREATE IAM ADMIN USER');
       console.log('   ============================================================');
-      console.log('   Will create IAM user "' + userName + '" with read-only policy:');
+      console.log('   Will create IAM user "' + userName + '" with admin policy:');
       console.log('   - ECR: pull images, list repositories');
       console.log('   - S3: read objects from project bucket');
       console.log('   - EC2/RDS: describe (view) resources');
       console.log('');
-      console.log('   This user is for local development and CI read-only access.');
+      console.log('   This user is for local development and CI access.');
       console.log('   ============================================================');
       console.log('');
 
       const { confirm } = await import('../../../../utils/secret-prompts.js');
-      const proceed = await confirm('   Create IAM dev user "' + userName + '"?', true);
+      const proceed = await confirm('   Create IAM admin user "' + userName + '"?', true);
 
       if (!proceed) {
         console.log('   [--] Skipped — you can create it later with: npx stack fix --secrets');
@@ -315,10 +315,10 @@ export const iamFixes: Fix[] = [
         const policy = getDevPolicy(projectName, region, accountId);
         await iam.send(new PutUserPolicyCommand({
           UserName: userName,
-          PolicyName: 'factiii-' + projectName + '-dev-policy',
+          PolicyName: 'factiii-' + projectName + '-admin-policy',
           PolicyDocument: policy,
         }));
-        console.log('   Attached dev policy (read-only ECR, S3, EC2, RDS)');
+        console.log('   Attached admin policy (ECR, S3, EC2, RDS)');
 
         // Create access key
         const keyResult = await iam.send(new CreateAccessKeyCommand({ UserName: userName }));
@@ -326,7 +326,7 @@ export const iamFixes: Fix[] = [
         const secretKey = keyResult.AccessKey?.SecretAccessKey;
 
         console.log('');
-        console.log('   Dev credentials (save these!):');
+        console.log('   Admin credentials (save these!):');
         console.log('   Access Key ID: ' + accessKeyId);
         console.log('   Secret Access Key: ' + secretKey);
         console.log('');
@@ -334,26 +334,26 @@ export const iamFixes: Fix[] = [
 
         return true;
       } catch (e) {
-        console.log('   Failed to create dev IAM user: ' + (e instanceof Error ? e.message : String(e)));
+        console.log('   Failed to create admin IAM user: ' + (e instanceof Error ? e.message : String(e)));
         return false;
       }
     },
     manualFix: [
       '============================================================',
-      'IAM DEV USER SETUP',
+      'IAM ADMIN USER SETUP',
       '============================================================',
       '',
-      '  This creates a read-only IAM user for local dev and CI.',
+      '  This creates an admin IAM user for local dev and CI.',
       '  Permissions: ECR pull, S3 read, EC2/RDS describe.',
       '',
       '  Auto-fix:  npx stack fix --secrets  (creates user + policy + access key)',
       '',
       '  Or manually in AWS Console:',
       '  1. Go to IAM > Users > Create user',
-      '  2. Name: factiii-{project}-dev',
-      '  3. Attach inline policy with read-only ECR, S3, EC2, RDS access',
+      '  2. Name: factiii-{project}-admin',
+      '  3. Attach inline policy with ECR, S3, EC2, RDS access',
       '  4. Create access key: User > Security credentials > Create access key > CLI',
-      '  5. Store secret in vault: npx stack deploy --secrets set AWS_DEV_SECRET_ACCESS_KEY',
+      '  5. Store secret in vault: npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY',
       '',
       '============================================================',
     ].join('\n'),

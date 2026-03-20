@@ -289,13 +289,42 @@ export async function getAwsAccountId(region: string): Promise<string | null> {
 }
 
 /**
- * Get the ARN of the current AWS caller (for display purposes)
+ * Get a human-readable identity string for the current AWS caller.
+ * Shows access_key_id + user name instead of ARN, since ARNs are
+ * unreadable without looking them up in the AWS console.
  */
 export async function getCallerArn(region: string): Promise<string | null> {
   try {
     const sts = getSTSClient(region);
     const result = await sts.send(new GetCallerIdentityCommand({}));
-    return result.Arn ?? null;
+    const arn = result.Arn ?? '';
+
+    // Extract the user name from the ARN (last segment after /)
+    const userName = arn.includes('/') ? arn.split('/').pop() : null;
+
+    // Read access_key_id from ~/.aws/credentials
+    let accessKeyId: string | null = null;
+    try {
+      const credPath = path.join(os.homedir(), '.aws', 'credentials');
+      if (fs.existsSync(credPath)) {
+        const content = fs.readFileSync(credPath, 'utf8');
+        const match = content.match(/aws_access_key_id\s*=\s*(\S+)/);
+        if (match?.[1]) accessKeyId = match[1];
+      }
+    } catch { /* best effort */ }
+
+    // Also check env var
+    if (!accessKeyId && process.env.AWS_ACCESS_KEY_ID) {
+      accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    }
+
+    // Build readable identity: "admin (AKIA...)" or just "AKIA..." or fall back to ARN
+    if (userName && accessKeyId) {
+      return userName + ' (' + accessKeyId + ')';
+    }
+    if (userName) return userName;
+    if (accessKeyId) return accessKeyId;
+    return arn || null;
   } catch {
     return null;
   }

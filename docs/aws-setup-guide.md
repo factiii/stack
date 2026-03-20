@@ -256,7 +256,7 @@ npx factiii fix
 #   ✅ RDS Database (PostgreSQL, db.t3.micro)
 #   ✅ S3 Bucket (encrypted, private)
 #   ✅ ECR Repository (Docker images)
-#   ✅ IAM Users (dev + prod with scoped policies)
+#   ✅ IAM Users (admin + prod with scoped policies)
 #   ✅ SES Email (domain verification + DKIM)
 
 # Step 2: Deploy your application
