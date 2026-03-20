@@ -24,6 +24,8 @@ export const vaultFixes: Fix[] = [
     severity: 'critical',
     description: '📁 group_vars/all/ directory not found',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      // Vault infrastructure is managed locally — skip on server
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       if (!hasEnvironments(_config)) return false;
       return !fs.existsSync(path.join(rootDir, 'group_vars', 'all'));
     },
@@ -40,6 +42,8 @@ export const vaultFixes: Fix[] = [
     severity: 'critical',
     description: '🔐 Encrypted vault file not found',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      // Vault infrastructure is managed locally — skip on server
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       if (!hasEnvironments(config)) return false;
       // Only flag if vault password file exists (can't create vault without it)
       if (!config.ansible?.vault_password_file) return false;
@@ -71,6 +75,8 @@ export const vaultFixes: Fix[] = [
     severity: 'critical',
     description: '🔐 Vault password does not match existing vault file',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      // Vault infrastructure is managed locally — skip on server
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       if (!hasEnvironments(config)) return false;
       // Only check if both vault file and password file exist
       if (!config.ansible?.vault_password_file) return false;

@@ -11,6 +11,7 @@ import {
   getAwsConfig,
   getProjectName,
   isAwsConfigured,
+  getAwsAccountId,
   findBucket,
   hasCors,
   getS3Client,
@@ -19,6 +20,19 @@ import {
   PutBucketEncryptionCommand,
   PutBucketCorsCommand,
 } from '../utils/aws-helpers.js';
+
+/**
+ * Get a globally unique S3 bucket name.
+ * Tries `factiii-{project}` first (backwards compatible).
+ * Falls back to `factiii-{project}-{accountId}` if the simple name is taken.
+ */
+async function resolveBucketName(projectName: string, region: string): Promise<string> {
+  const simpleName = 'factiii-' + projectName;
+  if (await findBucket(simpleName, region)) return simpleName; // Already ours
+  // Try simple name first, use account-scoped name as fallback
+  const accountId = await getAwsAccountId(region);
+  return accountId ? simpleName + '-' + accountId : simpleName;
+}
 
 export const s3Fixes: Fix[] = [
   {
@@ -30,13 +44,13 @@ export const s3Fixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const bucketName = 'factiii-' + projectName;
+      const bucketName = await resolveBucketName(projectName, region);
       return !(await findBucket(bucketName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const bucketName = 'factiii-' + projectName;
+      const bucketName = await resolveBucketName(projectName, region);
 
       try {
         const s3 = getS3Client(region);
@@ -94,14 +108,14 @@ export const s3Fixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const bucketName = 'factiii-' + projectName;
+      const bucketName = await resolveBucketName(projectName, region);
       if (!(await findBucket(bucketName, region))) return false;
       return !(await hasCors(bucketName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const bucketName = 'factiii-' + projectName;
+      const bucketName = await resolveBucketName(projectName, region);
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { extractEnvironments } = require('../../../../utils/config-helpers.js');

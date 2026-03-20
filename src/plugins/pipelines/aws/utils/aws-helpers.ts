@@ -142,6 +142,17 @@ function readAwsRegionFromConfig(): string | null {
 
 const clientCache: Record<string, unknown> = {};
 
+/**
+ * Clear all cached AWS SDK clients.
+ * Call after swapping credentials (e.g. writing new ~/.aws/credentials)
+ * so new clients pick up the updated credentials.
+ */
+export function clearClientCache(): void {
+  for (const key of Object.keys(clientCache)) {
+    delete clientCache[key];
+  }
+}
+
 function getCachedClient<T>(ClientClass: new (config: { region: string }) => T, region: string): T {
   const key = ClientClass.name + ':' + region;
   if (!clientCache[key]) {
