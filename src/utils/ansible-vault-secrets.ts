@@ -116,6 +116,13 @@ function vaultEncrypt(
   const plaintext = fs.readFileSync(inputPath, 'utf8');
   const v = new Vault({ password });
   const encrypted = v.encryptSync(plaintext);
+
+  // CRITICAL: Verify round-trip before overwriting vault file
+  // Why: ansible-vault npm package can produce corrupt output on some platforms
+  // Breaks-if-changed: vault file gets silently corrupted, causing password mismatch errors
+  const verifier = new Vault({ password });
+  verifier.decryptSync(encrypted); // Throws if encryption produced corrupt output
+
   fs.writeFileSync(outputPath, encrypted + '\n', 'utf8');
 }
 

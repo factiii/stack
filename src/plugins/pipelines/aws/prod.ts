@@ -10,7 +10,8 @@ import yaml from 'js-yaml';
 
 import { sshExec } from '../../../utils/ssh-helper.js';
 import { extractEnvironments } from '../../../utils/config-helpers.js';
-import { generateDockerCompose, generateNginx, scanRepos, loadConfigs } from '../../../scripts/index.js';
+// generateDockerCompose/generateNginx run locally and need ~/.factiii/ — not available on dev machine
+// For fresh deploys, we generate configs in-memory and upload via SSH
 import { getAwsAccountId, getEcrAuthToken } from './utils/aws-helpers.js';
 import { AnsibleVaultSecrets } from '../../../utils/ansible-vault-secrets.js';
 import type {
@@ -85,9 +86,10 @@ async function ensureRepoCloned(
       gitUrl = `git@github.com:${repoUrl}.git`;
     }
 
+    // Remove existing non-git directory if it exists (e.g., from mkdir -p)
     await sshExecCommand(
       envConfig,
-      `mkdir -p ~/.factiii && cd ~/.factiii && git clone ${gitUrl} ${repoName}`
+      `mkdir -p ~/.factiii && cd ~/.factiii && (test -d ${repoName} && rm -rf ${repoName} || true) && git clone ${gitUrl} ${repoName}`
     );
   }
 }
@@ -192,14 +194,12 @@ async function runCertbot(
   envConfig: EnvironmentConfig,
   config: FactiiiConfig
 ): Promise<void> {
-  const environments = extractEnvironments(config);
-
-  // Collect all domains that need certificates
+  // Only get certificate for the current environment's domain (not all environments)
   const domains: string[] = [];
-  for (const env of Object.values(environments)) {
-    if (env.domain && !env.domain.toUpperCase().startsWith('EXAMPLE')) {
-      domains.push(env.domain);
-    }
+  if (envConfig.domain &&
+      !envConfig.domain.toUpperCase().startsWith('EXAMPLE') &&
+      !/^\d+\.\d+\.\d+\.\d+$/.test(envConfig.domain)) { // Skip IP addresses — certbot needs real domains
+    domains.push(envConfig.domain);
   }
 
   if (domains.length === 0) {
@@ -443,11 +443,33 @@ export async function deployProd(
     const region = config.aws?.region ?? 'us-east-1';
 
     // Resolve AWS values on dev machine via SDK (no AWS CLI needed on server)
+    // If credentials fail, try restoring from Ansible Vault
+    let accountId = await getAwsAccountId(region);
+    if (!accountId && config.ansible?.vault_path) {
+      try {
+        const { AnsibleVaultSecrets } = await import('../../../utils/ansible-vault-secrets.js');
+        const vault = new AnsibleVaultSecrets({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+        });
+        const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
+        const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
+        if (accessKeyId && secretKey) {
+          const { writeAwsCredentials, clearClientCache } = await import('./utils/aws-helpers.js');
+          writeAwsCredentials(accessKeyId, secretKey, region);
+          clearClientCache();
+          accountId = await getAwsAccountId(region);
+          if (accountId) {
+            console.log('   [OK] Restored AWS credentials from vault');
+          }
+        }
+      } catch { /* vault read failed */ }
+    }
+
     let ecrRegistry: string;
     if (config.ecr_registry) {
       ecrRegistry = config.ecr_registry;
     } else {
-      const accountId = await getAwsAccountId(region);
       if (!accountId) {
         return { success: false, error: 'Failed to get AWS account ID. Check AWS credentials on dev machine.' };
       }
@@ -517,66 +539,234 @@ export async function deployProd(
         'cd ~ && docker compose up -d ' + composeServiceKey
       );
     } else if (composeCheck.includes('FACTIII_EXISTS')) {
-      // Managed by stack: docker-compose.yml in ~/.factiii/
-      // Regenerate configs and deploy
-      console.log('   🔄 Regenerating unified docker-compose.yml...');
-      const repos = scanRepos();
-      const configs = loadConfigs(repos);
-      generateDockerCompose(configs);
-      generateNginx(configs);
-
-      console.log('   🔄 Updating docker-compose.yml with ECR image references...');
+      // Managed by stack: docker-compose.yml already exists in ~/.factiii/ on server
+      // Update ECR image reference in-place (reads/writes via SSH, no local files needed)
+      console.log('   🔄 Updating docker-compose.yml with ECR image...');
       await updateComposeForECR(envConfig, config, ecrRegistry);
 
       console.log('   🔐 Logging in to ECR and pulling image...');
       await sshExecCommand(
         envConfig,
-        'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry + ' && ' +
+        'sudo docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry + ' <<< ' + JSON.stringify(ecrAuth.password) + ' && ' +
         'cd ~/.factiii && ' +
-        'docker compose pull ' + repoName + '-prod'
+        'sudo docker compose pull ' + repoName + '-prod'
       );
 
       console.log('   🔐 Managing SSL certificates...');
-      await runCertbot(envConfig, config);
-      await setupCertbotRenewal(envConfig);
-
-      console.log('   🚀 Starting containers with unified docker-compose.yml...');
-      await sshExecCommand(
-        envConfig,
-        `cd ~/.factiii && docker compose up -d ${repoName}-prod`
-      );
-    } else {
-      // Fresh server: no docker-compose.yml found
-      // Generate everything from scratch
-      console.log('   🆕 No docker-compose.yml found — generating fresh configs...');
-      const repos = scanRepos();
-      const configs = loadConfigs(repos);
-      generateDockerCompose(configs);
-      generateNginx(configs);
-
-      console.log('   🔄 Updating docker-compose.yml with ECR image references...');
-      await updateComposeForECR(envConfig, config, ecrRegistry);
-
-      console.log('   🔐 Logging in to ECR and pulling image...');
-      await sshExecCommand(
-        envConfig,
-        'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry + ' && ' +
-        'cd ~/.factiii && ' +
-        'docker compose pull ' + repoName + '-prod'
-      );
-
-      console.log('   🔐 Managing SSL certificates...');
-      await runCertbot(envConfig, config);
-      await setupCertbotRenewal(envConfig);
+      try {
+        await runCertbot(envConfig, config);
+        await setupCertbotRenewal(envConfig);
+      } catch (certErr) {
+        console.log('   ⚠️  SSL setup skipped: ' + (certErr instanceof Error ? certErr.message : String(certErr)));
+      }
 
       console.log('   🚀 Starting containers...');
       await sshExecCommand(
         envConfig,
-        `cd ~/.factiii && docker compose up -d ${repoName}-prod`
+        'cd ~/.factiii && sudo docker compose up -d ' + repoName + '-prod'
+      );
+    } else {
+      // Fresh server: no docker-compose.yml found
+      // Generate docker-compose.yml + nginx.conf from project config and upload to server
+      console.log('   🆕 No docker-compose.yml found — generating from project config...');
+
+      const ecrRepository = config.ecr_repository ?? repoName;
+      const imageTag = ecrRegistry + '/' + ecrRepository + ':latest';
+      const serviceName = repoName + '-prod';
+      const domain = envConfig.domain ?? 'localhost';
+      const envFile = './' + repoName + '/.env.prod';
+
+      // Generate docker-compose.yml content (matches staging pattern: postgres + app + nginx)
+      const dbName = repoName.replace(/[^a-zA-Z0-9]/g, '') + '-prod';
+      const composeObj: Record<string, unknown> = {
+        version: '3.8',
+        services: {
+          postgres: {
+            image: 'postgres:15-alpine',
+            container_name: 'factiii_postgres',
+            restart: 'unless-stopped',
+            environment: [
+              'POSTGRES_USER=postgres',
+              'POSTGRES_PASSWORD=postgres',
+              'POSTGRES_DB=' + dbName,
+            ],
+            volumes: ['postgres_data:/var/lib/postgresql/data'],
+            expose: ['5432'],
+            networks: ['factiii'],
+            healthcheck: {
+              test: ['CMD-SHELL', 'pg_isready -U postgres -d ' + dbName],
+              interval: '10s',
+              timeout: '5s',
+              retries: 5,
+            },
+          },
+          [serviceName]: {
+            image: imageTag,
+            container_name: serviceName,
+            restart: 'unless-stopped',
+            networks: ['factiii'],
+            expose: ['3000'],
+            env_file: [envFile],
+            environment: {
+              DATABASE_URL: 'postgresql://postgres:postgres@postgres:5432/' + dbName + '?connect_timeout=300',
+            },
+            depends_on: {
+              postgres: { condition: 'service_healthy' },
+            },
+          },
+          nginx: {
+            image: 'nginx:alpine',
+            container_name: 'factiii_nginx',
+            ports: ['80:80', '443:443'],
+            volumes: [
+              './nginx.conf:/etc/nginx/nginx.conf:ro',
+              '/etc/letsencrypt:/etc/letsencrypt:ro',
+              '/var/www/certbot:/var/www/certbot:ro',
+            ],
+            networks: ['factiii'],
+            restart: 'unless-stopped',
+            depends_on: [serviceName],
+          },
+        },
+        volumes: {
+          postgres_data: {},
+        },
+        networks: {
+          factiii: { driver: 'bridge' },
+        },
+      };
+
+      const composeContent = yaml.dump(composeObj, { lineWidth: -1 });
+      console.log('   📝 Uploading docker-compose.yml to server...');
+      await sshExecCommand(envConfig,
+        "mkdir -p ~/.factiii && cat > ~/.factiii/docker-compose.yml << 'COMPOSEEOF'\n" + composeContent + '\nCOMPOSEEOF'
+      );
+
+      // Generate nginx.conf — HTTP-only initially (certbot adds HTTPS after)
+      const nginxContent = [
+        '# Generated by @factiii/stack',
+        'events { worker_connections 1024; }',
+        'http {',
+        '    include /etc/nginx/mime.types;',
+        '    default_type application/octet-stream;',
+        '    sendfile on;',
+        '    keepalive_timeout 65;',
+        '    client_max_body_size 100M;',
+        '    gzip on;',
+        '    gzip_vary on;',
+        '    gzip_types text/plain text/css application/json application/javascript text/xml;',
+        '',
+        '    server {',
+        '        listen 80;',
+        '        server_name ' + domain + ';',
+        '',
+        '        location /.well-known/acme-challenge/ {',
+        '            root /var/www/certbot;',
+        '        }',
+        '',
+        '        location / {',
+        '            proxy_pass http://' + serviceName + ':3000;',
+        '            proxy_http_version 1.1;',
+        '            proxy_set_header Upgrade $http_upgrade;',
+        '            proxy_set_header Connection "upgrade";',
+        '            proxy_set_header Host $host;',
+        '            proxy_set_header X-Real-IP $remote_addr;',
+        '            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+        '            proxy_set_header X-Forwarded-Proto $scheme;',
+        '        }',
+        '    }',
+        '}',
+      ].join('\n');
+      console.log('   📝 Uploading nginx.conf to server...');
+      await sshExecCommand(envConfig,
+        "cat > ~/.factiii/nginx.conf << 'NGINXEOF'\n" + nginxContent + '\nNGINXEOF'
+      );
+
+      // Install Docker + Docker Compose on server if missing (must happen before any docker commands)
+      try {
+        await sshExecCommand(envConfig, 'docker compose version');
+        console.log('   ✅ Docker is ready');
+      } catch {
+        console.log('   🐳 Installing Docker on server...');
+        await sshExecCommand(envConfig,
+          'sudo apt-get update -qq && ' +
+          'curl -fsSL https://get.docker.com | sh && ' +
+          'sudo usermod -aG docker $USER && ' +
+          'sudo systemctl enable docker && sudo systemctl start docker'
+        );
+        // newgrp docker doesn't work over SSH, use sudo for first run
+        console.log('   ✅ Docker installed');
+      }
+
+      console.log('   🔐 Logging in to ECR and pulling image...');
+      await sshExecCommand(
+        envConfig,
+        'sudo docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry + ' <<< ' + JSON.stringify(ecrAuth.password) + ' && ' +
+        'cd ~/.factiii && ' +
+        'sudo docker compose pull ' + serviceName
+      );
+
+      console.log('   🔐 Managing SSL certificates...');
+      try {
+        await runCertbot(envConfig, config);
+        await setupCertbotRenewal(envConfig);
+      } catch (certErr) {
+        console.log('   ⚠️  SSL setup skipped (will use HTTP): ' + (certErr instanceof Error ? certErr.message : String(certErr)));
+      }
+
+      console.log('   🚀 Starting containers...');
+      await sshExecCommand(
+        envConfig,
+        'cd ~/.factiii && sudo docker compose up -d'
       );
     }
 
-    // Step 6: Post-deploy health check
+    // Step 6: Run database migrations if Prisma is detected
+    {
+      const repoName2 = config.name ?? 'app';
+      const serviceName2 = repoName2 + '-prod';
+      try {
+        // Check if container has prisma schema
+        const hasPrisma = await sshExecCommand(envConfig,
+          'sudo docker exec ' + serviceName2 + ' sh -c "find / -name schema.prisma -maxdepth 5 2>/dev/null | head -1"'
+        );
+        if (hasPrisma.trim()) {
+          console.log('   🗃️ Running database migrations...');
+          // Get the directory containing schema.prisma
+          const schemaPath = hasPrisma.trim();
+          const schemaDir = schemaPath.substring(0, schemaPath.lastIndexOf('/'));
+          const workDir = schemaDir.replace(/\/prisma$/, '');
+
+          // Install prisma CLI temporarily and run migrate deploy
+          const migrateResult = await sshExecCommand(envConfig,
+            'sudo docker exec -w ' + workDir + ' ' + serviceName2 + ' sh -c "' +
+            'npm install --no-save prisma @prisma/config @prisma/client 2>/dev/null && ' +
+            'npx prisma migrate deploy 2>&1' +
+            '"'
+          );
+          if (migrateResult.includes('All migrations have been successfully applied') ||
+              migrateResult.includes('migrations applied') ||
+              migrateResult.includes('already in sync')) {
+            console.log('   ✅ Database migrations applied');
+          } else if (migrateResult.includes('No pending migrations')) {
+            console.log('   ✅ Database already up to date');
+          } else {
+            console.log('   📝 Migration output: ' + migrateResult.trim().split('\n').pop());
+          }
+
+          // Restart app container to pick up fresh schema
+          await sshExecCommand(envConfig,
+            'cd ~/.factiii && sudo docker compose restart ' + serviceName2
+          );
+          console.log('   🔄 Restarted app container');
+        }
+      } catch (migErr) {
+        const migMsg = migErr instanceof Error ? migErr.message : String(migErr);
+        console.log('   ⚠️  Migration step: ' + migMsg.split('\n')[0]);
+      }
+    }
+
+    // Step 7: Post-deploy health check
     console.log('   🔍 Running post-deploy health check...');
     try {
       const healthResult = await sshExecCommand(

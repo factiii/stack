@@ -241,10 +241,22 @@ export async function buildProductionImage(
       const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
       const pathEnv = '/opt/homebrew/bin:/usr/local/bin:' + (process.env.PATH ?? '');
 
-      // Step 1: Build image with amd64 platform
+      // Step 1: Ensure buildx is available (needed for cross-platform amd64 builds on ARM Mac)
+      try {
+        execSync('docker buildx version', { stdio: 'pipe', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv } });
+      } catch {
+        console.log('   Installing docker-buildx...');
+        try {
+          execSync('brew install docker-buildx 2>/dev/null; mkdir -p ~/.docker/cli-plugins && ln -sfn "$(brew --prefix 2>/dev/null)/bin/docker-buildx" ~/.docker/cli-plugins/docker-buildx 2>/dev/null || true', {
+            stdio: 'inherit', shell: '/bin/bash', env: { ...process.env, PATH: pathEnv },
+          });
+        } catch { /* continue — build may still work */ }
+      }
+
+      // Step 2: Build image with amd64 platform
       console.log('   🔨 Building Docker image (amd64): ' + imageTag + '...');
       execSync(
-        'cd ' + expandedRepoDir + ' && docker build --platform linux/amd64 -t ' + imageTag + ' -f ' + dockerfile + ' .',
+        'cd ' + expandedRepoDir + ' && docker buildx build --platform linux/amd64 --load -t ' + imageTag + ' -f ' + dockerfile + ' .',
         {
           stdio: 'inherit',
           shell: '/bin/bash',
@@ -272,9 +284,10 @@ export async function buildProductionImage(
       await sshExecCommand(
         stagingConfig,
         'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && ' +
+        '(docker buildx version >/dev/null 2>&1 || (echo "Installing docker-buildx..." && brew install docker-buildx 2>/dev/null; mkdir -p ~/.docker/cli-plugins && ln -sfn "$(brew --prefix 2>/dev/null)/bin/docker-buildx" ~/.docker/cli-plugins/docker-buildx 2>/dev/null || true)) && ' +
         'cd ' + repoDir + ' && ' +
         'echo "Building Docker image (amd64): ' + imageTag + '..." && ' +
-        'docker build --platform linux/amd64 -t ' + imageTag + ' -f ' + dockerfile + ' . && ' +
+        'docker buildx build --platform linux/amd64 --load -t ' + imageTag + ' -f ' + dockerfile + ' . && ' +
         'echo "Logging in to ECR..." && ' +
         ecrLoginCmd + ' && ' +
         'echo "Pushing image to ECR: ' + imageTag + '..." && ' +
@@ -354,7 +367,7 @@ export async function buildProductionImageLocally(
 
     // Step 1: Build image
     console.log('   Building Docker image: ' + imageTag + '...');
-    const buildCmd = 'docker build --platform linux/amd64 -t ' + imageTag + ' -f ' + dockerfile + ' .';
+    const buildCmd = 'DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t ' + imageTag + ' -f ' + dockerfile + ' .';
     execSync(
       isWindows ? buildCmd : ('cd ' + repoDir + ' && ' + buildCmd),
       { stdio: 'inherit', shell: shellOption, cwd: isWindows ? repoDir : undefined }

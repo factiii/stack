@@ -77,6 +77,7 @@ import { dbSeedFixes } from './scanfix/db-seed.js';
 // Import AWS scanfix arrays (AWS provisioning runs as part of factiii pipeline)
 import { configFixes as awsConfigFixes } from '../aws/scanfix/config.js';
 import { credentialsFixes } from '../aws/scanfix/credentials.js';
+import { dockerFixes } from '../aws/scanfix/docker.js';
 import { vpcFixes } from '../aws/scanfix/vpc.js';
 import { securityGroupFixes } from '../aws/scanfix/security-groups.js';
 import { ec2Fixes } from '../aws/scanfix/ec2.js';
@@ -335,6 +336,7 @@ class FactiiiPipeline {
     ...vpcFixes,
     ...securityGroupFixes,
     ...ec2Fixes,
+    ...dockerFixes,
     ...rdsFixes,
     ...s3Fixes,
     ...ecrFixes,

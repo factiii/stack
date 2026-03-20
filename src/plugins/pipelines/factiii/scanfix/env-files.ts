@@ -285,6 +285,8 @@ export const envFileFixes: Fix[] = [
     severity: 'warning',
     description: '🔐 .env.staging not stored in Ansible Vault',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      // Vault import is a local dev concern — skip on server
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       if (!config.ansible?.vault_path) return false;
 
       const envs = extractEnvironments(config);
@@ -324,7 +326,11 @@ export const envFileFixes: Fix[] = [
           vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
           rootDir,
         });
-        await vault.setEnvironmentSecrets('staging', envVars);
+        const result = await vault.setEnvironmentSecrets('staging', envVars);
+        if (!result.success) {
+          console.log('   Failed to store in vault: ' + (result.error ?? 'unknown error'));
+          return false;
+        }
         console.log('   Stored ' + Object.keys(envVars).length + ' staging env vars in vault');
         return true;
       } catch (e) {
@@ -343,6 +349,8 @@ export const envFileFixes: Fix[] = [
     severity: 'warning',
     description: '🔐 .env.prod not stored in Ansible Vault',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      // Vault import is a local dev concern — skip on server
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       if (!config.ansible?.vault_path) return false;
 
       const envs = extractEnvironments(config);
@@ -383,7 +391,11 @@ export const envFileFixes: Fix[] = [
           vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
           rootDir,
         });
-        await vault.setEnvironmentSecrets('prod', envVars);
+        const result = await vault.setEnvironmentSecrets('prod', envVars);
+        if (!result.success) {
+          console.log('   Failed to store in vault: ' + (result.error ?? 'unknown error'));
+          return false;
+        }
         console.log('   Stored ' + Object.keys(envVars).length + ' prod env vars in vault');
         return true;
       } catch (e) {
@@ -412,6 +424,8 @@ export const envFileFixes: Fix[] = [
       return '🔐 Vault staging_envs missing keys from .env.example';
     },
     scan: async function (config: FactiiiConfig, rootDir: string): Promise<boolean> {
+      // Vault key checks are a local dev concern — skip on server
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       if (!config.ansible?.vault_path) return false;
 
       const envs = extractEnvironments(config);
@@ -479,7 +493,11 @@ export const envFileFixes: Fix[] = [
           newSecrets[key] = value || exampleVal; // Use example value if left blank
         }
 
-        await vault.setEnvironmentSecrets('staging', newSecrets);
+        const result = await vault.setEnvironmentSecrets('staging', newSecrets);
+        if (!result.success) {
+          console.log('   Failed to store in vault: ' + (result.error ?? 'unknown error'));
+          return false;
+        }
         console.log('   Added ' + comparison.missing.length + ' keys to vault staging_envs');
         return true;
       } catch (e) {
@@ -506,6 +524,8 @@ export const envFileFixes: Fix[] = [
       return '🔐 Vault prod_envs missing keys from .env.example';
     },
     scan: async function (config: FactiiiConfig, rootDir: string): Promise<boolean> {
+      // Vault key checks are a local dev concern — skip on server
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       if (!config.ansible?.vault_path) return false;
 
       const envs = extractEnvironments(config);
@@ -574,7 +594,11 @@ export const envFileFixes: Fix[] = [
           newSecrets[key] = value || exampleVal;
         }
 
-        await vault.setEnvironmentSecrets('prod', newSecrets);
+        const result = await vault.setEnvironmentSecrets('prod', newSecrets);
+        if (!result.success) {
+          console.log('   Failed to store in vault: ' + (result.error ?? 'unknown error'));
+          return false;
+        }
         console.log('   Added ' + comparison.missing.length + ' keys to vault prod_envs');
         return true;
       } catch (e) {
@@ -584,5 +608,60 @@ export const envFileFixes: Fix[] = [
       }
     },
     manualFix: 'Run: npx stack fix --dev (will prompt for missing prod secret values)',
+  },
+
+  // ── PORT slot validation ─────────────────────────────────────
+  // Detect PORT=1-9 (slot values meant for local dev) in staging/prod env files.
+  // Docker deployments need PORT=3000 because nginx proxies to that port.
+
+  {
+    id: 'env-staging-port-slot',
+    stage: 'dev',
+    severity: 'warning',
+    description: '⚠️ .env.staging has PORT slot value (should be 3000 for Docker deployment)',
+    scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      if (!hasEnvironments(_config)) return false;
+      const envPath = path.join(rootDir, '.env.staging');
+      if (!fs.existsSync(envPath)) return false;
+      const content = fs.readFileSync(envPath, 'utf8');
+      const match = content.match(/^PORT=(\d+)$/m);
+      if (!match) return false;
+      const port = parseInt(match[1]!, 10);
+      return port >= 1 && port <= 9; // Slot value — not a real port
+    },
+    fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      const envPath = path.join(rootDir, '.env.staging');
+      let content = fs.readFileSync(envPath, 'utf8');
+      content = content.replace(/^PORT=\d+$/m, 'PORT=3000');
+      fs.writeFileSync(envPath, content, 'utf8');
+      console.log('   Converted PORT slot → PORT=3000 in .env.staging');
+      return true;
+    },
+    manualFix: 'Change PORT in .env.staging from a slot number (1-9) to 3000',
+  },
+  {
+    id: 'env-prod-port-slot',
+    stage: 'dev',
+    severity: 'warning',
+    description: '⚠️ .env.prod has PORT slot value (should be 3000 for Docker deployment)',
+    scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      if (!hasEnvironments(_config)) return false;
+      const envPath = path.join(rootDir, '.env.prod');
+      if (!fs.existsSync(envPath)) return false;
+      const content = fs.readFileSync(envPath, 'utf8');
+      const match = content.match(/^PORT=(\d+)$/m);
+      if (!match) return false;
+      const port = parseInt(match[1]!, 10);
+      return port >= 1 && port <= 9;
+    },
+    fix: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      const envPath = path.join(rootDir, '.env.prod');
+      let content = fs.readFileSync(envPath, 'utf8');
+      content = content.replace(/^PORT=\d+$/m, 'PORT=3000');
+      fs.writeFileSync(envPath, content, 'utf8');
+      console.log('   Converted PORT slot → PORT=3000 in .env.prod');
+      return true;
+    },
+    manualFix: 'Change PORT in .env.prod from a slot number (1-9) to 3000',
   },
 ];

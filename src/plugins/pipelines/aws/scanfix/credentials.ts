@@ -18,9 +18,12 @@ import * as os from 'os';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsAccountId,
+  getCallerArn,
   getAwsConfig,
   getIAMClient,
+  canManageIam,
   findIamUser,
+  clearClientCache,
   CreateUserCommand,
   PutUserPolicyCommand,
   CreateAccessKeyCommand,
@@ -79,6 +82,7 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
   }
 
   writeAwsCredentials(inputAccessKeyId, inputSecretKey, finalRegion);
+  clearClientCache(); // Pick up new credentials
 
   accountId = await getAwsAccountId(region);
   if (!accountId) {
@@ -147,6 +151,7 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
 
     // Phase D: Write new IAM credentials to ~/.aws/
     writeAwsCredentials(newAccessKeyId, newSecretKey, region);
+    clearClientCache(); // Pick up new IAM credentials
 
     // Verify new credentials work
     const verifyId = await getAwsAccountId(region);
@@ -440,6 +445,7 @@ export const credentialsFixes: Fix[] = [
         const region = config.aws?.region ?? 'us-east-1';
 
         writeAwsCredentials(accessKeyId, secretKey, region);
+        clearClientCache(); // Pick up vault credentials
 
         console.log('   ✅ Configured ~/.aws/credentials from Ansible Vault');
         console.log('   ✅ Configured ~/.aws/config (region: ' + region + ')');
@@ -451,6 +457,106 @@ export const credentialsFixes: Fix[] = [
     },
     manualFix: 'Extract AWS credentials from vault and configure CLI:\n' +
       '    npx stack fix --dev',
+  },
+  {
+    id: 'aws-credentials-wrong-user',
+    stage: 'dev',
+    severity: 'warning',
+    get description(): string {
+      const arn = (this as any)._callerArn as string | undefined;
+      if (arn) {
+        const userName = arn.split('/').pop() ?? 'unknown';
+        return '🔑 AWS CLI using "' + userName + '" instead of admin user (factiii-admin)';
+      }
+      return '🔑 AWS CLI credentials do not match expected admin user';
+    },
+    scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      // Only check if AWS is configured
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+      const hasAwsEnv = Object.values(environments).some(
+        (e: { access_key_id?: string; config?: string }) => !!e.access_key_id || !!e.config
+      );
+      if (!hasAwsEnv && !config.aws) return false;
+
+      const awsConfig = getAwsConfig(config);
+      const accountId = await getAwsAccountId(awsConfig.region);
+      if (!accountId) return false; // No valid creds — handled by other fixes
+
+      // Get current caller identity
+      const callerArn = await getCallerArn(awsConfig.region);
+      if (!callerArn) return false;
+
+      // Extract username from ARN: arn:aws:iam::ACCOUNT:user/USERNAME
+      const arnParts = callerArn.split('/');
+      const currentUser = arnParts.length > 1 ? arnParts[arnParts.length - 1] : null;
+      if (!currentUser) return false;
+
+      // The admin user should be factiii-admin
+      // Project scoped users (factiii-{project}-dev, factiii-{project}-prod) don't have IAM perms
+      if (currentUser === 'factiii-admin') return false; // Correct user
+
+      // Also allow root account (no user path in ARN)
+      if (callerArn.includes(':root')) return false;
+
+      // Flag ANY scoped factiii user — they lack IAM permissions and may be from
+      // a different project (e.g., last project's user still loaded in ~/.aws/credentials)
+      if (currentUser.startsWith('factiii-') &&
+          (currentUser.endsWith('-dev') || currentUser.endsWith('-prod'))) {
+        (this as any)._callerArn = callerArn;
+        return true;
+      }
+
+      // Unknown user — don't flag (could be custom setup)
+      return false;
+    },
+    fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      // Try to swap to vault admin credentials
+      if (!config.ansible?.vault_path) {
+        console.log('   No Ansible Vault configured — update ~/.aws/credentials manually');
+        return false;
+      }
+
+      try {
+        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+        const vault = new AnsibleVaultSecrets({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+        });
+
+        const check = await vault.checkSecrets(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']);
+        if (!check.status?.AWS_ACCESS_KEY_ID || !check.status?.AWS_SECRET_ACCESS_KEY) {
+          console.log('   Admin credentials not found in vault');
+          return false;
+        }
+
+        const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
+        const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
+
+        if (!accessKeyId || !secretKey) {
+          console.log('   Failed to read credentials from vault');
+          return false;
+        }
+
+        const awsConfig = getAwsConfig(config);
+        writeAwsCredentials(accessKeyId, secretKey, awsConfig.region || 'us-east-1');
+
+        // Clear cached clients so they pick up new credentials
+        clearClientCache();
+
+        // Verify the swapped credentials are the admin user
+        const newArn = await getCallerArn(awsConfig.region);
+        console.log('   Switched to: ' + (newArn ?? 'vault credentials'));
+        return true;
+      } catch (e) {
+        console.log('   Error: ' + (e instanceof Error ? e.message : String(e)));
+        return false;
+      }
+    },
+    manualFix: 'Update ~/.aws/credentials with admin (factiii-admin) credentials:\n' +
+      '  npx stack deploy --secrets set AWS_ACCESS_KEY_ID\n' +
+      '  npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY\n' +
+      '  Then: npx stack fix --dev',
   },
   {
     id: 'aws-credentials-invalid',
@@ -479,5 +585,133 @@ export const credentialsFixes: Fix[] = [
     },
     fix: null,
     manualFix: 'Check AWS credentials: aws sts get-caller-identity\nIf expired, regenerate in AWS Console: IAM > Users > Security credentials',
+  },
+  {
+    id: 'aws-prod-credentials-ready',
+    stage: 'prod',
+    severity: 'critical',
+    description: '🔑 AWS credentials not valid for prod provisioning',
+    scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      const environments = extractEnvironments(config);
+      const hasAwsEnv = Object.values(environments).some(
+        (e: { access_key_id?: string; config?: string }) => !!e.access_key_id || !!e.config
+      );
+      if (!hasAwsEnv && !config.aws) return false;
+
+      const awsConfig = getAwsConfig(config);
+      const accountId = await getAwsAccountId(awsConfig.region);
+      if (accountId) {
+        // Credentials work — but check if we're using a scoped user that lacks provisioning perms
+        const callerArn = await getCallerArn(awsConfig.region);
+        if (!callerArn) return false;
+        const arnParts = callerArn.split('/');
+        const currentUser = arnParts.length > 1 ? arnParts[arnParts.length - 1] : null;
+        if (!currentUser) return false;
+        // Admin and root are fine for provisioning
+        if (currentUser === 'factiii-admin' || callerArn.includes(':root')) return false;
+        // Scoped users (factiii-xxx-dev, factiii-xxx-prod) lack VPC/EC2 create permissions
+        if (currentUser.startsWith('factiii-') &&
+            (currentUser.endsWith('-dev') || currentUser.endsWith('-prod'))) {
+          return true; // Wrong user for provisioning
+        }
+        return false;
+      }
+      // No valid credentials at all
+      return true;
+    },
+    fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      const awsConfig = getAwsConfig(config);
+      const region = awsConfig.region || 'us-east-1';
+
+      // Try to restore admin credentials from vault
+      if (config.ansible?.vault_path) {
+        try {
+          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+          const vault = new AnsibleVaultSecrets({
+            vault_path: config.ansible.vault_path,
+            vault_password_file: config.ansible.vault_password_file,
+          });
+
+          const check = await vault.checkSecrets(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']);
+          if (check.status?.AWS_ACCESS_KEY_ID && check.status?.AWS_SECRET_ACCESS_KEY) {
+            const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
+            const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
+
+            if (accessKeyId && secretKey) {
+              writeAwsCredentials(accessKeyId, secretKey, region);
+              clearClientCache();
+
+              const newAccountId = await getAwsAccountId(region);
+              if (newAccountId) {
+                const newArn = await getCallerArn(region);
+                console.log('   [OK] Restored AWS credentials from vault');
+                console.log('   Logged in as: ' + (newArn ?? 'unknown'));
+
+                // Verify the restored user has provisioning permissions
+                if (await canManageIam(region)) {
+                  return true;
+                }
+                console.log('   [!] Vault credentials lack IAM permissions — may need admin credentials');
+              }
+            }
+          }
+        } catch {
+          // Vault read failed
+        }
+      }
+
+      // Vault didn't work — prompt for admin credentials
+      console.log('');
+      console.log('   ============================================================');
+      console.log('   AWS admin credentials needed for prod provisioning');
+      console.log('   ============================================================');
+      console.log('   Prod provisioning (VPC, EC2, RDS, etc.) requires admin access.');
+      console.log('   Enter the factiii-admin Access Key ID and Secret Access Key.');
+      console.log('   ============================================================');
+      console.log('');
+
+      const { promptSingleLine } = await import('../../../../utils/secret-prompts.js');
+      const inputAccessKeyId = await promptSingleLine('   AWS Access Key ID: ');
+      const inputSecretKey = await promptSingleLine('   AWS Secret Access Key: ', { hidden: true });
+
+      if (!inputAccessKeyId || !inputSecretKey) {
+        console.log('   Access Key ID and Secret Access Key are required.');
+        return false;
+      }
+
+      writeAwsCredentials(inputAccessKeyId, inputSecretKey, region);
+      clearClientCache();
+
+      const verifyId = await getAwsAccountId(region);
+      if (!verifyId) {
+        console.log('   Credentials invalid.');
+        return false;
+      }
+
+      const verifyArn = await getCallerArn(region);
+      console.log('   [OK] Logged in as: ' + (verifyArn ?? 'unknown'));
+
+      // Store in vault for future use
+      if (config.ansible?.vault_path) {
+        try {
+          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+          const vault = new AnsibleVaultSecrets({
+            vault_path: config.ansible.vault_path,
+            vault_password_file: config.ansible.vault_password_file,
+          });
+          await vault.setSecret('AWS_ACCESS_KEY_ID', inputAccessKeyId);
+          await vault.setSecret('AWS_SECRET_ACCESS_KEY', inputSecretKey);
+          console.log('   [OK] Stored credentials in Ansible Vault');
+        } catch {
+          console.log('   TIP: Store in vault: npx stack deploy --secrets set AWS_ACCESS_KEY_ID');
+        }
+      }
+
+      return true;
+    },
+    manualFix: 'Configure AWS admin credentials:\n' +
+      '  aws configure  (paste factiii-admin access key + secret)\n' +
+      '  Or restore from vault: npx stack fix --dev',
   },
 ];

@@ -179,6 +179,24 @@ export const securityGroupFixes: Fix[] = [
       // Skip if staging domain is still a placeholder
       if (stagingEnv.domain.toUpperCase().startsWith('EXAMPLE')) return false;
 
+      // Resolve staging domain to IP (domain is a hostname, not an IP)
+      let stagingIp = stagingEnv.domain;
+      if (!/^\d+\.\d+\.\d+\.\d+$/.test(stagingIp)) {
+        try {
+          const dns = await import('dns');
+          const resolved = await new Promise<string[]>((resolve, reject) => {
+            dns.resolve4(stagingIp, (err, addresses) => {
+              if (err) reject(err);
+              else resolve(addresses);
+            });
+          });
+          if (resolved.length > 0 && resolved[0]) stagingIp = resolved[0];
+          else return false;
+        } catch {
+          return false; // Cannot resolve staging domain
+        }
+      }
+
       // Check if RDS SG has an inbound rule for the staging IP
       try {
         const ec2 = getEC2Client(region);
@@ -186,7 +204,6 @@ export const securityGroupFixes: Fix[] = [
           GroupIds: [rdsSgId],
         }));
         const rules = rulesResult.SecurityGroups?.[0]?.IpPermissions ?? [];
-        const stagingIp = stagingEnv.domain;
 
         for (const rule of rules) {
           if (rule.FromPort === 5432 && rule.ToPort === 5432) {
@@ -230,7 +247,29 @@ export const securityGroupFixes: Fix[] = [
 
       try {
         const ec2 = getEC2Client(region);
-        const stagingIp = stagingEnv.domain;
+
+        // Resolve hostname to IP
+        let stagingIp = stagingEnv.domain;
+        if (!/^\d+\.\d+\.\d+\.\d+$/.test(stagingIp)) {
+          try {
+            const dns = await import('dns');
+            const resolved = await new Promise<string[]>((resolve, reject) => {
+              dns.resolve4(stagingIp, (err, addresses) => {
+                if (err) reject(err);
+                else resolve(addresses);
+              });
+            });
+            if (resolved.length > 0 && resolved[0]) {
+              stagingIp = resolved[0];
+            } else {
+              console.log('   Could not resolve staging domain: ' + stagingEnv.domain);
+              return false;
+            }
+          } catch {
+            console.log('   Could not resolve staging domain: ' + stagingEnv.domain);
+            return false;
+          }
+        }
 
         await ec2.send(new AuthorizeSecurityGroupIngressCommand({
           GroupId: rdsSgId,
@@ -240,7 +279,7 @@ export const securityGroupFixes: Fix[] = [
           CidrIp: stagingIp + '/32',
         }));
 
-        console.log('   Allowed Mac Mini (' + stagingIp + ') access to RDS on port 5432');
+        console.log('   Allowed staging (' + stagingEnv.domain + ' → ' + stagingIp + ') access to RDS on port 5432');
         return true;
       } catch (e) {
         console.log('   Failed to add Mac Mini access: ' + (e instanceof Error ? e.message : String(e)));

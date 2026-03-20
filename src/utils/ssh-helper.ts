@@ -916,7 +916,100 @@ export async function sshRemoteFactiiiCommand(
               stderr: result.status !== 0 ? 'SSH command exited with code ' + result.status : '',
             };
           } else {
-            console.log('   [!] EC2 IP also failed — key may not be authorized yet (EC2 may still be starting)');
+            // Key not authorized — try EC2 Instance Connect to authorize it
+            console.log('   [!] Key not authorized on EC2 instance — trying EC2 Instance Connect recovery...');
+            try {
+              const { findInstance, getEC2Client, getEC2ICClient,
+                DescribeInstancesCommand: DescInst, SendSSHPublicKeyCommand: SendKey } =
+                await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+
+              // Find instance by tag or key pair
+              let instId = await findInstance(projectName, region);
+              if (!instId) {
+                const ec2c = getEC2Client(region);
+                const kpName = 'factiii-' + projectName;
+                const kpDesc = await ec2c.send(new DescInst({
+                  Filters: [
+                    { Name: 'key-name', Values: [kpName] },
+                    { Name: 'instance-state-name', Values: ['running'] },
+                  ],
+                }));
+                instId = kpDesc.Reservations?.[0]?.Instances?.[0]?.InstanceId ?? null;
+              }
+
+              if (instId) {
+                const ec2c = getEC2Client(region);
+                const instDesc = await ec2c.send(new DescInst({ InstanceIds: [instId] }));
+                const inst = instDesc.Reservations?.[0]?.Instances?.[0];
+                const az = inst?.Placement?.AvailabilityZone;
+                const connectIp = ec2Ip ?? inst?.PublicIpAddress;
+
+                if (az && connectIp) {
+                  // Ensure .pub file exists
+                  let pubKeyPath = activeKeyPath + '.pub';
+                  if (!fs.existsSync(pubKeyPath)) {
+                    try {
+                      execSync('ssh-keygen -y -f "' + activeKeyPath + '" > "' + pubKeyPath + '"', { stdio: 'pipe' });
+                    } catch { /* continue */ }
+                  }
+
+                  if (fs.existsSync(pubKeyPath)) {
+                    const pubKey = fs.readFileSync(pubKeyPath, 'utf8').trim();
+                    const eic = getEC2ICClient(region);
+                    const pushResult = await eic.send(new SendKey({
+                      InstanceId: instId,
+                      InstanceOSUser: user,
+                      SSHPublicKey: pubKey,
+                      AvailabilityZone: az,
+                    }));
+
+                    if (pushResult.Success) {
+                      console.log('   [OK] Temporary key pushed via EC2 Instance Connect (60s window)');
+
+                      // Add key permanently to authorized_keys
+                      const addCmd = 'mkdir -p ~/.ssh && echo "' + pubKey + '" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && chmod 700 ~/.ssh && sort -u -o ~/.ssh/authorized_keys ~/.ssh/authorized_keys && echo ok';
+                      const addResult = spawnSync('ssh', [
+                        '-i', activeKeyPath,
+                        '-o', 'StrictHostKeyChecking=no',
+                        '-o', 'ConnectTimeout=15',
+                        user + '@' + connectIp,
+                        addCmd,
+                      ], { encoding: 'utf8', stdio: 'pipe', timeout: 30000 });
+
+                      if (addResult.status === 0) {
+                        console.log('   [OK] Key permanently authorized via EC2 Instance Connect');
+
+                        // Now run the actual command
+                        const startTime = Date.now();
+                        const result = spawnSync('ssh', [
+                          '-tt', '-i', activeKeyPath,
+                          '-o', 'StrictHostKeyChecking=no',
+                          '-o', 'ConnectTimeout=10',
+                          '-o', 'ServerAliveInterval=60',
+                          '-o', 'ServerAliveCountMax=5',
+                          user + '@' + connectIp, remoteCommand,
+                        ], { encoding: 'utf8', stdio: 'inherit', timeout: 600000 });
+                        console.log('   SSH completed in ' + Math.floor((Date.now() - startTime) / 1000) + 's');
+                        return {
+                          success: result.status === 0,
+                          stdout: '',
+                          stderr: result.status !== 0 ? 'SSH command exited with code ' + result.status : '',
+                        };
+                      } else {
+                        console.log('   [!] Failed to permanently add key');
+                      }
+                    } else {
+                      console.log('   [!] EC2 Instance Connect push failed');
+                    }
+                  }
+                }
+              }
+            } catch (eicErr) {
+              const eicMsg = eicErr instanceof Error ? eicErr.message : String(eicErr);
+              if (!eicMsg.includes('Cannot find module')) {
+                console.log('   [!] EC2 Instance Connect recovery failed: ' + eicMsg);
+              }
+            }
           }
         }
       } catch { /* AWS not configured, skip */ }
@@ -1096,7 +1189,31 @@ export async function sshRemoteFactiiiCommand(
     ], { encoding: 'utf8', stdio: 'pipe', timeout: 10000 });
 
     for (const file of existingFiles) {
-      const localPath = path.join(configRoot, file);
+      let localPath = path.join(configRoot, file);
+
+      // Fix PORT slot values in env files before syncing to server
+      // PORT=1-9 is a slot number for local dev (start.sh converts to 5000+N)
+      // On server (Docker), nginx proxies to port 3000, so the app must listen on 3000
+      if (file.startsWith('.env.') && file !== '.env.example') {
+        try {
+          const envContent = fs.readFileSync(localPath, 'utf8');
+          const portMatch = envContent.match(/^PORT=(\d+)$/m);
+          if (portMatch) {
+            const portVal = parseInt(portMatch[1]!, 10);
+            if (portVal >= 1 && portVal <= 9) {
+              // Slot value — write a temp copy with PORT=3000 for the server
+              const fixedContent = envContent.replace(/^PORT=\d+$/m, 'PORT=3000');
+              const tmpPath = localPath + '.deploy-tmp';
+              fs.writeFileSync(tmpPath, fixedContent, 'utf8');
+              localPath = tmpPath;
+              console.log('   [!] Converted PORT=' + portVal + ' (slot) → PORT=3000 for server');
+            }
+          }
+        } catch {
+          // Non-fatal — sync original file
+        }
+      }
+
       const remotePath = user + '@' + host + ':' + remoteProjectDir + '/' + file;
       const scpResult = spawnSync('scp', [
         '-i', activeKeyPath,
@@ -1105,6 +1222,11 @@ export async function sshRemoteFactiiiCommand(
       ], { encoding: 'utf8', stdio: 'pipe', timeout: 15000 });
       if (scpResult.status === 0) {
         console.log('   [OK] Synced ' + file + ' to server');
+      }
+
+      // Clean up temp file
+      if (localPath.endsWith('.deploy-tmp')) {
+        try { fs.unlinkSync(localPath); } catch { /* ok */ }
       }
     }
   }
@@ -1258,6 +1380,76 @@ export async function sshExec(
   });
 
   if (result.status !== 0) {
+    // Check if it's an auth failure on an AWS EC2 instance — try EC2 Instance Connect recovery
+    const errMsg = result.stderr ?? '';
+    if (errMsg.includes('Permission denied') && config?.aws && stage === 'prod') {
+      try {
+        const { isAwsConfigured, getAwsConfig, getProjectName, findInstance, findInstancePublicIp,
+          getEC2Client, getEC2ICClient, DescribeInstancesCommand, SendSSHPublicKeyCommand } =
+          await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+
+        if (isAwsConfigured(config)) {
+          const { region } = getAwsConfig(config);
+          const projectName = getProjectName(config);
+
+          // Find instance
+          let instId = await findInstance(projectName, region);
+          if (!instId) {
+            const ec2 = getEC2Client(region);
+            const kpDesc = await ec2.send(new DescribeInstancesCommand({
+              Filters: [
+                { Name: 'key-name', Values: ['factiii-' + projectName] },
+                { Name: 'instance-state-name', Values: ['running'] },
+              ],
+            }));
+            instId = kpDesc.Reservations?.[0]?.Instances?.[0]?.InstanceId ?? null;
+          }
+
+          if (instId) {
+            const ec2 = getEC2Client(region);
+            const instDesc = await ec2.send(new DescribeInstancesCommand({ InstanceIds: [instId] }));
+            const inst = instDesc.Reservations?.[0]?.Instances?.[0];
+            const az = inst?.Placement?.AvailabilityZone;
+            const connectIp = (await findInstancePublicIp(projectName, region)) ?? inst?.PublicIpAddress;
+
+            if (az && connectIp) {
+              // Ensure .pub file exists
+              const pubPath = keyPath + '.pub';
+              if (!fs.existsSync(pubPath)) {
+                try { execSync('ssh-keygen -y -f "' + keyPath + '" > "' + pubPath + '"', { stdio: 'pipe' }); } catch { /* */ }
+              }
+              if (fs.existsSync(pubPath)) {
+                const pubKey = fs.readFileSync(pubPath, 'utf8').trim();
+                const eic = getEC2ICClient(region);
+                const pushResult = await eic.send(new SendSSHPublicKeyCommand({
+                  InstanceId: instId, InstanceOSUser: user, SSHPublicKey: pubKey, AvailabilityZone: az,
+                }));
+
+                if (pushResult.Success) {
+                  // Add key permanently
+                  const addCmd = 'mkdir -p ~/.ssh && echo "' + pubKey + '" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && chmod 700 ~/.ssh && sort -u -o ~/.ssh/authorized_keys ~/.ssh/authorized_keys';
+                  spawnSync('ssh', ['-i', keyPath, '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=15', user + '@' + connectIp, addCmd],
+                    { encoding: 'utf8', stdio: 'pipe', timeout: 30000 });
+
+                  // Retry the original command
+                  const retryHost = connectIp ?? host;
+                  const retry = spawnSync('ssh', [
+                    '-i', keyPath, '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10',
+                    '-o', 'ServerAliveInterval=60', '-o', 'ServerAliveCountMax=5',
+                    user + '@' + retryHost, command,
+                  ], { encoding: 'utf8', stdio: 'pipe' });
+
+                  if (retry.status === 0) {
+                    return (retry.stdout ?? '').trim();
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch { /* EC2 IC recovery failed — fall through to original error */ }
+    }
+
     throw new Error(result.stderr || 'SSH command failed with exit code ' + result.status);
   }
 

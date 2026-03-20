@@ -18,6 +18,7 @@ import {
   canManageIam,
   getIAMClient,
   writeAwsCredentials,
+  clearClientCache,
   CreateUserCommand,
   PutUserPolicyCommand,
   CreateAccessKeyCommand,
@@ -213,6 +214,7 @@ async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<b
         }
 
         writeAwsCredentials(accessKeyId, secretKey, region);
+        clearClientCache(); // Pick up new credentials
         const newArn = await getCallerArn(region);
         console.log('   [OK] Switched to: ' + (newArn ?? 'unknown'));
 
