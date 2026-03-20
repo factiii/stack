@@ -163,16 +163,27 @@ function getProdPolicy(projectName: string, region: string, accountId: string): 
 async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<boolean> {
   if (await canManageIam(region)) return true;
 
-  const callerArn = await getCallerArn(region);
   const { confirm } = await import('../../../../utils/secret-prompts.js');
+  const configKeyId = getAwsConfig(config).accessKeyId;
+  const identity = await getCallerArn(region);
+
+  // Determine if we can't connect at all vs connected but lacking permissions
+  const canConnect = !!identity;
 
   console.log('');
   console.log('   ============================================================');
-  console.log('   AWS CREDENTIALS CANNOT CREATE IAM USERS');
-  console.log('   ============================================================');
-  console.log('   Logged in as: ' + (callerArn ?? 'unknown'));
-  console.log('   This account does not have permission to create IAM users.');
-  console.log('   You need admin credentials to continue.');
+  if (canConnect) {
+    console.log('   ACCESS KEY ' + (configKeyId ?? 'unknown') + ' DOES NOT HAVE IAM PERMISSIONS');
+    console.log('   ============================================================');
+    console.log('   Logged in as: ' + identity);
+    console.log('   This IAM user does not have permission to create IAM users.');
+    console.log('   The access_key_id in stack.yml needs to belong to an admin user.');
+  } else {
+    console.log('   CANNOT CONNECT TO AWS WITH ACCESS KEY ' + (configKeyId ?? 'unknown'));
+    console.log('   ============================================================');
+    console.log('   The access_key_id in stack.yml could not authenticate.');
+    console.log('   Check that this key exists and has not been deactivated in AWS.');
+  }
   console.log('   ============================================================');
   console.log('');
 
@@ -195,7 +206,7 @@ async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<b
   }
 
   if (vaultHasCreds) {
-    const swap = await confirm('   Load admin credentials from Ansible Vault?', true);
+    const swap = await confirm('   Load credentials from Ansible Vault instead?', true);
 
     if (swap) {
       try {
@@ -204,15 +215,15 @@ async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<b
           vault_path: config.ansible!.vault_path!,
           vault_password_file: config.ansible!.vault_password_file,
         });
-        const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
+        const vaultKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
         const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
 
-        if (!accessKeyId || !secretKey) {
+        if (!vaultKeyId || !secretKey) {
           console.log('   Failed to read credentials from vault.');
           return false;
         }
 
-        writeAwsCredentials(accessKeyId, secretKey, region);
+        writeAwsCredentials(vaultKeyId, secretKey, region);
         const newIdentity = await getCallerArn(region);
         console.log('   [OK] Switched to: ' + (newIdentity ?? 'unknown'));
 
@@ -222,9 +233,9 @@ async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<b
         }
 
         console.log('');
-        console.log('   Still no IAM permission. The vault credentials need admin access.');
+        console.log('   Vault credentials (' + vaultKeyId + ') also lack IAM permissions.');
         console.log('');
-        console.log('   To fix, update the vault credentials:');
+        console.log('   To fix, store admin credentials in the vault:');
         console.log('     npx stack deploy --secrets set AWS_ACCESS_KEY_ID');
         console.log('     npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY');
         console.log('   Then run: npx stack fix');
