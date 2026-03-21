@@ -29,12 +29,10 @@ import * as os from 'os';
 import * as readline from 'readline';
 import * as child_process from 'child_process';
 
-import { getStackConfigPath } from '../constants/config-files.js';
 import { promisify } from 'util';
 
-import yaml from 'js-yaml';
 import type { FactiiiConfig, DevSyncOptions } from '../types/index.js';
-import { extractEnvironments } from '../utils/config-helpers.js';
+import { extractEnvironments, loadConfig } from '../utils/config-helpers.js';
 
 const exec = promisify(child_process.exec);
 
@@ -97,25 +95,14 @@ function saveDevSyncConfig(config: DevSyncConfig): void {
   }
 }
 
-/**
- * Load config from stack.yml (or legacy factiii.yml)
- */
-function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = getStackConfigPath(rootDir);
-
-  if (!fs.existsSync(configPath)) {
+function loadConfigOrExit(rootDir: string): FactiiiConfig {
+  const config = loadConfig(rootDir);
+  if (!config || Object.keys(config).length === 0) {
     console.error('[ERROR] stack.yml not found in current directory');
     console.error('   Make sure you are running this from your app repository');
     process.exit(1);
   }
-
-  try {
-    return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('[ERROR] Error parsing config: ' + errorMessage);
-    process.exit(1);
-  }
+  return config;
 }
 
 /**
@@ -485,7 +472,7 @@ export async function devSync(options: DevSyncOptions = {}): Promise<void> {
   console.log('[!] Only for testing @factiii/stack beta features\n');
 
   // 1. Load config and validate
-  const config = loadConfig(rootDir);
+  const config = loadConfigOrExit(rootDir);
   const infraPath = findInfrastructurePath(rootDir);
   const environments = getTargetEnvironments(config, options);
 

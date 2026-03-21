@@ -51,7 +51,7 @@ export abstract class PipelinePlugin {
    * Check if this pipeline can reach a specific stage from current environment
    *
    * @param stage - 'dev' | 'secrets' | 'staging' | 'prod'
-   * @param config - factiii.yml config
+   * @param config - stack.yml config
    * @returns Reachability result
    */
   static canReach(_stage: Stage, _config: FactiiiConfig): Reachability {

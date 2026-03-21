@@ -28,13 +28,14 @@ export function createDockerInstallFix(stage: Stage, idPrefix?: string): Fix {
     severity: 'critical',
     description: 'Docker is not installed ' + stageLabel,
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      // For non-dev stages, check if environment is configured
+      // For non-dev stages, check if environment is configured with a real domain
       if (stage !== 'dev') {
-        // Environments are top-level keys in factiii.yml (not under config.environments)
         const envConfig = stage === 'prod'
           ? ((config as Record<string, unknown>).prod ?? (config as Record<string, unknown>).production) as Record<string, unknown> | undefined
           : (config as Record<string, unknown>)[stage] as Record<string, unknown> | undefined;
         if (!envConfig?.domain) return false;
+        // Skip if domain is still a placeholder
+        if (typeof envConfig.domain === 'string' && envConfig.domain.toUpperCase().startsWith('EXAMPLE')) return false;
       }
 
       try {
@@ -79,12 +80,14 @@ export function createDockerRunningFix(stage: Stage, idPrefix?: string): Fix {
     severity: 'critical',
     description: 'Docker is not running ' + stageLabel,
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      // For non-dev stages, check if environment is configured
+      // For non-dev stages, check if environment is configured with a real domain
       if (stage !== 'dev') {
         const envConfig = stage === 'prod'
           ? ((config as Record<string, unknown>).prod ?? (config as Record<string, unknown>).production) as Record<string, unknown> | undefined
           : (config as Record<string, unknown>)[stage] as Record<string, unknown> | undefined;
         if (!envConfig?.domain) return false;
+        // Skip if domain is still a placeholder
+        if (typeof envConfig.domain === 'string' && envConfig.domain.toUpperCase().startsWith('EXAMPLE')) return false;
       }
 
       try {
@@ -105,12 +108,23 @@ export function createDockerRunningFix(stage: Stage, idPrefix?: string): Fix {
             // Docker not running, proceed to start it
           }
 
+          // On macOS over SSH, `open -a Docker` won't work (no GUI session).
+          // Try the headless binary directly instead.
+          const isSSH = !!(process.env.SSH_CONNECTION || process.env.SSH_CLIENT || process.env.SSH_TTY);
+          const isMac = process.platform === 'darwin';
+          let startCmd = commands.start!;
+          if (isMac && isSSH) {
+            startCmd = 'nohup /Applications/Docker.app/Contents/MacOS/Docker --unattended > /dev/null 2>&1 &';
+          }
+
           console.log('   Starting Docker...');
           try {
-            execSync(commands.start!, { stdio: 'inherit' });
+            execSync(startCmd, { stdio: 'inherit', shell: isMac ? '/bin/bash' : undefined });
 
-            // Wait for Docker to start (up to 30 seconds)
-            for (let i = 0; i < 30; i++) {
+            // Wait for Docker to start — longer timeout on server (headless start is slower)
+            const onServer = !!(process.env.FACTIII_ON_SERVER || process.env.GITHUB_ACTIONS);
+            const timeout = onServer ? 60 : 30;
+            for (let i = 0; i < timeout; i++) {
               await new Promise(resolve => setTimeout(resolve, 1000));
               try {
                 execSync('docker info', { stdio: 'pipe' });
@@ -121,11 +135,15 @@ export function createDockerRunningFix(stage: Stage, idPrefix?: string): Fix {
               }
             }
 
-            console.log('   Docker is starting (may take a minute)...');
-            return true;
+            console.log('   Docker failed to start within ' + timeout + ' seconds');
+            return false;
           } catch (e) {
             const errorMessage = e instanceof Error ? e.message : String(e);
             console.log('   Failed to start Docker: ' + errorMessage);
+            if (isMac && isSSH) {
+              console.log('   Docker Desktop cannot be started headlessly on this Mac.');
+              console.log('   Please start Docker Desktop on the server directly (VNC/screen sharing) or enable "Start Docker Desktop when you sign in" in Docker settings.');
+            }
             return false;
           }
         }

@@ -6,10 +6,11 @@
  * directly from the dev laptop to staging/prod servers.
  */
 
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { writeSecureKeyFile } from './ssh-helper.js';
 
 export interface SSHDeployConfig {
     host: string;
@@ -45,15 +46,20 @@ export class SSHDeploy {
      * Write SSH key to temp file and return path
      */
     private setupSSHKey(): string {
-        const keyPath = path.join(os.tmpdir(), `factiii-deploy-key-${Date.now()}`);
+        const keyPath = path.join(os.tmpdir(), 'factiii-deploy-key-' + Date.now());
+
+        // Vault may store key with literal \n instead of real newlines
+        let key = this.privateKey;
+        if (key.includes('\\n')) {
+            key = key.replace(/\\n/g, '\n');
+        }
 
         // Ensure key ends with newline (SSH requirement)
-        let key = this.privateKey;
         if (!key.endsWith('\n')) {
             key += '\n';
         }
 
-        fs.writeFileSync(keyPath, key, { mode: 0o600 });
+        writeSecureKeyFile(keyPath, key);
         this.keyPath = keyPath;
         return keyPath;
     }
@@ -78,27 +84,24 @@ export class SSHDeploy {
     private sshExec(command: string): string {
         const keyPath = this.keyPath ?? this.setupSSHKey();
 
-        // Build SSH command with strict options
-        const sshCmd = [
-            'ssh',
-            '-i', `"${keyPath}"`,
+        const result = spawnSync('ssh', [
+            '-i', keyPath,
             '-o', 'StrictHostKeyChecking=no',
             '-o', 'UserKnownHostsFile=/dev/null',
             '-o', 'BatchMode=yes',
             '-o', 'ConnectTimeout=30',
-            `"${this.user}@${this.host}"`,
-            `"${command.replace(/"/g, '\\"')}"`,
-        ].join(' ');
+            this.user + '@' + this.host,
+            command,
+        ], {
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
 
-        try {
-            return execSync(sshCmd, {
-                encoding: 'utf8',
-                stdio: ['pipe', 'pipe', 'pipe'],
-            });
-        } catch (e) {
-            const error = e as { stderr?: string; message?: string };
-            throw new Error(`SSH command failed: ${error.stderr || error.message}`);
+        if (result.status !== 0) {
+            throw new Error('SSH command failed: ' + (result.stderr || 'exit code ' + result.status));
         }
+
+        return result.stdout ?? '';
     }
 
     /**
@@ -109,7 +112,9 @@ export class SSHDeploy {
             this.setupSSHKey();
             this.sshExec('echo "Connection test"');
             return true;
-        } catch {
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.log('  [DEBUG] SSH connection failed: ' + msg);
             return false;
         } finally {
             this.cleanupSSHKey();
@@ -155,18 +160,12 @@ export class SSHDeploy {
 
             const envContent = this.envToFileContent(envVars);
             const envFileName = `.env.${stage}`;
-            const factiiiDir = `\\$HOME/.factiii/${this.repoName}`;
+            const factiiiDir = `$HOME/.factiii/${this.repoName}`;
             const envFilePath = `${factiiiDir}/${envFileName}`;
 
             // Create directory if it doesn't exist, then write the file
-            // Use heredoc to safely pass content with special characters
-            const escapedContent = envContent
-                .replace(/\\/g, '\\\\')
-                .replace(/'/g, "'\\''");
-
-            const command = `mkdir -p ${factiiiDir} && cat > ${envFilePath} << 'FACTIII_ENV_EOF'
-${envContent}FACTIII_ENV_EOF
-chmod 600 ${envFilePath}`;
+            // Quoted heredoc delimiter ('FACTIII_ENV_EOF') prevents shell expansion
+            const command = 'mkdir -p ' + factiiiDir + ' && cat > ' + envFilePath + " << 'FACTIII_ENV_EOF'\n" + envContent + 'FACTIII_ENV_EOF\nchmod 600 ' + envFilePath;
 
             this.sshExec(command);
 
@@ -217,7 +216,7 @@ chmod 600 ${envFilePath}`;
             this.setupSSHKey();
 
             const envFileName = `.env.${stage}`;
-            const factiiiDir = `\\$HOME/.factiii/${this.repoName}`;
+            const factiiiDir = `$HOME/.factiii/${this.repoName}`;
             const envFilePath = `${factiiiDir}/${envFileName}`;
 
             const command = `test -f ${envFilePath} && echo "exists" || echo "missing"`;
@@ -239,7 +238,7 @@ chmod 600 ${envFilePath}`;
             this.setupSSHKey();
 
             const envFileName = `.env.${stage}`;
-            const factiiiDir = `\\$HOME/.factiii/${this.repoName}`;
+            const factiiiDir = `$HOME/.factiii/${this.repoName}`;
             const envFilePath = `${factiiiDir}/${envFileName}`;
 
             // Cross-platform: macOS uses `stat -f %m`, Linux uses `stat -c %Y`

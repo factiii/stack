@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
@@ -16,7 +17,21 @@ import type {
   FactiiiConfig,
   EnvironmentConfig,
   DeployResult,
+  Stage,
 } from '../../../types/index.js';
+
+// Module-level state for SSH auth context (set by exported functions before SSH calls)
+let _sshStage: Stage | undefined;
+let _sshConfig: FactiiiConfig | undefined;
+let _sshRootDir: string | undefined;
+
+/**
+ * Execute a command on a remote server via SSH
+ * Uses module-level stage/config for password auth fallback
+ */
+async function sshExecCommand(envConfig: EnvironmentConfig, command: string): Promise<string> {
+  return await sshExec(envConfig, command, _sshStage, _sshConfig, _sshRootDir);
+}
 
 /**
  * Get dockerfile path from stackAuto.yml (or legacy factiiiAuto.yml) or use default
@@ -50,11 +65,16 @@ export async function ensureDockerRunning(
   const checkCmd = 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && docker info > /dev/null 2>&1 && echo "running" || echo "stopped"';
   
   // Start Docker and wait up to 60 seconds for it to be ready
+  // Use headless binary start over SSH since `open -a Docker` requires a GUI session
   const startCmd = `
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
     if ! docker info > /dev/null 2>&1; then
       echo "Starting Docker Desktop..." && \
-      open -a Docker && \
+      if [ -n "$SSH_CONNECTION" ] || [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ]; then
+        nohup /Applications/Docker.app/Contents/MacOS/Docker --unattended > /dev/null 2>&1 &
+      else
+        open -a Docker
+      fi && \
       for i in {1..60}; do
         sleep 1
         if docker info > /dev/null 2>&1; then
@@ -115,10 +135,10 @@ export async function ensureDockerRunning(
   } else {
     // We're remote - run via SSH
     try {
-      const result = await sshExec(envConfig, checkCmd);
+      const result = await sshExecCommand(envConfig, checkCmd);
       if (result.includes('stopped')) {
         console.log('   🐳 Starting Docker Desktop on staging server...');
-        await sshExec(envConfig, startCmd);
+        await sshExecCommand(envConfig, startCmd);
         console.log('   ✅ Docker Desktop started');
       } else {
         console.log('   ✅ Docker is already running');
@@ -126,7 +146,7 @@ export async function ensureDockerRunning(
     } catch {
       console.log('   🐳 Starting Docker Desktop on staging server...');
       try {
-        await sshExec(envConfig, startCmd);
+        await sshExecCommand(envConfig, startCmd);
         console.log('   ✅ Docker Desktop started');
       } catch (startError) {
         throw new Error('Failed to start Docker Desktop on staging server. Please start it manually.');
@@ -146,6 +166,10 @@ export async function buildStagingImage(
   config: FactiiiConfig,
   envConfig: EnvironmentConfig
 ): Promise<DeployResult> {
+  // Set module-level SSH auth context for password fallback
+  _sshStage = 'staging';
+  _sshConfig = config;
+
   const repoName = config.name ?? 'app';
   const repoDir = `~/.factiii/${repoName}`;
   const isOnServer = process.env.GITHUB_ACTIONS === 'true';
@@ -178,7 +202,7 @@ export async function buildStagingImage(
       // We're remote - SSH to the server and build there
       // CRITICAL: Build must happen on staging server, never locally
       const dockerfile = getDockerfilePath(
-        path.join(process.env.HOME ?? '/Users/jon', '.factiii', repoName)
+        path.join(process.env.HOME ?? os.homedir(), '.factiii', repoName)
       );
       const imageTag = `${repoName}:staging`;
 
@@ -186,7 +210,7 @@ export async function buildStagingImage(
       console.log(`   🔨 Building Docker image (arm64) on staging server: ${imageTag}...`);
       console.log(`   📍 Building on: ${envConfig.domain}`);
       
-      await sshExec(
+      await sshExecCommand(
         envConfig,
         `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && \
          cd ${repoDir} && \

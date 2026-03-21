@@ -10,12 +10,9 @@
  * 5. If via: 'local' -> execute command directly
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import yaml from 'js-yaml';
 import { execSync, spawn } from 'child_process';
 
-import { getStackConfigPath } from '../constants/config-files.js';
+import { loadConfig } from '../utils/config-helpers.js';
 import type {
   FactiiiConfig,
   Stage,
@@ -30,25 +27,6 @@ import type {
 interface PipelinePluginClass {
   id: string;
   canReach(stage: Stage, config: FactiiiConfig): Reachability;
-}
-
-/**
- * Load config from stack.yml (or legacy factiii.yml)
- */
-function loadConfig(rootDir: string): FactiiiConfig {
-  const configPath = getStackConfigPath(rootDir);
-
-  if (!fs.existsSync(configPath)) {
-    return {} as FactiiiConfig;
-  }
-
-  try {
-    return (yaml.load(fs.readFileSync(configPath, 'utf8')) as FactiiiConfig) ?? ({} as FactiiiConfig);
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error('Error parsing config: ' + errorMessage);
-    return {} as FactiiiConfig;
-  }
 }
 
 /**
@@ -223,6 +201,33 @@ export async function executePluginCommand(
   if (reach.via === 'workflow') {
     // Trigger workflow to run command on server
     await triggerCommandWorkflow(command, stage, options);
+    return;
+  }
+
+  if (reach.via === 'ssh') {
+    // Route command to server via SSH — re-runs `npx stack {cmd}` on remote
+    // with FACTIII_ON_SERVER=true so it executes locally there
+    const { sshRemoteFactiiiCommand } = await import('../utils/ssh-helper.js');
+
+    // Rebuild option flags (skip stage/force flags — already in the command)
+    let optionFlags = '';
+    for (const [key, value] of Object.entries(options)) {
+      if (['dev', 'staging', 'prod', 'force'].includes(key)) continue;
+      if (value === true) optionFlags += ' --' + key;
+      else if (value && value !== false) optionFlags += ' --' + key + ' ' + String(value);
+    }
+
+    const remoteCmd = command.category + ' ' + command.name + ' --' + stage + optionFlags;
+    console.log('');
+    console.log('Running ' + command.category + ':' + command.name + ' on ' + stage + ' via SSH...');
+    console.log('');
+
+    const sshResult = await sshRemoteFactiiiCommand(stage as Stage, config, remoteCmd);
+    if (!sshResult.success) {
+      console.error('');
+      console.error('Command failed: ' + (sshResult.stderr || 'SSH command exited with non-zero status'));
+      process.exit(1);
+    }
     return;
   }
 

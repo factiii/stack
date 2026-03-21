@@ -49,3 +49,7 @@ dist/
 
 # Machine-specific infrastructure config (staging vs prod)
 infra.conf
+
+# Local config overrides (per-developer, never committed)
+stack.local.yml
+factiii.local.yml

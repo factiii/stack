@@ -27,7 +27,7 @@ interface TemplateCreationResult {
 
 /**
  * Generate .env.example template file content
- * @param config - Parsed factiii.yml configuration
+ * @param config - Parsed stack.yml configuration
  */
 export function generateEnvExampleTemplate(config: FactiiiConfig): string {
   const repoName = config.name ?? 'myapp';
@@ -39,37 +39,40 @@ export function generateEnvExampleTemplate(config: FactiiiConfig): string {
 
 # === Application Settings ===
 NODE_ENV=development
-PORT=3000
+# Slot number (1-5). Client=3000+PORT, Server=5000+PORT
+# Example: PORT=1 → client:3001, server:5001
+PORT=1
 
 # === Database ===
 # PostgreSQL connection string format
-DATABASE_URL=postgresql://EXAMPLE-user:EXAMPLE-password@localhost:5432/EXAMPLE-${repoName}-dev
+DATABASE_URL=postgresql://EXAMPLE_user:EXAMPLE_password@localhost:5432/EXAMPLE_${repoName}-dev
 
 # === Authentication ===
 # 256-bit secret key for JWT signing
-JWT_SECRET=EXAMPLE-your-256-bit-secret-key-here
+JWT_SECRET=EXAMPLE_your-256-bit-secret-key-here
 JWT_EXPIRES_IN=7d
 
 # === External APIs (if needed) ===
-# OPENAI_API_KEY=EXAMPLE-sk-proj-abc123xyz789
-# STRIPE_SECRET_KEY=EXAMPLE-sk_test_51ABC123xyz
-# STRIPE_PUBLISHABLE_KEY=EXAMPLE-pk_test_51ABC123xyz
+# OPENAI_API_KEY=EXAMPLE_sk-proj-abc123xyz789
+# STRIPE_SECRET_KEY=EXAMPLE_sk_test_51ABC123xyz
+# STRIPE_PUBLISHABLE_KEY=EXAMPLE_pk_test_51ABC123xyz
 
 # === AWS Configuration (if using S3, SES, etc) ===
-# AWS_ACCESS_KEY_ID=EXAMPLE-AKIAIOSFODNN7EXAMPLE
-# AWS_SECRET_ACCESS_KEY=EXAMPLE-wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-# AWS_REGION=EXAMPLE-us-east-1
-# AWS_BUCKET_NAME=EXAMPLE-${repoName}-assets
+# AWS_ACCESS_KEY_ID=EXAMPLE_AKIAIOSFODNN7EXAMPLE
+# AWS_SECRET_ACCESS_KEY=EXAMPLE_wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+# AWS_REGION=EXAMPLE_us-east-1
+# AWS_BUCKET_NAME=EXAMPLE_${repoName}-assets
 
 # === Email Configuration (if using SMTP) ===
-# SMTP_HOST=EXAMPLE-smtp.gmail.com
+# SMTP_HOST=EXAMPLE_smtp.gmail.com
 # SMTP_PORT=587
-# SMTP_USER=EXAMPLE-noreply@yourdomain.com
-# SMTP_PASSWORD=EXAMPLE-your-app-password
+# SMTP_USER=EXAMPLE_noreply@yourdomain.com
+# SMTP_PASSWORD=EXAMPLE_your-app-password
 
 # === Application URLs ===
-# FRONTEND_URL=EXAMPLE-http://localhost:3000
-# API_URL=EXAMPLE-http://localhost:3001
+# Replace YOUR_IP with your local network IP (start.sh does this automatically)
+# FRONTEND_URL=http://YOUR_IP:3001
+# API_URL=http://YOUR_IP:5001
 
 # === Application-specific settings ===
 # Add your custom environment variables below
@@ -119,7 +122,7 @@ export function generateEnvTemplate(environment: string, devEnv: EnvVars): strin
 /**
  * Create .env template files if they don't exist
  * @param rootDir - Repository root directory
- * @param config - Parsed factiii.yml configuration
+ * @param config - Parsed stack.yml configuration
  */
 export function createEnvTemplates(
   rootDir: string,
@@ -206,7 +209,7 @@ export function generateSecretsChecklist(): string {
    □ STAGING_ENVS   - Environment vars from .env.staging
    □ PROD_ENVS      - Environment vars from .env.prod
 
-   NOT SECRETS (in factiii.yml):
+   NOT SECRETS (in stack.yml):
    ───────────────────────────────────────────────────────
    ✓ environments.{env}.host - Server IP/hostname
    ✓ aws.access_key_id       - AWS access key ID

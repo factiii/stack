@@ -1,7 +1,7 @@
 /**
  * Configuration Types
  *
- * Types for factiii.yml and factiiiAuto.yml configuration files.
+ * Types for stack.yml and factiiiAuto.yml configuration files.
  */
 
 /**
@@ -23,6 +23,7 @@ export interface EnvironmentConfig {
 
   // Optional base fields
   ssh_user?: string;
+  ssl_email?: string;   // Email for Let's Encrypt SSL certificates
   env_file?: string;
 
   // Server mode addon - enables server hardening fixes (default: true for staging/prod)
@@ -40,7 +41,7 @@ export interface EnvironmentConfig {
 }
 
 /**
- * Main factiii.yml configuration
+ * Main stack.yml configuration
  *
  * Environments are stored as top-level keys. Any key that is NOT
  * in the reserved list (name, config_version, github_repo, etc.)
@@ -67,6 +68,13 @@ export interface FactiiiConfig {
     vault_path: string;
     vault_password_file?: string;
   };
+
+  // Dev-only mode: when true (default), staging/prod stages and Ansible are disabled.
+  // Set dev_only: false in stack.local to unlock.
+  dev_only?: boolean;
+
+  // Keys allowed to have identical values across .env.example and staging/prod
+  env_match_exceptions?: string[];
 
   // Dynamic environment keys
   // Any top-level key NOT in the reserved list above is an environment

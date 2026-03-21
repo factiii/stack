@@ -109,6 +109,18 @@ export interface Fix {
   plugin?: string;
   /** Optional: Only run this fix on specific OS types */
   os?: ServerOS | ServerOS[];
+  /**
+   * Optional: Only run this fix for specific deployment targets
+   * Used for secrets stage to differentiate staging vs prod secrets
+   * Example: A fix with targetStage: 'staging' only runs when deploying to staging
+   */
+  targetStage?: 'staging' | 'prod';
+  /**
+   * Optional: If true and this fix fails, skip all remaining fixes in this
+   * and later stages. Use for prerequisites like credential sync where
+   * nothing else can run without it.
+   */
+  blocking?: boolean;
   scan: (config: FactiiiConfig, rootDir: string) => Promise<boolean>;
   fix?: ((config: FactiiiConfig, rootDir: string) => Promise<boolean>) | null;
   manualFix: string;
@@ -378,6 +390,20 @@ export type AnyPluginStatic =
   | ServerPluginStatic
   | FrameworkPluginStatic
   | AddonPluginStatic;
+
+/**
+ * External plugin export interface
+ *
+ * External packages (like @factiii/auth) can export a `stackPlugin` object
+ * conforming to this interface. Stack will dynamically load and use these
+ * scanfixes instead of its own inline fallbacks.
+ *
+ * Example in @factiii/auth:
+ *   export const stackPlugin: ExternalPluginExport = { fixes: [...] }
+ */
+export interface ExternalPluginExport {
+  fixes: Fix[];
+}
 
 /**
  * Constructor type for plugin classes

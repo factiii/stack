@@ -4,6 +4,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
@@ -14,14 +15,14 @@ export const containerFixes: Fix[] = [
     id: 'staging-old-containers',
     stage: 'staging',
     severity: 'warning',
-    description: 'Unmanaged Docker containers found (not in docker-compose.yml)',
+    description: '🐳 Unmanaged Docker containers found (not in docker-compose.yml)',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const hasStagingEnv = config?.environments?.staging;
       if (!hasStagingEnv) return false;
 
       try {
         // 1. Generate configs first to know what SHOULD be running
-        const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+        const factiiiDir = path.join(process.env.HOME ?? os.homedir(), '.factiii');
         const infraDir = path.join(factiiiDir, 'infrastructure');
         const generateScript = path.join(infraDir, 'dist', 'scripts', 'generate-all.js');
 
@@ -76,7 +77,7 @@ export const containerFixes: Fix[] = [
           // Generate YAML snippet
           const yamlSnippet = `container_exclusions:\n  - ${unmanaged.join('\n  - ')}`;
 
-          console.log('\n💡 To keep these containers running, add to factiii.yml:\n');
+          console.log('\n💡 To keep these containers running, add to stack.yml:\n');
           console.log(yamlSnippet);
         }
 
@@ -88,7 +89,7 @@ export const containerFixes: Fix[] = [
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       try {
         // Same logic as scan to find unmanaged containers
-        const factiiiDir = path.join(process.env.HOME ?? '/Users/jon', '.factiii');
+        const factiiiDir = path.join(process.env.HOME ?? os.homedir(), '.factiii');
         const infraDir = path.join(factiiiDir, 'infrastructure');
         const generateScript = path.join(infraDir, 'dist', 'scripts', 'generate-all.js');
 

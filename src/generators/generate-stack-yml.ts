@@ -1,219 +1,295 @@
 /**
  * Generate stack.yml
  *
- * Generates the stack.yml configuration file from plugin schemas.
+ * Auto-detects project configuration and generates stack.yml.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
+import { execSync } from 'child_process';
 
 import { STACK_CONFIG_FILENAME } from '../constants/config-files.js';
-import type { FactiiiConfig } from '../types/index.js';
 
-interface PluginWithSchema {
-  configSchema?: Record<string, unknown>;
-}
-
-interface GenerateOptions {
-  force?: boolean;
-  plugins?: PluginWithSchema[];
+/**
+ * Read package.json from a directory
+ */
+function readPackageJson(rootDir: string): Record<string, unknown> | null {
+  const pkgPath = path.join(rootDir, 'package.json');
+  if (!fs.existsSync(pkgPath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Load all plugins
+ * Try to detect github_repo from git remote origin
  */
-function loadAllPlugins(): PluginWithSchema[] {
-  const plugins: PluginWithSchema[] = [];
-
-  // Load pipeline plugins
+function detectGithubRepo(rootDir: string): string | null {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const FactiiiPipeline = require('../plugins/pipelines/factiii') as PluginWithSchema;
-    plugins.push(FactiiiPipeline);
+    const remote = execSync('git remote get-url origin', {
+      cwd: rootDir,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    // Match github.com:user/repo.git or github.com/user/repo.git
+    const match = remote.match(/github\.com[:/](.+?)(?:\.git)?$/);
+    if (match && match[1]) return match[1];
   } catch {
-    // Plugin not available
+    // Not a git repo or no remote
   }
-
-  // Load server plugins
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const MacPlugin = require('../plugins/servers/mac') as PluginWithSchema;
-    plugins.push(MacPlugin);
-  } catch {
-    // Plugin not available
-  }
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const UbuntuPlugin = require('../plugins/servers/ubuntu') as PluginWithSchema;
-    plugins.push(UbuntuPlugin);
-  } catch {
-    // Plugin not available
-  }
-
-  // Load pipeline plugins (AWS is now a pipeline, not a server)
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const AWSPipeline = require('../plugins/pipelines/aws') as PluginWithSchema;
-    plugins.push(AWSPipeline);
-  } catch {
-    // Plugin not available
-  }
-
-  // Load framework plugins
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const PrismaTrpcPlugin = require('../plugins/frameworks/prisma-trpc') as PluginWithSchema;
-    plugins.push(PrismaTrpcPlugin);
-  } catch {
-    // Plugin not available
-  }
-
-  return plugins;
+  return null;
 }
 
 /**
- * Generate stack.yml template from plugin schemas
- * @param plugins - Optional array of plugin classes to use
+ * Detect the dev machine OS
  */
-export function generateFactiiiYmlTemplate(plugins: PluginWithSchema[] | null = null): string {
-  const actualPlugins = plugins ?? loadAllPlugins();
-
-  // Base schema with core fields
-  const schema: Record<string, unknown> = {
-    // ============================================================
-    // RESERVED CONFIG FIELDS
-    // ============================================================
-    name: 'EXAMPLE-your-repo-name',
-    config_version: '0.1.0',
-    github_repo: 'EXAMPLE-username/repo-name',
-    ssl_email: 'EXAMPLE-admin@yourdomain.com',
-    pipeline: 'factiii',  // Pipeline plugin (e.g., factiii for GitHub Actions)
-
-    // Ansible Vault configuration (for secrets)
-    ansible: {
-      vault_path: 'group_vars/all/vault.yml',  // Path to Ansible Vault file
-      vault_password_file: '~/.vault_pass',    // Optional: path to vault password file
-    },
-
-    // ============================================================
-    // ENVIRONMENTS (top-level keys)
-    // ============================================================
-    staging: {
-      server: 'mac',  // Server OS type (mac, ubuntu, windows, amazon-linux)
-      domain: 'EXAMPLE-staging.yourdomain.com',  // Used for nginx AND SSH
-      env_file: '.env.staging',
-    },
-
-    prod: {
-      server: 'ubuntu',  // Server OS type
-      pipeline: 'aws',   // Use AWS pipeline for deployment
-      domain: 'EXAMPLE-yourdomain.com',  // Used for nginx AND SSH
-
-      // AWS-specific config (when server: aws)
-      config: 'free-tier', // Options: ec2, free-tier, standard, enterprise
-      access_key_id: 'EXAMPLE-AKIAXXXXXXXX',
-      region: 'us-east-1',
-
-      // Plugin configs for this environment
-      plugins: {
-        ecr: {
-          ecr_registry: 'EXAMPLE-123456789012.dkr.ecr.us-east-1.amazonaws.com',
-          ecr_repository: 'EXAMPLE-repo-name',
-        },
-      },
-    },
-  };
-
-  // Merge plugin config schemas
-  for (const PluginClass of actualPlugins) {
-    if (PluginClass.configSchema) {
-      Object.assign(schema, PluginClass.configSchema);
-    }
-  }
-
-  const yamlContent = yaml.dump(schema, {
-    lineWidth: -1, // Don't wrap lines
-    noRefs: true,
-  });
-
-  // Add helpful comments after YAML generation
-  const comments = `
-# ============================================================
-# ADDITIONAL ENVIRONMENTS
-# ============================================================
-# You can add as many environments as needed (staging2, prod2, qa, demo, etc.)
-# Each environment must specify a 'server' plugin and can have server-specific configs.
-#
-# Example - Additional staging environment:
-# staging2:
-#   server: mac
-#   domain: staging2.yourdomain.com
-#   env_file: .env.staging2
-#
-# Example - Additional prod environment:
-# prod2:
-#   server: ubuntu
-#   pipeline: aws
-#   domain: app2.yourdomain.com
-#   config: free-tier
-#   access_key_id: EXAMPLE-AKIAXXXXXXXX
-#   region: us-west-2
-
-# ============================================================
-# ENVIRONMENT OPTIONS
-# ============================================================
-# All environments support these optional fields:
-#   ssh_user: ubuntu  # Override SSH user (defaults to stackAuto.yml ssh_user)
-#   env_file: .env.{environment}  # Override env file name
-
-# ============================================================
-# CONTAINER EXCLUSIONS
-# ============================================================
-# Exclude Docker containers from unmanaged container cleanup
-# Uncomment and add container names to keep them running:
-# container_exclusions:
-#   - factiii_postgres
-#   - legacy_container
-`;
-
-  return yamlContent + comments;
+function detectServerOS(): 'mac' | 'ubuntu' | 'windows' {
+  if (process.platform === 'darwin') return 'mac';
+  if (process.platform === 'win32') return 'windows';
+  return 'ubuntu';
 }
 
 /**
- * Generate stack.yml file in the target directory
+ * Generate stack.yml by auto-detecting project configuration.
+ * Auto-detects: name, github_repo, pipeline, staging/prod, frameworks.
+ * Uses EXAMPLE_ prefix for values that cannot be auto-detected (domains, ssl_email).
+ *
+ * @param rootDir - Project root directory
+ * @param options - Optional settings (force: overwrite existing file)
  */
-export function generateFactiiiYml(rootDir: string, options: GenerateOptions = {}): boolean {
+export function generateSmartStackYml(rootDir: string, options: { force?: boolean } = {}): boolean {
   const outputPath = path.join(rootDir, STACK_CONFIG_FILENAME);
 
   // Check if file already exists
   if (fs.existsSync(outputPath) && !options.force) {
-    console.log('⏭️  ' + STACK_CONFIG_FILENAME + ' already exists (use --force to overwrite)');
+    console.log('[OK] ' + STACK_CONFIG_FILENAME + ' already exists (use --force to overwrite)');
     return false;
   }
 
-  // Use provided plugins or load all
-  const content = generateFactiiiYmlTemplate(options.plugins ?? null);
+  // Read package.json for name and framework detection
+  const pkg = readPackageJson(rootDir);
+  const deps: Record<string, string> = {
+    ...(pkg?.dependencies as Record<string, string> ?? {}),
+    ...(pkg?.devDependencies as Record<string, string> ?? {}),
+  };
 
-  // Write file
-  fs.writeFileSync(outputPath, content);
+  // Detect project name
+  const pkgName = pkg?.name as string | undefined;
+  const dirName = path.basename(rootDir);
+  const name = (pkgName ?? dirName).replace(/[^a-z0-9-]/gi, '-').toLowerCase();
 
-  console.log('[OK] Created ' + STACK_CONFIG_FILENAME);
-  console.log('\nNEXT STEPS:\n');
-  console.log('  1. Configure your project:');
-  console.log('     [ ] Replace all EXAMPLE- values in ' + STACK_CONFIG_FILENAME);
-  console.log('         - name, github_repo, ssl_email, domains\n');
-  console.log('  2. Set up secrets (requires ansible-vault):');
-  console.log('     [ ] Generate SSH key:  ssh-keygen -t ed25519 -f ~/.ssh/staging_deploy_key');
-  console.log('     [ ] Store in vault:    npx stack secrets set STAGING_SSH');
-  console.log('     [ ] Add public key to server: ssh-copy-id -i ~/.ssh/staging_deploy_key.pub user@host\n');
-  console.log('  3. Validate and fix:');
-  console.log('     [ ] npx stack scan          (check for issues)');
-  console.log('     [ ] npx stack fix           (auto-fix what it can)\n');
-  console.log('  4. Deploy:');
-  console.log('     [ ] npx stack deploy --staging --dry-run   (preview)');
-  console.log('     [ ] npx stack deploy --staging             (deploy)\n');
+  // Detect github repo
+  const githubRepo = detectGithubRepo(rootDir) ?? 'EXAMPLE_username/' + name;
+
+  // Staging always uses mac (Mac Mini server)
+  const stagingServer = 'mac';
+
+  // Build top-level metadata (not tied to any pipeline)
+  const metaConfig: Record<string, unknown> = {
+    name,
+    config_version: '0.1.0',
+    github_repo: githubRepo,
+  };
+
+  // Build pipeline-specific config
+  const pipelineConfig: Record<string, unknown> = {
+    pipeline: 'factiii',
+
+    staging: {
+      server: stagingServer,
+      domain: 'EXAMPLE_staging.yourdomain.com',
+      ssl_email: 'EXAMPLE_admin@yourdomain.com',
+      ssh_user: 'macuser',
+      env_file: '.env.staging',
+    },
+
+    prod: {
+      server: 'ubuntu',
+      domain: 'EXAMPLE_yourdomain.com',
+      ssl_email: 'EXAMPLE_admin@yourdomain.com',
+      ssh_user: 'ubuntu',
+      env_file: '.env.prod',
+      config: 'free-tier',
+      access_key_id: 'EXAMPLE_AKIAXXXXXXXX',
+      region: 'us-east-1',
+    },
+  };
+
+  // Detect frameworks and add relevant config
+  const detectedPlugins: string[] = [];
+  if (deps['next']) detectedPlugins.push('nextjs');
+  if (deps['prisma'] || deps['@prisma/client']) detectedPlugins.push('prisma');
+  if (deps['@trpc/server']) detectedPlugins.push('trpc');
+  if (deps['expo']) detectedPlugins.push('expo');
+  if (deps['@factiii/auth']) detectedPlugins.push('auth');
+
+  // Build YAML content with comments
+  const sections: string[] = [];
+
+  sections.push('# Generated by @factiii/stack');
+  sections.push('# Replace all EXAMPLE_ values with your actual configuration');
+  sections.push('');
+
+  // Dump top-level metadata
+  sections.push(yaml.dump(metaConfig, { lineWidth: -1, noRefs: true }).trim());
+  sections.push('');
+
+  // Dump pipeline config with visual separator
+  sections.push('# ── factiii pipeline ──────────────────────────────────────');
+  sections.push(yaml.dump(pipelineConfig, { lineWidth: -1, noRefs: true }).trim());
+  sections.push('# ─────────────────────────────────────────────────────────');
+  sections.push('');
+
+  // Features explainer
+  sections.push('# ============================================================');
+  sections.push('# AVAILABLE FEATURES');
+  sections.push('# ============================================================');
+  sections.push('# stack.yml is your single config file. Enable features by');
+  sections.push('# uncommenting the relevant sections below, then run:');
+  sections.push('#   npx stack fix --dev');
+  sections.push('#');
+  sections.push('# INCLUDED (enabled by default):');
+  sections.push('#   - Staging deploy    SSH to Mac Mini (staging: section above)');
+  sections.push('#   - Prod deploy       AWS free-tier EC2 (prod: section above)');
+  sections.push('#   - CI workflows      GitHub Actions build+test on push');
+  sections.push('#   - SSL certificates  Auto Let\'s Encrypt via certbot');
+  sections.push('#   - Ansible Vault     Encrypted secrets (SSH keys, env vars)');
+  sections.push('#');
+  sections.push('# OPT-IN (uncomment to enable):');
+  sections.push('#   - Auth              @factiii/auth — JWT, OAuth, 2FA (see AUTH section)');
+  sections.push('#   - OpenClaw          Local AI coding agent in Tart VM (see OPENCLAW section)');
+  sections.push('#   - Vercel            Deploy to Vercel instead of SSH (see VERCEL section)');
+  sections.push('#');
+  sections.push('# AUTO-DETECTED (no config needed):');
+  sections.push('#   - Prisma            Migrations, schema validation');
+  sections.push('#   - tRPC              Type-safe API layer');
+  sections.push('#   - Expo              Mobile app builds');
+  sections.push('# ============================================================');
+  sections.push('');
+
+  // Env match exceptions hint
+  sections.push('# ============================================================');
+  sections.push('# ENV MATCH EXCEPTIONS');
+  sections.push('# ============================================================');
+  sections.push('# Keys that are intentionally the same across all environments.');
+  sections.push('# These will be excluded from "matches .env.example" warnings.');
+  sections.push('#');
+  sections.push('# env_match_exceptions:');
+  sections.push('#   - APP_NAME');
+  sections.push('#   - NODE_ENV');
+  sections.push('');
+
+  // Add detected plugins as a comment
+  if (detectedPlugins.length > 0) {
+    sections.push('# Detected frameworks: ' + detectedPlugins.join(', '));
+    sections.push('');
+  }
+
+  // Auth (@factiii/auth) - auto-detected or commented out
+  if (deps['@factiii/auth']) {
+    sections.push('# ============================================================');
+    sections.push('# AUTH (@factiii/auth)');
+    sections.push('# ============================================================');
+    sections.push('# Detected @factiii/auth in dependencies.');
+    sections.push('# JWT_SECRET is auto-generated and stored in Ansible Vault.');
+    sections.push('# Customize features below as needed.');
+    sections.push('auth:');
+    sections.push('  features:');
+    sections.push('    oauth: false');
+    sections.push('    twoFa: false');
+    sections.push('    emailVerification: false');
+    sections.push('  oauth_provider: EXAMPLE_google');
+    sections.push('');
+  } else {
+    sections.push('# ============================================================');
+    sections.push('# AUTH (@factiii/auth)');
+    sections.push('# ============================================================');
+    sections.push('# Drop-in tRPC auth: JWT sessions, OAuth, 2FA, email verification.');
+    sections.push('# Install: npm install @factiii/auth');
+    sections.push('# Then re-run: npx stack fix --dev');
+    sections.push('#');
+    sections.push('# auth:');
+    sections.push('#   features:');
+    sections.push('#     oauth: false');
+    sections.push('#     twoFa: false');
+    sections.push('#     emailVerification: false');
+    sections.push('#   oauth_provider: EXAMPLE_google');
+    sections.push('');
+  }
+
+  // OpenClaw / Moltbot - commented out by default
+  sections.push('# ============================================================');
+  sections.push('# OPENCLAW (MOLTBOT)');
+  sections.push('# ============================================================');
+  sections.push('# Autonomous AI coding agent that runs locally inside a Tart VM');
+  sections.push('# with Ollama (local LLM). Keeps your code and data on your machine.');
+  sections.push('# Requires macOS with Apple Silicon.');
+  sections.push('#');
+  sections.push('# To enable, uncomment the line below and run: npx stack fix --dev');
+  sections.push('# openclaw: true');
+  sections.push('');
+
+  // Vercel option - commented out by default
+  sections.push('# ============================================================');
+  sections.push('# VERCEL DEPLOYMENT (ADDON)');
+  sections.push('# ============================================================');
+  sections.push('# Deploy to Vercel via factiii pipeline.');
+  sections.push('# Free tier: 100GB bandwidth, serverless functions, automatic SSL.');
+  sections.push('#');
+  sections.push('# To enable, uncomment the lines below and run: npx stack fix --dev');
+  sections.push('# vercel:');
+  sections.push('#   project_name: EXAMPLE_my-project');
+  sections.push('#   org_id: EXAMPLE_team_xxx  # Optional: from vercel link');
+  sections.push('#   project_id: EXAMPLE_prj_xxx  # Optional: from vercel link');
+  sections.push('#');
+  sections.push('# Then deploy with: npx stack deploy --prod');
+  sections.push('');
+
+  // Add helpful comments
+  sections.push('# ============================================================');
+  sections.push('# NEXT STEPS');
+  sections.push('# ============================================================');
+  sections.push('#');
+  sections.push('# 1. UPDATE THIS FILE');
+  sections.push('#    Replace all values marked EXAMPLE_ with your actual values:');
+  sections.push('#    - staging.domain: your staging domain');
+  sections.push('#    - staging.ssl_email: your email for SSL certificates');
+  sections.push('#    - prod.domain: your production domain');
+  sections.push('#    - prod.ssl_email: your email for SSL certificates');
+  sections.push('#');
+  sections.push('# 2. SCAN FOR ISSUES');
+  sections.push('#    npx stack scan           -> checks everything, reports what is missing (changes nothing)');
+  sections.push('#');
+  sections.push('# 3. AUTO-FIX ISSUES');
+  sections.push('#    npx stack fix            -> installs tools, creates config files, fixes what it can');
+  sections.push('#                                (does NOT touch docker/nginx - those are handled by deploy)');
+  sections.push('#');
+  sections.push('# 4. SET UP SECRETS');
+  sections.push('#    npx stack deploy --secrets set  -> store SSH keys & credentials in Ansible Vault');
+  sections.push('#');
+  sections.push('# 5. UNLOCK STAGING/PROD');
+  sections.push('#    Edit stack.local.yml and set: dev_only: false');
+  sections.push('#    (stack.local.yml is gitignored - only affects YOUR machine)');
+  sections.push('#');
+  sections.push('# 6. DEPLOY');
+  sections.push('#    npx stack deploy --staging --dry-run   -> preview what will happen');
+  sections.push('#    npx stack deploy --staging             -> deploy to staging');
+  sections.push('#    npx stack deploy --prod                -> deploy to production');
+  sections.push('#');
+  sections.push('# ============================================================');
+  sections.push('');
+
+  const finalContent = sections.join('\n');
+  fs.writeFileSync(outputPath, finalContent);
+
+  console.log('[OK] Created ' + STACK_CONFIG_FILENAME + ' (auto-detected: ' + name + ')');
+
+  if (detectedPlugins.length > 0) {
+    console.log('     Detected: ' + detectedPlugins.join(', '));
+  }
 
   return true;
 }

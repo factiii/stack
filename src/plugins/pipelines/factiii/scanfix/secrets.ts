@@ -6,9 +6,12 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execSync, spawnSync } from 'child_process';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
-import { promptForSecret } from '../../../../utils/secret-prompts.js';
+import { promptForSecret, promptSingleLine, confirm } from '../../../../utils/secret-prompts.js';
+import { extractEnvironments, hasEnvironments } from '../../../../utils/config-helpers.js';
+import { findSshKeyForStage, writeSecureKeyFile } from '../../../../utils/ssh-helper.js';
 
 function getAnsibleStore(config: FactiiiConfig, rootDir: string): AnsibleVaultSecrets | null {
   if (!config.ansible?.vault_path) return null;
@@ -19,38 +22,591 @@ function getAnsibleStore(config: FactiiiConfig, rootDir: string): AnsibleVaultSe
   });
 }
 
-function getSecretNameFromFixId(fixId: string): string {
-  const map: Record<string, string> = {
-    'missing-staging-ssh': 'STAGING_SSH',
-    'missing-prod-ssh': 'PROD_SSH',
-    'missing-aws-secret': 'AWS_SECRET_ACCESS_KEY',
-  };
-  return map[fixId] ?? '';
+/**
+ * Write an SSH key to disk: generic name + repo-specific name.
+ * e.g. staging_deploy_key AND staging_deploy_key_factiii
+ */
+export function writeSshKeyToDisk(stage: string, value: string, config: FactiiiConfig): string {
+  const sshDir = path.join(os.homedir(), '.ssh');
+  if (!fs.existsSync(sshDir)) {
+    fs.mkdirSync(sshDir, { mode: 0o700 });
+  }
+
+  const genericName = stage + '_deploy_key';
+  const genericPath = path.join(sshDir, genericName);
+  writeSecureKeyFile(genericPath, value.trimEnd() + '\n');
+
+  // Also write repo-specific key for multi-repo isolation
+  const repoName = config.name;
+  if (repoName && !repoName.toUpperCase().startsWith('EXAMPLE')) {
+    const repoPath = path.join(sshDir, genericName + '_' + repoName);
+    writeSecureKeyFile(repoPath, value.trimEnd() + '\n');
+  }
+
+  return genericPath;
 }
 
+/**
+ * Auto-generate SSH key, copy to server, verify, and store in vault.
+ * Falls back to manual paste if any step fails.
+ */
+/**
+ * Test if an SSH key already works for connecting to a host.
+ */
+function testSshKey(keyPath: string, user: string, host: string): boolean {
+  const result = spawnSync('ssh', [
+    '-i', keyPath,
+    '-o', 'BatchMode=yes',
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'ConnectTimeout=10',
+    user + '@' + host,
+    'echo ok',
+  ], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+    timeout: 20000,
+  });
+  return result.status === 0;
+}
+
+/**
+ * Store an existing SSH key in vault and write to disk.
+ */
+async function storeKeyInVault(
+  stage: string,
+  keyPath: string,
+  config: FactiiiConfig,
+  store: AnsibleVaultSecrets
+): Promise<boolean> {
+  console.log('      Storing key in Ansible Vault...');
+  try {
+    const privateKey = fs.readFileSync(keyPath, 'utf8');
+    const secretName = stage.toUpperCase() + '_SSH';
+    const result = await store.setSecret(secretName, privateKey);
+    if (!result.success) {
+      console.log('      [!] Failed to store in vault: ' + (result.error ?? 'unknown'));
+      return false;
+    }
+    console.log('      [OK] Stored ' + secretName + ' in Ansible Vault');
+    writeSshKeyToDisk(stage, privateKey, config);
+    console.log('      [OK] SSH key setup complete for ' + stage);
+    console.log('');
+    return true;
+  } catch (e) {
+    console.log('      [!] Vault store failed: ' + (e instanceof Error ? e.message : String(e)));
+    return false;
+  }
+}
+
+/**
+ * Try EC2 Instance Connect to push public key to server.
+ * Returns true if key was pushed and verified.
+ */
+async function tryEc2InstanceConnect(
+  keyPath: string,
+  pubKeyPath: string,
+  user: string,
+  host: string,
+  config: FactiiiConfig
+): Promise<{ added: boolean; connectedHost?: string }> {
+  try {
+    const { isAwsConfigured, getAwsConfig, getProjectName, findInstance, findInstancePublicIp,
+      getEC2Client, getEC2ICClient, DescribeInstancesCommand, SendSSHPublicKeyCommand } =
+      await import('../../aws/utils/aws-helpers.js');
+
+    if (!isAwsConfigured(config)) return { added: false };
+
+    const { region } = getAwsConfig(config);
+    const projectName = getProjectName(config);
+    const ec2 = getEC2Client(region);
+
+    console.log('      [2/4] Trying EC2 Instance Connect...');
+
+    // Find instance — try multiple strategies:
+    // 1. By factiii:project tag (standard for instances created by stack)
+    let instanceId = await findInstance(projectName, region);
+
+    // 2. By key pair name (instances may not have tags if created before tagging was added)
+    if (!instanceId) {
+      try {
+        const keyPairName = 'factiii-' + projectName;
+        const desc = await ec2.send(new DescribeInstancesCommand({
+          Filters: [
+            { Name: 'key-name', Values: [keyPairName] },
+            { Name: 'instance-state-name', Values: ['running', 'stopped'] },
+          ],
+        }));
+        instanceId = desc.Reservations?.[0]?.Instances?.[0]?.InstanceId ?? null;
+        if (instanceId) {
+          console.log('      Found instance by key pair: ' + keyPairName);
+        }
+      } catch {
+        // continue to next strategy
+      }
+    }
+
+    // 3. By IP matching (resolve domain → match against running instances)
+    if (!instanceId) {
+      const matchIps = new Set<string>();
+      // Resolve domain to IPs
+      try {
+        const dns = await import('dns');
+        const resolved = await new Promise<string[]>((resolve, reject) => {
+          dns.resolve4(host, (err, addresses) => {
+            if (err) reject(err);
+            else resolve(addresses);
+          });
+        });
+        for (const ip of resolved) matchIps.add(ip);
+      } catch {
+        // Domain doesn't resolve — try host as-is (might be an IP)
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) matchIps.add(host);
+      }
+
+      if (matchIps.size > 0) {
+        try {
+          const desc = await ec2.send(new DescribeInstancesCommand({
+            Filters: [{ Name: 'instance-state-name', Values: ['running'] }],
+          }));
+          for (const reservation of desc.Reservations ?? []) {
+            for (const inst of reservation.Instances ?? []) {
+              if ((inst.PublicIpAddress && matchIps.has(inst.PublicIpAddress)) ||
+                  (inst.PrivateIpAddress && matchIps.has(inst.PrivateIpAddress))) {
+                instanceId = inst.InstanceId ?? null;
+                break;
+              }
+            }
+            if (instanceId) break;
+          }
+          if (instanceId) {
+            console.log('      Found instance by IP matching');
+          }
+        } catch {
+          // continue
+        }
+      }
+    }
+
+    if (!instanceId) {
+      console.log('      [!] Could not find EC2 instance (tried: tag, key-pair, IP matching)');
+      return { added: false };
+    }
+
+    // Get instance details for AZ and public IP
+    const desc = await ec2.send(new DescribeInstancesCommand({
+      InstanceIds: [instanceId],
+    }));
+    const instance = desc.Reservations?.[0]?.Instances?.[0];
+    const az = instance?.Placement?.AvailabilityZone;
+    if (!az) {
+      console.log('      [!] Could not get instance availability zone');
+      return { added: false };
+    }
+
+    // Get public IP (prefers Elastic IP for stability)
+    const instancePublicIp = instance?.PublicIpAddress ??
+      (await findInstancePublicIp(projectName, region)) ?? undefined;
+
+    const pubKey = fs.readFileSync(pubKeyPath, 'utf8').trim();
+
+    // Build targets: try EC2 IP first (direct, reliable), then domain
+    const targets: string[] = [];
+    if (instancePublicIp) targets.push(instancePublicIp);
+    if (host !== instancePublicIp) targets.push(host);
+
+    if (targets.length === 0) {
+      console.log('      [!] No reachable target (no public IP or domain)');
+      return { added: false };
+    }
+
+    const addKeyCmd = 'mkdir -p ~/.ssh && echo "' + pubKey + '" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && chmod 700 ~/.ssh && sort -u -o ~/.ssh/authorized_keys ~/.ssh/authorized_keys && echo ok';
+
+    let added = false;
+    let connectedHost: string | undefined;
+    for (const target of targets) {
+      // Push fresh temporary key via EC2 Instance Connect before each attempt (60s window per push)
+      const eicClient = getEC2ICClient(region);
+      const sendResult = await eicClient.send(new SendSSHPublicKeyCommand({
+        InstanceId: instanceId,
+        InstanceOSUser: user,
+        SSHPublicKey: pubKey,
+        AvailabilityZone: az,
+      }));
+
+      if (!sendResult.Success) {
+        console.log('      [!] EC2 Instance Connect push failed for ' + target);
+        continue;
+      }
+      console.log('      [OK] Temporary key pushed via EC2 Instance Connect (60s window)');
+
+      // Add key permanently to authorized_keys
+      console.log('      Adding key permanently to authorized_keys via ' + target + '...');
+      const addResult = spawnSync('ssh', [
+        '-i', keyPath,
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'ConnectTimeout=15',
+        user + '@' + target,
+        addKeyCmd,
+      ], {
+        encoding: 'utf8',
+        stdio: 'pipe',
+        timeout: 30000,
+      });
+
+      if (addResult.status === 0) {
+        console.log('      [OK] Key added permanently via ' + target);
+        added = true;
+        connectedHost = target;
+        break;
+      }
+      const errLine = addResult.stderr ? addResult.stderr.trim().split('\n')[0] : '';
+      console.log('      [!] Failed via ' + target + (errLine ? ': ' + errLine : ''));
+    }
+
+    if (!added) {
+      console.log('      [!] Failed to add key permanently (tried: ' + targets.join(', ') + ')');
+    }
+    return { added, connectedHost };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Don't log full error for missing SDK — just skip
+    if (msg.includes('Cannot find module') || msg.includes('MODULE_NOT_FOUND')) {
+      console.log('      [!] EC2 Instance Connect SDK not available — skipping');
+    } else {
+      console.log('      [!] EC2 Instance Connect failed: ' + msg);
+    }
+    return { added: false };
+  }
+}
+
+async function autoGenerateAndDeploySshKey(
+  stage: string,
+  config: FactiiiConfig,
+  rootDir: string,
+  store: AnsibleVaultSecrets
+): Promise<boolean> {
+  const environments = extractEnvironments(config);
+  const envConfig = environments[stage];
+  let host = envConfig?.domain;
+  const user = envConfig?.ssh_user ?? 'root';
+
+  if (!host || host.toUpperCase().startsWith('EXAMPLE')) {
+    // Try to auto-detect host from EC2 instance (Elastic IP or public IP)
+    try {
+      const { isAwsConfigured, getAwsConfig, getProjectName, findInstancePublicIp,
+        findInstance: findInst, findElasticIp: findEip, getEC2Client: getEc2,
+        DescribeInstancesCommand: DescInst } =
+        await import('../../aws/utils/aws-helpers.js');
+
+      if (isAwsConfigured(config)) {
+        const { region } = getAwsConfig(config);
+        const projectName = getProjectName(config);
+
+        // Try tag-based lookup first
+        let detectedIp = await findInstancePublicIp(projectName, region);
+
+        // Fallback: find by key pair name if tags don't match
+        if (!detectedIp) {
+          try {
+            const ec2 = getEc2(region);
+            const keyPairName = 'factiii-' + projectName;
+            const descResult = await ec2.send(new DescInst({
+              Filters: [
+                { Name: 'key-name', Values: [keyPairName] },
+                { Name: 'instance-state-name', Values: ['running'] },
+              ],
+            }));
+            const inst = descResult.Reservations?.[0]?.Instances?.[0];
+            if (inst) {
+              // Check for Elastic IP first, then public IP
+              if (inst.InstanceId) {
+                detectedIp = await findEip(inst.InstanceId, region);
+              }
+              if (!detectedIp) {
+                detectedIp = inst.PublicIpAddress ?? null;
+              }
+            }
+          } catch {
+            // continue
+          }
+        }
+
+        if (detectedIp) {
+          host = detectedIp;
+          console.log('      Auto-detected EC2 host: ' + host);
+          // Update stack.yml so future runs don't need to detect again
+          try {
+            const { updateConfigValue } = await import('../../../../utils/config-writer.js');
+            const dir = rootDir || process.cwd();
+            updateConfigValue(dir, stage + '.domain', host);
+            updateConfigValue(dir, stage + '.ssh_user', user);
+            console.log('      [OK] Updated stack.yml with ' + stage + '.domain = ' + host);
+          } catch {
+            // config-writer may not exist — non-fatal
+          }
+        }
+      }
+    } catch {
+      // AWS not configured or SDK not available — skip detection
+    }
+  }
+
+  if (!host || host.toUpperCase().startsWith('EXAMPLE')) {
+    // Still no valid host — fall back to manual paste
+    return await manualSshKeyEntry(stage, config, store);
+  }
+
+  const keyName = stage + '_deploy_key';
+  const keyPath = path.join(os.homedir(), '.ssh', keyName);
+  const pubKeyPath = keyPath + '.pub';
+
+  console.log('');
+  console.log('      ── Auto SSH Key Setup for ' + stage + ' ──');
+  console.log('      Server: ' + user + '@' + host);
+  console.log('');
+
+  // Detect if THIS STAGE uses AWS (not project-wide — staging may be non-AWS while prod is AWS)
+  let isAwsStage = false;
+  let ec2PublicIp: string | undefined;
+  try {
+    const { getEnvironmentsForStage: getEnvsForStage } = await import('../../../../utils/config-helpers.js');
+    const stageEnvs = getEnvsForStage(config, stage as any);
+    const stageEnvValues = Object.values(stageEnvs);
+    isAwsStage = stageEnvValues.some((e: any) =>
+      e.pipeline === 'aws' || !!e.access_key_id || (!!e.config && ['ec2', 'free-tier', 'standard', 'enterprise'].includes(e.config))
+    );
+  } catch {
+    // config-helpers not available
+  }
+
+  if (isAwsStage) {
+    try {
+      const { getAwsConfig: getAws, getProjectName: getProjName,
+        findInstancePublicIp: findIp, findElasticIp: findEip2,
+        getEC2Client: getEc2b, DescribeInstancesCommand: DescInst2 } =
+        await import('../../aws/utils/aws-helpers.js');
+      const { region } = getAws(config);
+      const projName = getProjName(config);
+      ec2PublicIp = (await findIp(projName, region)) ?? undefined;
+
+      // Fallback: find by key pair name if tag-based lookup fails
+      if (!ec2PublicIp) {
+        try {
+          const ec2b = getEc2b(region);
+          const descResult = await ec2b.send(new DescInst2({
+            Filters: [
+              { Name: 'key-name', Values: ['factiii-' + projName] },
+              { Name: 'instance-state-name', Values: ['running'] },
+            ],
+          }));
+          const inst = descResult.Reservations?.[0]?.Instances?.[0];
+          if (inst?.InstanceId) {
+            ec2PublicIp = (await findEip2(inst.InstanceId, region)) ?? inst.PublicIpAddress ?? undefined;
+          }
+        } catch {
+          // continue
+        }
+      }
+    } catch {
+      // AWS SDK not available
+    }
+  }
+
+  // Step 1: Generate key (skip if it already exists)
+  if (!fs.existsSync(keyPath)) {
+    console.log('      [1/4] Generating SSH key...');
+    try {
+      execSync(
+        'ssh-keygen -t ed25519 -f "' + keyPath + '" -N "" -C "' + stage + '-deploy"',
+        { stdio: 'pipe' }
+      );
+      // Fix permissions
+      try { fs.chmodSync(keyPath, 0o600); } catch { /* Windows */ }
+      console.log('      [OK] Generated: ' + keyPath);
+    } catch (e) {
+      console.log('      [!] ssh-keygen failed: ' + (e instanceof Error ? e.message : String(e)));
+      return await manualSshKeyEntry(stage, config, store);
+    }
+  } else {
+    console.log('      [1/4] SSH key already exists: ' + keyPath);
+
+    // Step 1.5: Test if existing key already works (try both domain and EC2 IP)
+    console.log('      Testing existing key...');
+    if (testSshKey(keyPath, user, host)) {
+      console.log('      [OK] Existing key works!');
+      return await storeKeyInVault(stage, keyPath, config, store);
+    }
+    // Also try EC2 public IP if different from domain
+    if (ec2PublicIp && ec2PublicIp !== host && testSshKey(keyPath, user, ec2PublicIp)) {
+      console.log('      [OK] Existing key works via EC2 IP (' + ec2PublicIp + ')');
+      return await storeKeyInVault(stage, keyPath, config, store);
+    }
+    console.log('      Key not yet authorized on server');
+
+    // Regenerate .pub file if missing (needed for EC2 Instance Connect)
+    if (!fs.existsSync(pubKeyPath)) {
+      try {
+        execSync('ssh-keygen -y -f "' + keyPath + '" > "' + pubKeyPath + '"', { stdio: 'pipe' });
+        console.log('      [OK] Regenerated public key: ' + pubKeyPath);
+      } catch {
+        console.log('      [!] Could not regenerate .pub file');
+      }
+    }
+  }
+
+  // Step 2: Try to copy public key to server
+  let keyCopied = false;
+  let connectedVia: string | undefined;
+
+  // Step 2a: Try EC2 Instance Connect first (for AWS instances, no password needed)
+  if (!keyCopied && fs.existsSync(pubKeyPath)) {
+    const eicResult = await tryEc2InstanceConnect(keyPath, pubKeyPath, user, host, config);
+    keyCopied = eicResult.added;
+    connectedVia = eicResult.connectedHost;
+  }
+
+  // Step 2b: Try ssh-copy-id / ssh (requires password auth) — skip for AWS EC2 (no password auth)
+  if (!keyCopied && !isAwsStage) {
+    console.log('      [2/4] Copying public key to server...');
+    console.log('      You will be prompted for the SSH password for ' + user + '@' + host);
+    console.log('');
+    try {
+      const pubKey = fs.readFileSync(pubKeyPath, 'utf8').trim();
+
+      if (process.platform === 'win32') {
+        const copyResult = spawnSync('ssh', [
+          '-o', 'StrictHostKeyChecking=no',
+          user + '@' + host,
+          'mkdir -p ~/.ssh && echo "' + pubKey + '" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && chmod 700 ~/.ssh',
+        ], {
+          stdio: 'inherit',
+          timeout: 60000,
+        });
+        keyCopied = copyResult.status === 0;
+      } else {
+        const copyResult = spawnSync('ssh-copy-id', [
+          '-i', pubKeyPath,
+          '-o', 'StrictHostKeyChecking=no',
+          user + '@' + host,
+        ], {
+          stdio: 'inherit',
+          timeout: 60000,
+        });
+        keyCopied = copyResult.status === 0;
+      }
+    } catch (e) {
+      console.log('      [!] ssh key copy failed: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  if (!keyCopied) {
+    console.log('      [!] Failed to copy public key to server');
+    console.log('      Falling back to manual key paste...');
+    return await manualSshKeyEntry(stage, config, store);
+  }
+  console.log('      [OK] Public key copied to server');
+
+  // Step 3: Verify key auth works (try the host that worked during copy, then others)
+  console.log('      [3/4] Verifying key auth...');
+  const verifyHost = connectedVia ?? host;
+  const keyWorks = testSshKey(keyPath, user, verifyHost) ||
+    (verifyHost !== host && testSshKey(keyPath, user, host)) ||
+    (ec2PublicIp && ec2PublicIp !== verifyHost && ec2PublicIp !== host && testSshKey(keyPath, user, ec2PublicIp));
+  if (!keyWorks) {
+    console.log('      [!] Key auth verification failed');
+    console.log('      Falling back to manual key paste...');
+    return await manualSshKeyEntry(stage, config, store);
+  }
+  console.log('      [OK] Key auth verified');
+
+  // Step 4: Store private key in vault and write to disk
+  console.log('      [4/4] Storing key in Ansible Vault...');
+  return await storeKeyInVault(stage, keyPath, config, store);
+}
+
+/**
+ * Manual fallback: prompt user to paste an SSH private key
+ */
+async function manualSshKeyEntry(
+  stage: string,
+  config: FactiiiConfig,
+  store: AnsibleVaultSecrets
+): Promise<boolean> {
+  try {
+    const secretName = stage.toUpperCase() + '_SSH';
+    const value = await promptForSecret(secretName, config);
+    const result = await store.setSecret(secretName, value);
+    if (!result.success) return false;
+
+    const keyPath = writeSshKeyToDisk(stage, value, config);
+    console.log('      Wrote ' + secretName + ' → ' + keyPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 export const secretsFixes: Fix[] = [
   {
-    id: 'missing-ansible-config',
+    id: 'missing-vault-password-file',
     stage: 'secrets',
     severity: 'critical',
-    description: 'Ansible Vault not configured (ansible.vault_path missing in factiii.yml)',
-    scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      return !config.ansible?.vault_path;
+    description: '🔐 Vault password file not found (required to decrypt secrets)',
+    scan: async (config: FactiiiConfig): Promise<boolean> => {
+      // Vault password is managed locally — skip on server
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
+      if (!hasEnvironments(config)) return false;
+      if (!config.ansible?.vault_password_file) return false;
+
+      const passwordFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
+      return !fs.existsSync(passwordFile);
     },
-    fix: null,
+    fix: async (config: FactiiiConfig): Promise<boolean> => {
+      const passwordFile = (config.ansible?.vault_password_file ?? '~/.vault_pass')
+        .replace(/^~/, os.homedir());
+
+      console.log('');
+      console.log('   Creating Ansible Vault password file: ' + passwordFile);
+      console.log('   This password encrypts all your secrets (SSH keys, API tokens, etc.)');
+      console.log('   Choose a strong password and save it somewhere safe.');
+      console.log('');
+
+      const password = await promptSingleLine('   Vault password: ', { hidden: true });
+      if (!password || password.length < 4) {
+        console.log('   Password too short (min 4 characters)');
+        return false;
+      }
+
+      const confirmPass = await promptSingleLine('   Confirm password: ', { hidden: true });
+      if (password !== confirmPass) {
+        console.log('   Passwords do not match');
+        return false;
+      }
+
+      // Ensure parent directory exists
+      const parentDir = path.dirname(passwordFile);
+      if (!fs.existsSync(parentDir)) {
+        fs.mkdirSync(parentDir, { recursive: true });
+      }
+
+      fs.writeFileSync(passwordFile, password + '\n', { mode: 0o600 });
+      console.log('   [OK] Created ' + passwordFile);
+      return true;
+    },
     manualFix:
-      'Add ansible section to factiii.yml:\n' +
-      '  ansible:\n' +
-      '    vault_path: group_vars/all/vault.yml\n' +
-      '    vault_password_file: ~/.vault_pass  # optional',
+      'Create the vault password file:\n' +
+      '      macOS/Linux: echo "your-vault-password" > ~/.vault_pass && chmod 600 ~/.vault_pass\n' +
+      '      Windows:     echo your-vault-password > %USERPROFILE%\\.vault_pass',
   },
   {
     id: 'missing-staging-ssh',
     stage: 'secrets',
     severity: 'critical',
-    description: 'STAGING_SSH secret not found in Ansible Vault',
+    description: '🔑 STAGING_SSH secret not found in Ansible Vault',
+    targetStage: 'staging', // Only run when targeting staging deployment
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      // SSH key setup only runs on dev machine, not on the server itself
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
+
       const environments = extractEnvironments(config);
 
       // Only check if staging environment is defined in config
@@ -60,34 +616,42 @@ export const secretsFixes: Fix[] = [
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false; // Will be caught by missing-ansible-config fix
 
-      const result = await store.checkSecrets(['STAGING_SSH']);
-      return result.missing?.includes('STAGING_SSH') ?? false;
+      try {
+        const result = await store.checkSecrets(['STAGING_SSH']);
+        return result.missing?.includes('STAGING_SSH') ?? false;
+      } catch {
+        return false; // Vault password mismatch — handled by vault-password-mismatch scanfix
+      }
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
 
-      try {
-        const value = await promptForSecret('STAGING_SSH', config);
-        const result = await store.setSecret('STAGING_SSH', value);
-        return result.success;
-      } catch {
-        return false;
+      console.log('');
+      const pasteExisting = await confirm('      Do you have an existing SSH key to paste?', false);
+      if (pasteExisting) {
+        return await manualSshKeyEntry('staging', config, store);
       }
+
+      console.log('      Auto-generating and deploying a new SSH key...');
+      return await autoGenerateAndDeploySshKey('staging', config, rootDir, store);
     },
     manualFix:
       'Store your staging SSH key in the vault:\n' +
       '      1. Generate key: ssh-keygen -t ed25519 -C "staging-deploy" -f ~/.ssh/staging_deploy_key\n' +
       '      2. Add to server: ssh-copy-id -i ~/.ssh/staging_deploy_key.pub user@staging-host\n' +
-      '      3. Store in vault: npx stack secrets set STAGING_SSH',
+      '      3. Store in vault: npx stack deploy --secrets set STAGING_SSH',
   },
   {
     id: 'missing-prod-ssh',
     stage: 'secrets',
     severity: 'critical',
-    description: 'PROD_SSH secret not found in Ansible Vault',
+    description: '🔑 PROD_SSH secret not found in Ansible Vault',
+    targetStage: 'prod', // Only run when targeting prod deployment
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      // SSH key setup only runs on dev machine, not on the server itself
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
+
       const environments = extractEnvironments(config);
 
       // Only check if prod environment is defined in config
@@ -97,18 +661,369 @@ export const secretsFixes: Fix[] = [
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false; // Will be caught by missing-ansible-config fix
 
-      const result = await store.checkSecrets(['PROD_SSH']);
-      return result.missing?.includes('PROD_SSH') ?? false;
+      try {
+        const result = await store.checkSecrets(['PROD_SSH']);
+        return result.missing?.includes('PROD_SSH') ?? false;
+      } catch {
+        return false; // Vault password mismatch — handled by vault-password-mismatch scanfix
+      }
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
 
+      // Ask upfront if user wants to paste an existing key
+      console.log('');
+      const pasteExisting = await confirm('      Do you have an existing SSH key to paste?', false);
+      if (pasteExisting) {
+        return await manualSshKeyEntry('prod', config, store);
+      }
+
       try {
-        const value = await promptForSecret('PROD_SSH', config);
-        const result = await store.setSecret('PROD_SSH', value);
-        return result.success;
-      } catch {
+        // Check if AWS is configured for this project
+        const { isAwsConfigured, getAwsConfig, getAwsAccountId, getProjectName, findKeyPair, getEC2Client, CreateKeyPairCommand } =
+          await import('../../aws/utils/aws-helpers.js');
+
+        if (isAwsConfigured(config)) {
+          const { region } = getAwsConfig(config);
+          const projectName = getProjectName(config);
+
+          // Ensure AWS credentials are working
+          let accountId = await getAwsAccountId(region);
+          if (!accountId) {
+            console.log('');
+            console.log('      ============================================================');
+            console.log('      AWS credentials not configured.');
+            console.log('      Enter your AWS Access Key ID and Secret Access Key.');
+            console.log('      ============================================================');
+            console.log('');
+
+            const inputAccessKeyId = await promptSingleLine('      AWS Access Key ID: ');
+            const inputSecretKey = await promptSingleLine('      AWS Secret Access Key: ', { hidden: true });
+
+            if (!inputAccessKeyId || !inputSecretKey) {
+              console.log('      Access Key ID and Secret Access Key are required.');
+              return false;
+            }
+
+            const { writeAwsCredentials } = await import('../../aws/utils/aws-helpers.js');
+            writeAwsCredentials(inputAccessKeyId, inputSecretKey, region);
+
+            accountId = await getAwsAccountId(region);
+            if (!accountId) {
+              console.log('      AWS credentials still invalid after configuration.');
+              return false;
+            }
+            console.log('      [OK] AWS login successful (account: ' + accountId + ')');
+          }
+
+          // Check if key pair already exists
+          const keyName = 'factiii-' + projectName;
+          if (await findKeyPair(keyName, region)) {
+            // Key pair exists — AWS doesn't store private key after creation
+            // Must generate a local key and use EC2 Instance Connect to add it
+            console.log('      EC2 key pair "' + keyName + '" exists (private key not retrievable from AWS)');
+            console.log('      Will generate a local SSH key and use EC2 Instance Connect to authorize it...');
+            console.log('');
+
+            // Import additional helpers for instance discovery
+            const { findInstance, findElasticIp, findInstancePublicIp,
+              DescribeInstancesCommand, getEC2ICClient, SendSSHPublicKeyCommand } =
+              await import('../../aws/utils/aws-helpers.js');
+
+            // Find the EC2 instance using multiple strategies
+            const ec2 = getEC2Client(region);
+            let instanceId = await findInstance(projectName, region);
+
+            // Try by key pair name if tag lookup fails
+            if (!instanceId) {
+              try {
+                const desc = await ec2.send(new DescribeInstancesCommand({
+                  Filters: [
+                    { Name: 'key-name', Values: [keyName] },
+                    { Name: 'instance-state-name', Values: ['running', 'stopped'] },
+                  ],
+                }));
+                instanceId = desc.Reservations?.[0]?.Instances?.[0]?.InstanceId ?? null;
+                if (instanceId) console.log('      Found EC2 instance by key pair: ' + instanceId);
+              } catch {
+                // continue
+              }
+            }
+
+            // Try resolving the prod domain to find instance
+            if (!instanceId) {
+              const environments = extractEnvironments(config);
+              const prodDomain = environments.prod?.domain;
+              if (prodDomain && !prodDomain.toUpperCase().startsWith('EXAMPLE')) {
+                try {
+                  const dns = await import('dns');
+                  const resolved = await new Promise<string[]>((resolve, reject) => {
+                    dns.resolve4(prodDomain, (err, addresses) => {
+                      if (err) reject(err);
+                      else resolve(addresses);
+                    });
+                  });
+                  if (resolved.length > 0) {
+                    const desc = await ec2.send(new DescribeInstancesCommand({
+                      Filters: [{ Name: 'instance-state-name', Values: ['running'] }],
+                    }));
+                    for (const r of desc.Reservations ?? []) {
+                      for (const inst of r.Instances ?? []) {
+                        if (inst.PublicIpAddress && resolved.includes(inst.PublicIpAddress)) {
+                          instanceId = inst.InstanceId ?? null;
+                          if (instanceId) console.log('      Found EC2 instance by domain resolution: ' + instanceId);
+                          break;
+                        }
+                      }
+                      if (instanceId) break;
+                    }
+                  }
+                } catch {
+                  // DNS resolution failed — continue
+                }
+              }
+            }
+
+            // List ALL running instances as last resort — prefer newest (most recently launched)
+            if (!instanceId) {
+              try {
+                const desc = await ec2.send(new DescribeInstancesCommand({
+                  Filters: [{ Name: 'instance-state-name', Values: ['running'] }],
+                }));
+                const allInstances: { id: string; ip?: string; name?: string; launchTime?: Date }[] = [];
+                for (const r of desc.Reservations ?? []) {
+                  for (const inst of r.Instances ?? []) {
+                    if (inst.InstanceId) {
+                      const nameTag = inst.Tags?.find(t => t.Key === 'Name');
+                      allInstances.push({
+                        id: inst.InstanceId,
+                        ip: inst.PublicIpAddress ?? undefined,
+                        name: nameTag?.Value ?? undefined,
+                        launchTime: inst.LaunchTime,
+                      });
+                    }
+                  }
+                }
+                // Sort newest first
+                allInstances.sort((a, b) => (b.launchTime?.getTime() ?? 0) - (a.launchTime?.getTime() ?? 0));
+
+                if (allInstances.length === 1 && allInstances[0]) {
+                  const single = allInstances[0];
+                  instanceId = single.id;
+                  console.log('      Found single EC2 instance: ' + instanceId + ' (' + (single.ip ?? 'no public IP') + ')');
+                } else if (allInstances.length > 1) {
+                  // Auto-select newest instance with a public IP
+                  const withIp = allInstances.filter(i => !!i.ip);
+                  if (withIp.length > 0 && withIp[0]) {
+                    instanceId = withIp[0].id;
+                    console.log('      Found ' + allInstances.length + ' instances, using newest with public IP: ' + instanceId + ' (' + withIp[0].ip + ')');
+                  } else {
+                    console.log('      Multiple EC2 instances found but none have public IPs:');
+                    for (const inst of allInstances) {
+                      console.log('        - ' + inst.id + ' ' + (inst.ip ?? '') + ' ' + (inst.name ?? ''));
+                    }
+                    console.log('      Set prod.domain in stack.yml to the correct IP.');
+                  }
+                }
+              } catch {
+                // continue
+              }
+            }
+
+            if (!instanceId) {
+              console.log('      [!] No EC2 instance found in region ' + region);
+              console.log('      If you haven\'t provisioned yet, run: npx stack fix --prod');
+              console.log('      This will create VPC, EC2, and other AWS resources.');
+              console.log('');
+              // Still create a local key for future use — will be authorized after EC2 is provisioned
+              console.log('      Creating SSH key for future use...');
+              const localKeyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+              if (!fs.existsSync(localKeyPath)) {
+                try {
+                  execSync('ssh-keygen -t ed25519 -f "' + localKeyPath + '" -N "" -C "prod-deploy"', { stdio: 'pipe' });
+                  try { fs.chmodSync(localKeyPath, 0o600); } catch { /* Windows */ }
+                } catch {
+                  return false;
+                }
+              }
+              const privKey = fs.readFileSync(localKeyPath, 'utf8');
+              const vaultResult = await store.setSecret('PROD_SSH', privKey);
+              if (vaultResult.success) {
+                writeSshKeyToDisk('prod', privKey, config);
+                console.log('      [OK] Stored PROD_SSH in vault (key will be authorized after EC2 provisioning)');
+                return true;
+              }
+              return false;
+            }
+
+            // Instance found — get its details
+            const instDesc = await ec2.send(new DescribeInstancesCommand({
+              InstanceIds: [instanceId],
+            }));
+            const instance = instDesc.Reservations?.[0]?.Instances?.[0];
+            const az = instance?.Placement?.AvailabilityZone;
+            // Get public IP (prefer Elastic IP)
+            let publicIp = (await findInstancePublicIp(projectName, region)) ?? undefined;
+            if (!publicIp && instance?.InstanceId) {
+              publicIp = (await findElasticIp(instance.InstanceId, region)) ?? instance?.PublicIpAddress ?? undefined;
+            }
+
+            if (!publicIp || !az) {
+              console.log('      [!] Instance has no public IP or AZ. Is it running?');
+              return false;
+            }
+
+            const sshUser = extractEnvironments(config).prod?.ssh_user ?? 'ubuntu';
+
+            // Generate local SSH key if needed
+            const localKeyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+            const localPubPath = localKeyPath + '.pub';
+            if (!fs.existsSync(localKeyPath)) {
+              console.log('      [1/4] Generating SSH key...');
+              try {
+                execSync('ssh-keygen -t ed25519 -f "' + localKeyPath + '" -N "" -C "prod-deploy"', { stdio: 'pipe' });
+                try { fs.chmodSync(localKeyPath, 0o600); } catch { /* Windows */ }
+                console.log('      [OK] Generated: ' + localKeyPath);
+              } catch (e) {
+                console.log('      [!] ssh-keygen failed: ' + (e instanceof Error ? e.message : String(e)));
+                return false;
+              }
+            } else {
+              console.log('      [1/4] SSH key exists: ' + localKeyPath);
+              // Test if key already works
+              if (testSshKey(localKeyPath, sshUser, publicIp)) {
+                console.log('      [OK] Key already authorized!');
+                return await storeKeyInVault('prod', localKeyPath, config, store);
+              }
+              // Regenerate .pub if missing
+              if (!fs.existsSync(localPubPath)) {
+                try {
+                  execSync('ssh-keygen -y -f "' + localKeyPath + '" > "' + localPubPath + '"', { stdio: 'pipe' });
+                } catch {
+                  console.log('      [!] Could not regenerate .pub file');
+                  return false;
+                }
+              }
+            }
+
+            // Push key via EC2 Instance Connect and add permanently
+            const pubKey = fs.readFileSync(localPubPath, 'utf8').trim();
+            console.log('      [2/4] Pushing key via EC2 Instance Connect...');
+
+            const eicClient = getEC2ICClient(region);
+            const sendResult = await eicClient.send(new SendSSHPublicKeyCommand({
+              InstanceId: instanceId,
+              InstanceOSUser: sshUser,
+              SSHPublicKey: pubKey,
+              AvailabilityZone: az,
+            }));
+
+            if (!sendResult.Success) {
+              console.log('      [!] EC2 Instance Connect push failed');
+              console.log('      Ensure ec2-instance-connect agent is installed on the instance.');
+              return false;
+            }
+            console.log('      [OK] Temporary key pushed (60s window)');
+
+            // Add key permanently to authorized_keys
+            console.log('      [3/4] Adding key permanently...');
+            const addKeyCmd = 'mkdir -p ~/.ssh && echo "' + pubKey + '" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && chmod 700 ~/.ssh && sort -u -o ~/.ssh/authorized_keys ~/.ssh/authorized_keys && echo ok';
+            const addResult = spawnSync('ssh', [
+              '-i', localKeyPath,
+              '-o', 'StrictHostKeyChecking=no',
+              '-o', 'ConnectTimeout=15',
+              sshUser + '@' + publicIp,
+              addKeyCmd,
+            ], {
+              encoding: 'utf8',
+              stdio: 'pipe',
+              timeout: 30000,
+            });
+
+            if (addResult.status !== 0) {
+              console.log('      [!] Failed to add key permanently via ' + publicIp);
+              if (addResult.stderr) console.log('      ' + addResult.stderr.trim().split('\n')[0]);
+              // Still store the key in vault — it will work once the instance is reachable
+              // (e.g., security group needs SSH port opened, or instance needs restart)
+              console.log('      Storing key in vault anyway (will retry SSH on next run)...');
+              const partialStore = await storeKeyInVault('prod', localKeyPath, config, store);
+              if (partialStore) {
+                // Update stack.yml with the EC2 IP if domain is EXAMPLE or missing
+                const envs2 = extractEnvironments(config);
+                const prodDomain2 = envs2.prod?.domain;
+                if (!prodDomain2 || prodDomain2.toUpperCase().startsWith('EXAMPLE')) {
+                  try {
+                    const { updateConfigValue } = await import('../../../../utils/config-writer.js');
+                    updateConfigValue(rootDir || process.cwd(), 'prod.domain', publicIp);
+                    updateConfigValue(rootDir || process.cwd(), 'prod.ssh_user', sshUser);
+                    console.log('      [OK] Updated stack.yml: prod.domain = ' + publicIp);
+                  } catch { /* non-fatal */ }
+                }
+                console.log('      [OK] Key stored. Run "npx stack fix" again after instance is reachable.');
+              }
+              return partialStore;
+            }
+            console.log('      [OK] Key added permanently via ' + publicIp);
+
+            // Verify
+            if (!testSshKey(localKeyPath, sshUser, publicIp)) {
+              console.log('      [!] Key verification failed');
+              return false;
+            }
+
+            // Store in vault
+            console.log('      [4/4] Storing in vault...');
+            const stored = await storeKeyInVault('prod', localKeyPath, config, store);
+
+            // Update stack.yml with the EC2 IP if domain is EXAMPLE or missing
+            if (stored) {
+              const environments = extractEnvironments(config);
+              const prodDomain = environments.prod?.domain;
+              if (!prodDomain || prodDomain.toUpperCase().startsWith('EXAMPLE')) {
+                try {
+                  const { updateConfigValue } = await import('../../../../utils/config-writer.js');
+                  const dir = rootDir || process.cwd();
+                  updateConfigValue(dir, 'prod.domain', publicIp);
+                  updateConfigValue(dir, 'prod.ssh_user', sshUser);
+                  console.log('      [OK] Updated stack.yml: prod.domain = ' + publicIp);
+                } catch {
+                  // non-fatal
+                }
+              }
+            }
+            return stored;
+          } else {
+            // Create new key pair — AWS returns the private key material
+            console.log('      Creating EC2 key pair: ' + keyName);
+            const ec2 = getEC2Client(region);
+            const keyResult = await ec2.send(new CreateKeyPairCommand({
+              KeyName: keyName,
+              KeyType: 'ed25519',
+            }));
+            const privateKey = keyResult.KeyMaterial;
+            if (privateKey) {
+              // Store in vault
+              const vaultResult = await store.setSecret('PROD_SSH', privateKey);
+              if (!vaultResult.success) {
+                console.log('      Failed to store PROD_SSH in vault');
+                return false;
+              }
+              console.log('      [OK] Stored PROD_SSH in Ansible Vault');
+
+              // Write to disk (generic + repo-specific)
+              const keyPath = writeSshKeyToDisk('prod', privateKey, config);
+              console.log('      [OK] Wrote PROD_SSH → ' + keyPath);
+              return true;
+            }
+          }
+        }
+
+        // Fallback: auto-generate key (non-AWS projects)
+        console.log('      Auto-generating and deploying a new SSH key...');
+        return await autoGenerateAndDeploySshKey('prod', config, rootDir, store);
+      } catch (e) {
+        console.log('      [!] Error: ' + (e instanceof Error ? e.message : String(e)));
         return false;
       }
     },
@@ -116,34 +1031,204 @@ export const secretsFixes: Fix[] = [
       'Store your prod SSH key in the vault:\n' +
       '      1. Generate key: ssh-keygen -t ed25519 -C "prod-deploy" -f ~/.ssh/prod_deploy_key\n' +
       '      2. Add to server: ssh-copy-id -i ~/.ssh/prod_deploy_key.pub user@prod-host\n' +
-      '      3. Store in vault: npx stack secrets set PROD_SSH',
+      '      3. Store in vault: npx stack deploy --secrets set PROD_SSH',
+  },
+  {
+    id: 'missing-staging-ssh-password',
+    stage: 'secrets',
+    severity: 'warning',
+    description: '🔑 STAGING_SSH_PASSWORD not in vault (needed if staging uses password auth)',
+    targetStage: 'staging', // Only run when targeting staging deployment
+    scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
+      const environments = extractEnvironments(config);
+      if (!environments.staging) return false;
+
+      // Only flag if there's NO SSH key — password is the fallback
+      const keyPath = path.join(os.homedir(), '.ssh', 'staging_deploy_key');
+      if (fs.existsSync(keyPath)) return false;
+
+      const store = getAnsibleStore(config, rootDir);
+      if (!store) return false;
+
+      try {
+        // Check if STAGING_SSH key is in vault (if so, no need for password)
+        const keyCheck = await store.checkSecrets(['STAGING_SSH']);
+        if (!keyCheck.missing?.includes('STAGING_SSH')) return false;
+
+        // No SSH key at all — check if password is stored
+        const result = await store.checkSecrets(['STAGING_SSH_PASSWORD']);
+        return result.missing?.includes('STAGING_SSH_PASSWORD') ?? false;
+      } catch {
+        return false; // Vault password mismatch — handled by vault-password-mismatch scanfix
+      }
+    },
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      // Re-check: SSH key may have been created by a prior fix in this same run
+      const keyPath = path.join(os.homedir(), '.ssh', 'staging_deploy_key');
+      if (fs.existsSync(keyPath)) {
+        console.log('      SSH key now exists — password not needed');
+        return true;
+      }
+      const store = getAnsibleStore(config, rootDir);
+      if (!store) return false;
+      try {
+        const keyCheck = await store.checkSecrets(['STAGING_SSH']);
+        if (!keyCheck.missing?.includes('STAGING_SSH')) {
+          console.log('      STAGING_SSH now in vault — password not needed');
+          return true;
+        }
+      } catch { /* continue to password prompt */ }
+
+      try {
+        const environments = extractEnvironments(config);
+        const envConfig = environments.staging;
+        const host = envConfig?.domain ?? 'staging server';
+        const user = envConfig?.ssh_user ?? 'root';
+
+        console.log('      Enter the SSH password for ' + user + '@' + host);
+        const password = await promptSingleLine('      Password: ', { hidden: true });
+        if (!password) {
+          console.log('      No password provided');
+          return false;
+        }
+
+        const result = await store.setSecret('STAGING_SSH_PASSWORD', password);
+        if (result.success) {
+          console.log('      Stored STAGING_SSH_PASSWORD in Ansible Vault');
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    },
+    manualFix:
+      'Store SSH password: npx stack deploy --secrets set STAGING_SSH_PASSWORD',
+  },
+  {
+    id: 'missing-prod-ssh-password',
+    stage: 'secrets',
+    severity: 'warning',
+    description: '🔑 PROD_SSH_PASSWORD not in vault (needed if prod uses password auth)',
+    targetStage: 'prod', // Only run when targeting prod deployment
+    scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
+      const environments = extractEnvironments(config);
+      if (!environments.prod) return false;
+
+      // Only flag if there's NO SSH key — password is the fallback
+      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+      if (fs.existsSync(keyPath)) return false;
+
+      const store = getAnsibleStore(config, rootDir);
+      if (!store) return false;
+
+      try {
+        // Check if PROD_SSH key is in vault (if so, no need for password)
+        const keyCheck = await store.checkSecrets(['PROD_SSH']);
+        if (!keyCheck.missing?.includes('PROD_SSH')) return false;
+
+        // No SSH key at all — check if password is stored
+        const result = await store.checkSecrets(['PROD_SSH_PASSWORD']);
+        return result.missing?.includes('PROD_SSH_PASSWORD') ?? false;
+      } catch {
+        return false; // Vault password mismatch — handled by vault-password-mismatch scanfix
+      }
+    },
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      // Re-check: SSH key may have been created by a prior fix in this same run
+      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+      if (fs.existsSync(keyPath)) {
+        console.log('      SSH key now exists — password not needed');
+        return true;
+      }
+      const store = getAnsibleStore(config, rootDir);
+      if (!store) return false;
+      try {
+        const keyCheck = await store.checkSecrets(['PROD_SSH']);
+        if (!keyCheck.missing?.includes('PROD_SSH')) {
+          console.log('      PROD_SSH now in vault — password not needed');
+          return true;
+        }
+      } catch { /* continue to password prompt */ }
+
+      try {
+        const environments = extractEnvironments(config);
+        const envConfig = environments.prod;
+        const host = envConfig?.domain ?? 'prod server';
+        const user = envConfig?.ssh_user ?? 'root';
+
+        console.log('      Enter the SSH password for ' + user + '@' + host);
+        const password = await promptSingleLine('      Password: ', { hidden: true });
+        if (!password) {
+          console.log('      No password provided');
+          return false;
+        }
+
+        const result = await store.setSecret('PROD_SSH_PASSWORD', password);
+        if (result.success) {
+          console.log('      Stored PROD_SSH_PASSWORD in Ansible Vault');
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    },
+    manualFix:
+      'Store SSH password: npx stack deploy --secrets set PROD_SSH_PASSWORD',
   },
   {
     id: 'missing-aws-secret',
     stage: 'secrets',
     severity: 'warning',
-    description: 'AWS_SECRET_ACCESS_KEY not found in Ansible Vault (needed for ECR)',
+    description: '🔑 AWS_SECRET_ACCESS_KEY not found in Ansible Vault (needed for ECR)',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       const environments = extractEnvironments(config);
 
-      // Check if any environment uses AWS pipeline
+      // Check if any environment uses AWS (has access_key_id or config)
       const hasAwsEnv = Object.values(environments).some(env =>
-        env.pipeline === 'aws' && env.access_key_id
+        !!env.access_key_id || !!env.config
       );
       if (!hasAwsEnv) return false;
 
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false; // Will be caught by missing-ansible-config fix
 
-      const result = await store.checkSecrets(['AWS_SECRET_ACCESS_KEY']);
-      return result.missing?.includes('AWS_SECRET_ACCESS_KEY') ?? false;
+      try {
+        const result = await store.checkSecrets(['AWS_SECRET_ACCESS_KEY']);
+        return result.missing?.includes('AWS_SECRET_ACCESS_KEY') ?? false;
+      } catch {
+        return false; // Vault password mismatch — handled by vault-password-mismatch scanfix
+      }
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
 
       try {
+        // Try reading from ~/.aws/credentials first
+        const awsCredsPath = path.join(os.homedir(), '.aws', 'credentials');
+        if (fs.existsSync(awsCredsPath)) {
+          const content = fs.readFileSync(awsCredsPath, 'utf8');
+          const match = content.match(/aws_secret_access_key\s*=\s*(.+)/);
+          if (match && match[1]) {
+            const secretKey = match[1].trim();
+            if (secretKey && secretKey.length === 40) {
+              console.log('   Found AWS_SECRET_ACCESS_KEY in ~/.aws/credentials');
+              const result = await store.setSecret('AWS_SECRET_ACCESS_KEY', secretKey);
+              if (result.success) {
+                console.log('   Stored in Ansible Vault');
+                return true;
+              }
+            }
+          }
+        }
+
+        // Fall back to interactive prompt
+        console.log('   AWS_SECRET_ACCESS_KEY not found in ~/.aws/credentials');
         const value = await promptForSecret('AWS_SECRET_ACCESS_KEY', config);
         const result = await store.setSecret('AWS_SECRET_ACCESS_KEY', value);
         return result.success;
@@ -152,64 +1237,151 @@ export const secretsFixes: Fix[] = [
       }
     },
     manualFix:
-      'Set AWS_SECRET_ACCESS_KEY secret: npx stack secrets set AWS_SECRET_ACCESS_KEY',
-  },
-  {
-    id: 'missing-vault-password-file',
-    stage: 'secrets',
-    severity: 'critical',
-    description: 'Vault password file not found (required to decrypt secrets)',
-    scan: async (config: FactiiiConfig): Promise<boolean> => {
-      if (!config.ansible?.vault_path) return false; // Will be caught by missing-ansible-config
-      if (!config.ansible.vault_password_file) return false; // Not using password file
-
-      const passwordFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
-      return !fs.existsSync(passwordFile);
-    },
-    fix: null,
-    manualFix:
-      'Create the vault password file specified in factiii.yml ansible.vault_password_file:\n' +
-      '      macOS/Linux: echo "your-vault-password" > ~/.vault_pass && chmod 600 ~/.vault_pass\n' +
-      '      Windows:     echo your-vault-password > %USERPROFILE%\\.vault_pass\n' +
-      '      Or run: npx stack init (will guide you through vault setup)',
+      'Set AWS_SECRET_ACCESS_KEY secret: npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY',
   },
   {
     id: 'missing-ssh-key-staging',
     stage: 'secrets',
     severity: 'critical',
-    description: 'SSH key file ' + path.join(os.homedir(), '.ssh', 'staging_deploy_key') + ' not found (required for staging access)',
+    description: '🔑 STAGING_SSH key file not on disk (required for staging access)',
+    targetStage: 'staging', // Only run when targeting staging deployment
     scan: async (config: FactiiiConfig): Promise<boolean> => {
-      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       const environments = extractEnvironments(config);
 
-      // Only check if staging environment is defined
       if (!environments.staging) return false;
 
-      const keyPath = path.join(os.homedir(), '.ssh', 'staging_deploy_key');
-      return !fs.existsSync(keyPath);
+      return !findSshKeyForStage('staging', config.name);
     },
-    fix: null,
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      const store = getAnsibleStore(config, rootDir);
+      if (!store) return false;
+
+      try {
+        const key = await store.getSecret('STAGING_SSH');
+        if (!key) {
+          console.log('      STAGING_SSH not in vault — paste it now to store and write to disk.');
+          const wantPaste = await confirm('      Paste your staging SSH key now?', true);
+          if (wantPaste) {
+            return await manualSshKeyEntry('staging', config, store);
+          }
+          console.log('      Skipped. Run `npx stack fix --secrets` again when ready.');
+          return false;
+        }
+
+        const keyPath = writeSshKeyToDisk('staging', key, config);
+        console.log('      Wrote STAGING_SSH → ' + keyPath);
+
+        // Test if the key is authorized on the staging server
+        const environments = extractEnvironments(config);
+        const stagingEnv = environments.staging;
+        if (stagingEnv?.domain && stagingEnv?.ssh_user) {
+          const host = stagingEnv.domain as string;
+          const user = stagingEnv.ssh_user as string;
+
+          if (!testSshKey(keyPath, user, host)) {
+            console.log('      [!] Key written but not authorized on ' + host);
+            console.log('      Attempting EC2 Instance Connect to authorize key...');
+
+            const pubKeyPath = keyPath + '.pub';
+            try {
+              execSync('ssh-keygen -y -f "' + keyPath + '" > "' + pubKeyPath + '"', { stdio: 'pipe' });
+            } catch {
+              console.log('      [!] Could not generate public key from private key');
+              return true;
+            }
+
+            const eicResult = await tryEc2InstanceConnect(keyPath, pubKeyPath, user, host, config);
+            if (eicResult.added) {
+              console.log('      [OK] Key authorized on ' + (eicResult.connectedHost ?? host));
+            } else {
+              console.log('      [!] Could not auto-authorize key on ' + host);
+              console.log('      You may need to manually run: ssh-copy-id -i ' + keyPath + ' ' + user + '@' + host);
+            }
+          } else {
+            console.log('      [OK] Key verified on ' + host);
+          }
+        }
+
+        return true;
+      } catch {
+        return false;
+      }
+    },
     manualFix:
-      'Extract SSH keys from vault: npx stack secrets write-ssh-keys',
+      'Extract SSH keys from vault: npx stack deploy --secrets write-ssh-keys',
   },
   {
     id: 'missing-ssh-key-prod',
     stage: 'secrets',
     severity: 'critical',
-    description: 'SSH key file ' + path.join(os.homedir(), '.ssh', 'prod_deploy_key') + ' not found (required for prod access)',
+    description: '🔑 PROD_SSH key file not on disk (required for prod access)',
+    targetStage: 'prod', // Only run when targeting prod deployment
     scan: async (config: FactiiiConfig): Promise<boolean> => {
-      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
+      if (process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true') return false;
       const environments = extractEnvironments(config);
 
-      // Only check if prod environment is defined
       if (!environments.prod) return false;
 
-      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
-      return !fs.existsSync(keyPath);
+      return !findSshKeyForStage('prod', config.name);
     },
-    fix: null,
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      const store = getAnsibleStore(config, rootDir);
+      if (!store) return false;
+
+      try {
+        const key = await store.getSecret('PROD_SSH');
+        if (!key) {
+          console.log('      PROD_SSH not in vault — paste it now to store and write to disk.');
+          const wantPaste = await confirm('      Paste your prod SSH key now?', true);
+          if (wantPaste) {
+            return await manualSshKeyEntry('prod', config, store);
+          }
+          console.log('      Skipped. Run `npx stack fix --secrets` again when ready.');
+          return false;
+        }
+
+        const keyPath = writeSshKeyToDisk('prod', key, config);
+        console.log('      Wrote PROD_SSH → ' + keyPath);
+
+        // Test if the key is authorized on the prod server
+        const environments = extractEnvironments(config);
+        const prodEnv = environments.prod;
+        if (prodEnv?.domain && prodEnv?.ssh_user) {
+          const host = prodEnv.domain as string;
+          const user = prodEnv.ssh_user as string;
+
+          if (!testSshKey(keyPath, user, host)) {
+            console.log('      [!] Key written but not authorized on ' + host);
+            console.log('      Attempting EC2 Instance Connect to authorize key...');
+
+            // Regenerate .pub file for EC2 Instance Connect
+            const pubKeyPath = keyPath + '.pub';
+            try {
+              execSync('ssh-keygen -y -f "' + keyPath + '" > "' + pubKeyPath + '"', { stdio: 'pipe' });
+            } catch {
+              console.log('      [!] Could not generate public key from private key');
+              return true; // Key is on disk, just not authorized yet
+            }
+
+            const eicResult = await tryEc2InstanceConnect(keyPath, pubKeyPath, user, host, config);
+            if (eicResult.added) {
+              console.log('      [OK] Key authorized on ' + (eicResult.connectedHost ?? host));
+            } else {
+              console.log('      [!] Could not auto-authorize key on ' + host);
+              console.log('      You may need to manually run: ssh-copy-id -i ' + keyPath + ' ' + user + '@' + host);
+            }
+          } else {
+            console.log('      [OK] Key verified on ' + host);
+          }
+        }
+
+        return true;
+      } catch {
+        return false;
+      }
+    },
     manualFix:
-      'Extract SSH keys from vault: npx stack secrets write-ssh-keys',
+      'Extract SSH keys from vault: npx stack deploy --secrets write-ssh-keys',
   },
 ];
-

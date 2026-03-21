@@ -113,6 +113,15 @@ function isSshReachable(ip: string): boolean {
   }
 }
 
+/**
+ * Check if we're running on the server (via SSH or CI).
+ * Tart fixes manage VMs from the HOST machine, not from within the server itself.
+ * When FACTIII_ON_SERVER=true, we're already on the server — skip Tart checks.
+ */
+function isOnServer(): boolean {
+  return process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true';
+}
+
 export const tartFixes: Fix[] = [
   // ============================================================
   // STAGING FIXES
@@ -121,9 +130,10 @@ export const tartFixes: Fix[] = [
     id: 'tart-not-installed-staging',
     stage: 'staging',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'Tart VM manager is not installed',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       return !isTartInstalled();
     },
     fix: null,
@@ -133,10 +143,11 @@ export const tartFixes: Fix[] = [
     id: 'tart-vm-missing-staging',
     stage: 'staging',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'No Tart VM image found',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      if (!isTartInstalled()) return false; // Skip if tart not installed (caught by other fix)
+      if (isOnServer()) return false;
+      if (!isTartInstalled()) return false;
       return getTartVmName() === null;
     },
     fix: null,
@@ -146,9 +157,10 @@ export const tartFixes: Fix[] = [
     id: 'tart-vm-not-running-staging',
     stage: 'staging',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'Tart VM is not running',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       if (!isTartInstalled()) return false;
       const vmName = getTartVmName();
       if (!vmName) return false;
@@ -176,9 +188,10 @@ export const tartFixes: Fix[] = [
     id: 'tart-vm-no-ip-staging',
     stage: 'staging',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'Cannot get Tart VM IP address (VM may still be booting)',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       if (!isTartInstalled()) return false;
       const vmName = getTartVmName();
       if (!vmName) return false;
@@ -192,9 +205,10 @@ export const tartFixes: Fix[] = [
     id: 'tart-vm-ssh-unreachable-staging',
     stage: 'staging',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'Cannot SSH into the Tart VM',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       if (!isTartInstalled()) return false;
       const vmName = getTartVmName();
       if (!vmName) return false;
@@ -231,9 +245,10 @@ export const tartFixes: Fix[] = [
     id: 'tart-not-installed-prod',
     stage: 'prod',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'Tart VM manager is not installed',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       return !isTartInstalled();
     },
     fix: null,
@@ -243,9 +258,10 @@ export const tartFixes: Fix[] = [
     id: 'tart-vm-missing-prod',
     stage: 'prod',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'No Tart VM image found',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       if (!isTartInstalled()) return false;
       return getTartVmName() === null;
     },
@@ -256,9 +272,10 @@ export const tartFixes: Fix[] = [
     id: 'tart-vm-not-running-prod',
     stage: 'prod',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'Tart VM is not running',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       if (!isTartInstalled()) return false;
       const vmName = getTartVmName();
       if (!vmName) return false;
@@ -285,9 +302,10 @@ export const tartFixes: Fix[] = [
     id: 'tart-vm-no-ip-prod',
     stage: 'prod',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'Cannot get Tart VM IP address (VM may still be booting)',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       if (!isTartInstalled()) return false;
       const vmName = getTartVmName();
       if (!vmName) return false;
@@ -301,9 +319,10 @@ export const tartFixes: Fix[] = [
     id: 'tart-vm-ssh-unreachable-prod',
     stage: 'prod',
     os: 'mac' as ServerOS,
-    severity: 'critical',
+    severity: 'warning',
     description: 'Cannot SSH into the Tart VM',
     scan: async (_config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
+      if (isOnServer()) return false;
       if (!isTartInstalled()) return false;
       const vmName = getTartVmName();
       if (!vmName) return false;
