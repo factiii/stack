@@ -419,7 +419,7 @@ export const credentialsFixes: Fix[] = [
       if (localKeyId === configKeyId) return false;
 
       // Case 2: ~/.aws/credentials is missing or has a different key — needs sync
-      // Check if vault can provide the right credentials
+      // Try to silently sync from vault so downstream scans can authenticate
       if (config.ansible?.vault_path) {
         try {
           const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
@@ -427,9 +427,17 @@ export const credentialsFixes: Fix[] = [
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,
           });
-          const check = await vault.checkSecrets(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']);
-          if (check.status?.AWS_ACCESS_KEY_ID && check.status?.AWS_SECRET_ACCESS_KEY) {
-            // Vault has credentials — we can auto-fix
+          const vaultKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
+          const vaultSecret = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
+
+          if (vaultKeyId && vaultSecret) {
+            if (vaultKeyId === configKeyId) {
+              // Vault matches stack.yml — sync silently so downstream scans work
+              writeAwsCredentials(vaultKeyId, vaultSecret, awsConfig.region || 'us-east-1');
+              clearClientCache();
+              return false; // Synced, no issue
+            }
+            // Vault doesn't match stack.yml — needs user intervention (fix will handle)
             return true;
           }
         } catch {
