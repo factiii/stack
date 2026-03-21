@@ -115,6 +115,12 @@ export interface Fix {
    * Example: A fix with targetStage: 'staging' only runs when deploying to staging
    */
   targetStage?: 'staging' | 'prod';
+  /**
+   * Optional: If true and this fix fails, skip all remaining fixes in this
+   * and later stages. Use for prerequisites like credential sync where
+   * nothing else can run without it.
+   */
+  blocking?: boolean;
   scan: (config: FactiiiConfig, rootDir: string) => Promise<boolean>;
   fix?: ((config: FactiiiConfig, rootDir: string) => Promise<boolean>) | null;
   manualFix: string;

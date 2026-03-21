@@ -15,6 +15,7 @@ import {
   findIamUser,
   getAwsAccountId,
   getCallerArn,
+  getLocalAccessKeyId,
   canManageIam,
   getIAMClient,
   writeAwsCredentials,
@@ -156,33 +157,60 @@ function getProdPolicy(projectName: string, region: string, accountId: string): 
   });
 }
 
+// Cache ensureIamAccess result so we don't prompt twice in the same run
+// (both admin + prod user fixes call this)
+let _iamAccessResult: boolean | null = null;
+
 /**
  * Ensure current AWS credentials can manage IAM.
  * If not, show current identity and offer to update credentials.
  * Returns true if IAM access is available, false otherwise.
  */
 async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<boolean> {
+  if (_iamAccessResult !== null) return _iamAccessResult;
   if (await canManageIam(region)) return true;
 
+  const result = await _ensureIamAccessInner(config, region);
+  _iamAccessResult = result;
+  return result;
+}
+
+async function _ensureIamAccessInner(config: FactiiiConfig, region: string): Promise<boolean> {
   const { confirm } = await import('../../../../utils/secret-prompts.js');
   const configKeyId = getAwsConfig(config).accessKeyId;
+  const localKeyId = getLocalAccessKeyId();
   const identity = await getCallerArn(region);
 
   // Determine if we can't connect at all vs connected but lacking permissions
   const canConnect = !!identity;
 
+  // Show the key that's actually being used (from ~/.aws/credentials), not just stack.yml
+  const activeKeyId = localKeyId ?? configKeyId ?? 'unknown';
+
+  // Detect mismatch between stack.yml and ~/.aws/credentials
+  const hasMismatch = configKeyId && localKeyId && configKeyId !== localKeyId;
+
   console.log('');
   console.log('   ============================================================');
-  if (canConnect) {
-    console.log('   ACCESS KEY ' + (configKeyId ?? 'unknown') + ' DOES NOT HAVE IAM PERMISSIONS');
+  if (hasMismatch) {
+    console.log('   AWS CREDENTIAL MISMATCH');
+    console.log('   ============================================================');
+    console.log('   stack.yml access_key_id:   ' + configKeyId);
+    console.log('   ~/.aws/credentials key:    ' + localKeyId);
+    console.log('   Logged in as: ' + (identity ?? 'unknown'));
+    console.log('');
+    console.log('   The AWS CLI is using different credentials than stack.yml expects.');
+    console.log('   This usually means ~/.aws/credentials has keys from another project.');
+  } else if (canConnect) {
+    console.log('   ACCESS KEY ' + activeKeyId + ' DOES NOT HAVE IAM PERMISSIONS');
     console.log('   ============================================================');
     console.log('   Logged in as: ' + identity);
     console.log('   This IAM user does not have permission to create IAM users.');
     console.log('   The access_key_id in stack.yml needs to belong to an admin user.');
   } else {
-    console.log('   CANNOT CONNECT TO AWS WITH ACCESS KEY ' + (configKeyId ?? 'unknown'));
+    console.log('   CANNOT CONNECT TO AWS WITH ACCESS KEY ' + activeKeyId);
     console.log('   ============================================================');
-    console.log('   The access_key_id in stack.yml could not authenticate.');
+    console.log('   The access_key_id could not authenticate.');
     console.log('   Check that this key exists and has not been deactivated in AWS.');
   }
   console.log('   ============================================================');
@@ -275,7 +303,7 @@ export const iamFixes: Fix[] = [
     id: 'aws-iam-admin-user-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: '👤 IAM admin user not created (recess for dev workflows)',
+    description: '👤 IAM admin user not created (required for dev workflows)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
@@ -338,12 +366,33 @@ export const iamFixes: Fix[] = [
         const accessKeyId = keyResult.AccessKey?.AccessKeyId;
         const secretKey = keyResult.AccessKey?.SecretAccessKey;
 
-        console.log('');
-        console.log('   Admin credentials (save these!):');
         console.log('   Access Key ID: ' + accessKeyId);
-        console.log('   Secret Access Key: ' + secretKey);
-        console.log('');
-        console.log('   TIP: Store in Ansible Vault: npx stack deploy --secrets edit');
+
+        // Auto-store in Ansible Vault (never print secret key to terminal)
+        if (config.ansible?.vault_path && accessKeyId && secretKey) {
+          try {
+            const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+            const vault = new AnsibleVaultSecrets({
+              vault_path: config.ansible.vault_path,
+              vault_password_file: config.ansible.vault_password_file,
+            });
+            const r1 = await vault.setSecret('DEV_AWS_ACCESS_KEY_ID', accessKeyId);
+            const r2 = await vault.setSecret('DEV_AWS_SECRET_ACCESS_KEY', secretKey);
+            if (r1.success && r2.success) {
+              console.log('   [OK] Stored dev credentials in Ansible Vault (DEV_AWS_ACCESS_KEY_ID, DEV_AWS_SECRET_ACCESS_KEY)');
+            } else {
+              console.log('   ⚠️  Failed to store in vault — save the secret key manually');
+              console.log('   Secret Access Key: ' + secretKey);
+            }
+          } catch {
+            console.log('   ⚠️  Vault not available — save the secret key manually');
+            console.log('   Secret Access Key: ' + secretKey);
+          }
+        } else {
+          // No vault — must show credentials
+          console.log('   Secret Access Key: ' + secretKey);
+          console.log('   TIP: Store in Ansible Vault: npx stack deploy --secrets edit');
+        }
 
         return true;
       } catch (e) {
@@ -440,12 +489,33 @@ export const iamFixes: Fix[] = [
         const accessKeyId = keyResult.AccessKey?.AccessKeyId;
         const secretKey = keyResult.AccessKey?.SecretAccessKey;
 
-        console.log('');
-        console.log('   Prod credentials (save these!):');
         console.log('   Access Key ID: ' + accessKeyId);
-        console.log('   Secret Access Key: ' + secretKey);
-        console.log('');
-        console.log('   TIP: Store in Ansible Vault: npx stack deploy --secrets edit');
+
+        // Auto-store in Ansible Vault (never print secret key to terminal)
+        if (config.ansible?.vault_path && accessKeyId && secretKey) {
+          try {
+            const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+            const vault = new AnsibleVaultSecrets({
+              vault_path: config.ansible.vault_path,
+              vault_password_file: config.ansible.vault_password_file,
+            });
+            const r1 = await vault.setSecret('PROD_AWS_ACCESS_KEY_ID', accessKeyId);
+            const r2 = await vault.setSecret('PROD_AWS_SECRET_ACCESS_KEY', secretKey);
+            if (r1.success && r2.success) {
+              console.log('   [OK] Stored prod credentials in Ansible Vault (PROD_AWS_ACCESS_KEY_ID, PROD_AWS_SECRET_ACCESS_KEY)');
+            } else {
+              console.log('   ⚠️  Failed to store in vault — save the secret key manually');
+              console.log('   Secret Access Key: ' + secretKey);
+            }
+          } catch {
+            console.log('   ⚠️  Vault not available — save the secret key manually');
+            console.log('   Secret Access Key: ' + secretKey);
+          }
+        } else {
+          // No vault — must show credentials
+          console.log('   Secret Access Key: ' + secretKey);
+          console.log('   TIP: Store in Ansible Vault: npx stack deploy --secrets edit');
+        }
 
         return true;
       } catch (e) {

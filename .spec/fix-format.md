@@ -10,6 +10,7 @@ interface Fix {
   plugin?: string;               // Plugin that owns this fix
   os?: ServerOS | ServerOS[];    // Optional: 'mac' | 'ubuntu' | 'windows' | 'amazon-linux' | 'alpine'
   targetStage?: 'staging' | 'prod'; // Optional: only for secrets stage differentiation
+  blocking?: boolean;            // Optional: if true and fix fails, skip all remaining fixes in this + later stages
   scan: (config: FactiiiConfig, rootDir: string) => Promise<boolean>;  // true = issue found
   fix?: ((config: FactiiiConfig, rootDir: string) => Promise<boolean>) | null;  // true = fixed, null = manual only
   manualFix: string;             // Instructions if fix is null or fails

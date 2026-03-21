@@ -4,6 +4,7 @@
 - NEVER run `npx stack` in this repo (test in app repos via `pnpm link`)
 - NEVER `git add/commit/push` without user approval
 - NEVER delete/modify existing code comments without asking
+- NEVER add a `Co-Authored-By` trailer to commits
 - ALWAYS check STANDARDS.md before modifying plugin/workflow/architecture code
 - WARN on standards violations before proceeding
 

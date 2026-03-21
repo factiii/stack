@@ -119,6 +119,12 @@ function writeAwsCredentials(
     'region = ' + region + '\n' +
     'output = json\n';
   fs.writeFileSync(path.join(awsDir, 'config'), configContent, { mode: 0o644 });
+
+  // Also set env vars so AWS SDK picks up credentials immediately
+  // (the SDK caches its credential provider and may not re-read ~/.aws/credentials mid-process)
+  process.env.AWS_ACCESS_KEY_ID = accessKeyId;
+  process.env.AWS_SECRET_ACCESS_KEY = secretAccessKey;
+  process.env.AWS_DEFAULT_REGION = region;
 }
 
 /**
@@ -131,6 +137,60 @@ function readAwsRegionFromConfig(): string | null {
     const content = fs.readFileSync(configPath, 'utf8');
     const match = content.match(/region\s*=\s*(.+)/);
     return match && match[1] ? match[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Module-level flag: set to true when aws-credentials-sync fails.
+// Other AWS fixes check this to skip their scans entirely.
+let _credentialsSyncFailed = false;
+
+/**
+ * Mark credential sync as failed — all subsequent AWS fixes should skip.
+ */
+export function setCredentialsSyncFailed(): void {
+  _credentialsSyncFailed = true;
+}
+
+/**
+ * Check if credential sync failed — if so, other AWS fixes should not run.
+ */
+export function didCredentialsSyncFail(): boolean {
+  return _credentialsSyncFailed;
+}
+
+/**
+ * Clear ~/.aws/credentials after AWS operations complete.
+ * Security: we never leave credentials on disk — vault is the source of truth.
+ * Only clears if the credentials file exists and contains a key.
+ */
+export function clearAwsCredentials(): void {
+  try {
+    const credPath = path.join(os.homedir(), '.aws', 'credentials');
+    if (fs.existsSync(credPath)) {
+      fs.writeFileSync(credPath, '[default]\n', { mode: 0o600 });
+    }
+    delete process.env.AWS_ACCESS_KEY_ID;
+    delete process.env.AWS_SECRET_ACCESS_KEY;
+    delete process.env.AWS_DEFAULT_REGION;
+    clearClientCache();
+  } catch {
+    // Best effort — don't fail the CLI over cleanup
+  }
+}
+
+/**
+ * Read access_key_id from ~/.aws/credentials (what AWS SDK actually uses).
+ * This is the key that API calls authenticate with, regardless of stack.yml.
+ */
+export function getLocalAccessKeyId(): string | null {
+  try {
+    const credPath = path.join(os.homedir(), '.aws', 'credentials');
+    if (!fs.existsSync(credPath)) return null;
+    const content = fs.readFileSync(credPath, 'utf8');
+    const match = content.match(/aws_access_key_id\s*=\s*(\S+)/);
+    return match?.[1] ?? null;
   } catch {
     return null;
   }
@@ -248,28 +308,30 @@ export function getAwsConfig(config: FactiiiConfig): {
   accessKeyId?: string;
 } {
   const topLevel = config.aws as Record<string, unknown> | undefined;
-  if (topLevel) {
-    return {
-      region: (topLevel.region as string) ?? 'us-east-1',
-      configType: (topLevel.config as string) ?? 'ec2',
-      accessKeyId: topLevel.access_key_id as string | undefined,
-    };
-  }
 
+  // Start with top-level aws block values (if any)
+  let region = (topLevel?.region as string) ?? '';
+  let configType = (topLevel?.config as string) ?? '';
+  let accessKeyId = topLevel?.access_key_id as string | undefined;
+
+  // Always check environments for access_key_id (may be under prod/staging, not aws block)
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { extractEnvironments } = require('../../../../utils/config-helpers.js');
   const environments = extractEnvironments(config) as Record<string, EnvironmentConfig>;
   for (const env of Object.values(environments)) {
-    if (env.pipeline === 'aws' || env.access_key_id) {
-      return {
-        region: env.region ?? 'us-east-1',
-        configType: env.config ?? 'ec2',
-        accessKeyId: env.access_key_id,
-      };
+    if (env.pipeline === 'aws' || env.access_key_id || env.config) {
+      if (!accessKeyId && env.access_key_id) accessKeyId = env.access_key_id;
+      if (!region && env.region) region = env.region;
+      if (!configType && env.config) configType = env.config;
+      break;
     }
   }
 
-  return { region: 'us-east-1', configType: 'ec2' };
+  return {
+    region: region || 'us-east-1',
+    configType: configType || 'ec2',
+    accessKeyId,
+  };
 }
 
 /**

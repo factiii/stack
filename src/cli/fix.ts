@@ -124,9 +124,11 @@ async function runLocalFixes(
 
   // Track IDs that have been processed (fixed, failed, or manual) to avoid re-running
   const processedIds = new Set<string>();
+  let criticalFailed = false;
 
   // Run fixes for reachable stages only
   for (const stage of reachableStages) {
+    if (criticalFailed) break;
     let iteration = 0;
     const maxIterations = 3;
     let stageHeaderShown = false;
@@ -197,6 +199,12 @@ async function runLocalFixes(
                 status: 'failed',
                 description: problem.description,
               });
+
+              // Blocking fix failed — skip remaining fixes in this and later stages
+              if (problem.blocking) {
+                criticalFailed = true;
+                break;
+              }
             }
           } catch (e) {
             const errorMessage = e instanceof Error ? e.message : String(e);
@@ -415,6 +423,16 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   } else if (result.failed > 0) {
     console.log('');
     console.log('  ❌ Fix the errors above, then re-run: npx stack fix');
+  }
+
+  // Clear ~/.aws/credentials after AWS operations (security: never leave creds on disk)
+  try {
+    const { clearAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+    if (isAwsConfigured(config)) {
+      clearAwsCredentials();
+    }
+  } catch {
+    // AWS module may not be available — skip cleanup
   }
 
   // Exit with error if any fixes failed

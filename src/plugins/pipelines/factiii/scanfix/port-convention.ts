@@ -99,7 +99,7 @@ export const portConventionFixes: Fix[] = [
     },
     fix: null,
     manualFix:
-      'Add PORT to .env.example with your repo slot number (1-5):\n' +
+      'Add PORT to .env.example with your repo slot number (0-5):\n' +
       '      PORT=1\n' +
       '      # Slot number: client=3000+PORT, server=5000+PORT\n' +
       '      # Slot 1 → client:3001, server:5001\n' +
@@ -118,9 +118,9 @@ export const portConventionFixes: Fix[] = [
         if (slot) {
           return '🔌 PORT=' + port + ' in .env.example should be slot number ' + slot + ' (not a full port)';
         }
-        return '🔌 PORT=' + port + ' in .env.example should be a slot number (1-5), not a full port';
+        return '🔌 PORT=' + port + ' in .env.example should be a slot number (0-5), not a full port';
       }
-      return '🔌 PORT in .env.example should be a slot number (1-5), not a full port';
+      return '🔌 PORT in .env.example should be a slot number (0-5), not a full port';
     },
     scan: async function (_config: FactiiiConfig, rootDir: string): Promise<boolean> {
       if (!hasEnvironments(_config)) return false;
@@ -133,8 +133,8 @@ export const portConventionFixes: Fix[] = [
       const portVal = parseInt(vars.PORT ?? '', 10);
       if (isNaN(portVal)) return false;
 
-      // PORT should be 1-5 (slot number)
-      if (portVal >= 1 && portVal <= 5) return false;
+      // PORT should be 0-5 (slot number, 0 = default ports 3000/5000)
+      if (portVal >= 0 && portVal <= 5) return false;
 
       (this as any)._portValue = vars.PORT;
       return true;
@@ -159,7 +159,7 @@ export const portConventionFixes: Fix[] = [
       return true;
     },
     manualFix:
-      'Change PORT in .env.example to a slot number (1-5):\n' +
+      'Change PORT in .env.example to a slot number (0-5):\n' +
       '      PORT=1  # → client:3001, server:5001\n' +
       '      PORT=2  # → client:3002, server:5002',
   },
