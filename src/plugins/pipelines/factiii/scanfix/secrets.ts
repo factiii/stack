@@ -1271,6 +1271,38 @@ export const secretsFixes: Fix[] = [
 
         const keyPath = writeSshKeyToDisk('staging', key, config);
         console.log('      Wrote STAGING_SSH → ' + keyPath);
+
+        // Test if the key is authorized on the staging server
+        const environments = extractEnvironments(config);
+        const stagingEnv = environments.staging;
+        if (stagingEnv?.domain && stagingEnv?.ssh_user) {
+          const host = stagingEnv.domain as string;
+          const user = stagingEnv.ssh_user as string;
+
+          if (!testSshKey(keyPath, user, host)) {
+            console.log('      [!] Key written but not authorized on ' + host);
+            console.log('      Attempting EC2 Instance Connect to authorize key...');
+
+            const pubKeyPath = keyPath + '.pub';
+            try {
+              execSync('ssh-keygen -y -f "' + keyPath + '" > "' + pubKeyPath + '"', { stdio: 'pipe' });
+            } catch {
+              console.log('      [!] Could not generate public key from private key');
+              return true;
+            }
+
+            const eicResult = await tryEc2InstanceConnect(keyPath, pubKeyPath, user, host, config);
+            if (eicResult.added) {
+              console.log('      [OK] Key authorized on ' + (eicResult.connectedHost ?? host));
+            } else {
+              console.log('      [!] Could not auto-authorize key on ' + host);
+              console.log('      You may need to manually run: ssh-copy-id -i ' + keyPath + ' ' + user + '@' + host);
+            }
+          } else {
+            console.log('      [OK] Key verified on ' + host);
+          }
+        }
+
         return true;
       } catch {
         return false;
@@ -1311,6 +1343,39 @@ export const secretsFixes: Fix[] = [
 
         const keyPath = writeSshKeyToDisk('prod', key, config);
         console.log('      Wrote PROD_SSH → ' + keyPath);
+
+        // Test if the key is authorized on the prod server
+        const environments = extractEnvironments(config);
+        const prodEnv = environments.prod;
+        if (prodEnv?.domain && prodEnv?.ssh_user) {
+          const host = prodEnv.domain as string;
+          const user = prodEnv.ssh_user as string;
+
+          if (!testSshKey(keyPath, user, host)) {
+            console.log('      [!] Key written but not authorized on ' + host);
+            console.log('      Attempting EC2 Instance Connect to authorize key...');
+
+            // Regenerate .pub file for EC2 Instance Connect
+            const pubKeyPath = keyPath + '.pub';
+            try {
+              execSync('ssh-keygen -y -f "' + keyPath + '" > "' + pubKeyPath + '"', { stdio: 'pipe' });
+            } catch {
+              console.log('      [!] Could not generate public key from private key');
+              return true; // Key is on disk, just not authorized yet
+            }
+
+            const eicResult = await tryEc2InstanceConnect(keyPath, pubKeyPath, user, host, config);
+            if (eicResult.added) {
+              console.log('      [OK] Key authorized on ' + (eicResult.connectedHost ?? host));
+            } else {
+              console.log('      [!] Could not auto-authorize key on ' + host);
+              console.log('      You may need to manually run: ssh-copy-id -i ' + keyPath + ' ' + user + '@' + host);
+            }
+          } else {
+            console.log('      [OK] Key verified on ' + host);
+          }
+        }
+
         return true;
       } catch {
         return false;
