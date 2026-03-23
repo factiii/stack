@@ -1,0 +1,142 @@
+{
+  "name": "@factiii/auth",
+  "version": "0.6.1",
+  "publishConfig": {
+    "access": "public"
+  },
+  "description": "Authentication library for tRPC with JWT, OAuth, 2FA, and session management from factiii.",
+  "author": "Factiii",
+  "license": "MIT",
+  "keywords": [
+    "auth",
+    "authentication",
+    "trpc",
+    "jwt",
+    "oauth",
+    "2fa",
+    "totp",
+    "session",
+    "prisma",
+    "drizzle",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/factiii/stack.git",
+    "directory": "packages/auth"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "bin": {
+    "factiii-auth": "bin/init.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./drizzle": {
+      "types": "./dist/drizzle.d.ts",
+      "import": "./dist/drizzle.mjs",
+      "require": "./dist/drizzle.js"
+    },
+    "./validators": {
+      "types": "./dist/validators.d.ts",
+      "import": "./dist/validators.mjs",
+      "require": "./dist/validators.js"
+    },
+    "./prisma/schema.prisma": "./prisma/schema.prisma"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "prisma",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --check src",
+    "format:fix": "prettier --write src",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "seed": "tsx e2e/seed.ts",
+    "clean": "rm -rf dist node_modules/.cache .turbo",
+    "prepublishOnly": "npm run build",
+    "e2e": "pnpm e2e:db:up && playwright test --reporter=list; pnpm e2e:db:down",
+    "e2e:ui": "pnpm e2e:db:up && playwright test --ui",
+    "e2e:db:up": "docker compose -f e2e/docker-compose.yml up -d --wait && prisma generate --schema=e2e/server/schema.prisma --config=e2e/server/prisma.config.ts && prisma migrate reset --schema=e2e/server/schema.prisma --config=e2e/server/prisma.config.ts --force",
+    "e2e:db:down": "docker compose -f e2e/docker-compose.yml down"
+  },
+  "dependencies": {
+    "@trpc/server": "^11.8.0",
+    "apple-signin-auth": "^2.0.0",
+    "bcryptjs": "^2.4.3",
+    "google-auth-library": "^10.5.0",
+    "jsonwebtoken": "^9.0.2",
+    "totp-generator": "^2.0.0"
+  },
+  "peerDependencies": {
+    "@prisma/client": ">=5.0.0",
+    "drizzle-orm": ">=0.30.0",
+    "superjson": ">=1.0.0",
+    "zod": ">=3.20.0"
+  },
+  "peerDependenciesMeta": {
+    "@prisma/client": {
+      "optional": true
+    },
+    "drizzle-orm": {
+      "optional": true
+    },
+    "superjson": {
+      "optional": false
+    },
+    "zod": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.1",
+    "@prisma/adapter-better-sqlite3": "^7.3.0",
+    "@prisma/adapter-pg": "^7.3.0",
+    "@prisma/client": "^7.1.0",
+    "@trpc/client": "^11.8.0",
+    "@trpc/server": "^11.8.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^20.19.0",
+    "@types/pg": "^8.16.0",
+    "@types/react": "^19.2.11",
+    "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "@vitejs/plugin-react": "^5.1.3",
+    "better-sqlite3": "^12.6.2",
+    "drizzle-orm": "^0.44.0",
+    "eslint": "^8.57.0",
+    "pg": "^8.18.0",
+    "prettier": "^3.8.1",
+    "prisma": "^7.1.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.2.0",
+    "superjson": "^1.13.3",
+    "tsup": "^8.3.5",
+    "tsx": "^4.21.0",
+    "typescript": "5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^4.1.0",
+    "zod": "3.24.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
