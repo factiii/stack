@@ -278,24 +278,52 @@ async function autoSetupSshKey(
 
   // Copy public key to server
   console.log('   Copying public key to ' + user + '@' + host + '...');
-  console.log('   Enter password when prompted:');
-  console.log('');
-  try {
-    const copyResult = spawnSync('ssh-copy-id', [
-      '-i', pubKeyPath,
-      '-o', 'StrictHostKeyChecking=no',
-      user + '@' + host,
-    ], {
-      stdio: 'inherit',
-      timeout: 60000,
-    });
-    if (copyResult.status !== 0) {
-      console.log('   [!] ssh-copy-id failed');
+
+  if (process.platform === 'win32') {
+    // Windows: ssh-copy-id is not available — use SSH to pipe the public key
+    console.log('   Enter password when prompted by SSH:');
+    console.log('');
+    try {
+      const pubKeyContent = fs.readFileSync(pubKeyPath, 'utf8').trim();
+      const addKeyCmd = 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo "' + pubKeyContent + '" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && sort -u -o ~/.ssh/authorized_keys ~/.ssh/authorized_keys';
+      const copyResult = spawnSync('ssh', [
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'ConnectTimeout=10',
+        user + '@' + host,
+        addKeyCmd,
+      ], {
+        stdio: 'inherit',
+        timeout: 60000,
+      });
+      if (copyResult.status !== 0) {
+        console.log('   [!] Failed to copy public key to server');
+        return null;
+      }
+    } catch (e) {
+      console.log('   [!] Failed to copy public key: ' + (e instanceof Error ? e.message : String(e)));
       return null;
     }
-  } catch (e) {
-    console.log('   [!] ssh-copy-id failed: ' + (e instanceof Error ? e.message : String(e)));
-    return null;
+  } else {
+    // Linux/Mac: use ssh-copy-id
+    console.log('   Enter password when prompted:');
+    console.log('');
+    try {
+      const copyResult = spawnSync('ssh-copy-id', [
+        '-i', pubKeyPath,
+        '-o', 'StrictHostKeyChecking=no',
+        user + '@' + host,
+      ], {
+        stdio: 'inherit',
+        timeout: 60000,
+      });
+      if (copyResult.status !== 0) {
+        console.log('   [!] ssh-copy-id failed');
+        return null;
+      }
+    } catch (e) {
+      console.log('   [!] ssh-copy-id failed: ' + (e instanceof Error ? e.message : String(e)));
+      return null;
+    }
   }
 
   // Fix remote permissions
@@ -734,6 +762,9 @@ export async function sshRemoteFactiiiCommand(
   // Shared variables for remote command building (used in Step 2 and Step 3)
   const projectDir = '$HOME/.factiii/' + repoName;
   const githubRepo = config.github_repo || '';
+  // Forward GITHUB_TOKEN to server for private repo cloning
+  const localGithubToken = process.env.GITHUB_TOKEN || '';
+  const tokenExport = localGithubToken ? 'export GITHUB_TOKEN="' + localGithubToken + '" && ' : '';
 
   // Auto-bootstrap: install dependencies and clone repo if missing on server
   const bootstrapCmd =
@@ -759,8 +790,42 @@ export async function sshRemoteFactiiiCommand(
     'if [ ! -d "' + projectDir + '/.git" ]; then ' +
       'echo "   Cloning project..." && ' +
       'mkdir -p $HOME/.factiii && ' +
+      // Remove broken/partial clone directory if it exists without .git
+      'if [ -d "' + projectDir + '" ]; then echo "   Removing broken clone..." && rm -rf "' + projectDir + '"; fi && ' +
+      // Add github.com to known_hosts to avoid interactive prompt
+      'mkdir -p ~/.ssh && ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null && ' +
+      // Generate a GitHub deploy key on the server if none exists
+      'if [ ! -f ~/.ssh/github_deploy_key ]; then ' +
+        'echo "   Generating GitHub deploy key on server..." && ' +
+        'ssh-keygen -t ed25519 -f ~/.ssh/github_deploy_key -N "" -C "server-deploy" -q && ' +
+        'chmod 600 ~/.ssh/github_deploy_key; ' +
+      'fi && ' +
+      // Configure SSH to use the deploy key for github.com
+      'if ! grep -q "Host github.com" ~/.ssh/config 2>/dev/null; then ' +
+        'printf "\\nHost github.com\\n  IdentityFile ~/.ssh/github_deploy_key\\n  IdentitiesOnly yes\\n" >> ~/.ssh/config && ' +
+        'chmod 600 ~/.ssh/config; ' +
+      'fi && ' +
       (githubRepo
-        ? 'cd $HOME/.factiii && git clone https://github.com/' + githubRepo + '.git ' + repoName + '; '
+        ? 'cd $HOME/.factiii && ' +
+          // Try HTTPS with token first (works for private repos when GITHUB_TOKEN is set)
+          'if [ -n "$GITHUB_TOKEN" ]; then ' +
+            'GIT_TERMINAL_PROMPT=0 git clone https://x-access-token:$GITHUB_TOKEN@github.com/' + githubRepo + '.git ' + repoName + '; ' +
+          // Then try SSH (works if server has a GitHub deploy key in repo settings)
+          'elif GIT_TERMINAL_PROMPT=0 git clone git@github.com:' + githubRepo + '.git ' + repoName + ' 2>/dev/null; then ' +
+            'true; ' +
+          // All clone methods failed — show deploy key and instructions
+          'else ' +
+            'echo "" && ' +
+            'echo "   [!] Cannot clone private repo — server needs GitHub access" && ' +
+            'echo "" && ' +
+            'echo "   Add this deploy key to your GitHub repo:" && ' +
+            'echo "   GitHub → ' + githubRepo + ' → Settings → Deploy keys → Add" && ' +
+            'echo "" && ' +
+            'cat ~/.ssh/github_deploy_key.pub && ' +
+            'echo "" && ' +
+            'echo "   Then re-run: npx stack fix --prod" && ' +
+            'exit 1; ' +
+          'fi; '
         : 'echo "   [!] No github_repo configured — cannot auto-clone" && exit 1; ') +
     'fi && ';
 
@@ -810,7 +875,7 @@ export async function sshRemoteFactiiiCommand(
 
     if (!resolvedKeyPath) {
       // Last resort: password for non-EC2 servers
-      const pwRemoteCommand = 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH" && export FACTIII_ON_SERVER=true && ' +
+      const pwRemoteCommand = 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH" && export FACTIII_ON_SERVER=true && ' + tokenExport +
         projectCheckCmd +
         'cd ' + projectDir + ' && npx -y @factiii/stack@latest ' + command;
       let password = getSshPasswordFromVault(stage, config, rootDir);
@@ -826,15 +891,32 @@ export async function sshRemoteFactiiiCommand(
       }
       console.log('   SSH (password): ' + user + '@' + host + ' → npx stack ' + command);
       const pwStart = Date.now();
-      const pwResult = spawnSync('sshpass', [
-        '-p', password, 'ssh', '-tt',
-        '-o', 'StrictHostKeyChecking=no',
-        '-o', 'ConnectTimeout=10',
-        '-o', 'ServerAliveInterval=60',
-        '-o', 'ServerAliveCountMax=5',
-        user + '@' + host,
-        pwRemoteCommand,
-      ], { encoding: 'utf8', stdio: 'inherit', timeout: 600000 });
+
+      let pwResult;
+      if (process.platform === 'win32') {
+        // Windows: no sshpass — use interactive SSH so user types password
+        console.log('   You will be prompted for the password by SSH:');
+        console.log('');
+        pwResult = spawnSync('ssh', [
+          '-tt',
+          '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ConnectTimeout=10',
+          '-o', 'ServerAliveInterval=60',
+          '-o', 'ServerAliveCountMax=5',
+          user + '@' + host,
+          pwRemoteCommand,
+        ], { encoding: 'utf8', stdio: 'inherit', timeout: 600000 });
+      } else {
+        pwResult = spawnSync('sshpass', [
+          '-p', password, 'ssh', '-tt',
+          '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ConnectTimeout=10',
+          '-o', 'ServerAliveInterval=60',
+          '-o', 'ServerAliveCountMax=5',
+          user + '@' + host,
+          pwRemoteCommand,
+        ], { encoding: 'utf8', stdio: 'inherit', timeout: 600000 });
+      }
       console.log('   SSH completed in ' + Math.floor((Date.now() - pwStart) / 1000) + 's');
       return {
         success: pwResult.status === 0,
@@ -847,7 +929,7 @@ export async function sshRemoteFactiiiCommand(
   // Step 3: We have a key — build command and run
   const activeKeyPath = resolvedKeyPath as string;
 
-  const remoteCommand = 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH" && export FACTIII_ON_SERVER=true && ' +
+  const remoteCommand = 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH" && export FACTIII_ON_SERVER=true && ' + tokenExport +
     projectCheckCmd +
     'cd ' + projectDir + ' && npx -y @factiii/stack@latest ' + command;
 
@@ -868,6 +950,31 @@ export async function sshRemoteFactiiiCommand(
   });
 
   if (keyTest.status !== 0) {
+    const keyTestStderr = (keyTest.stderr ?? '').toLowerCase();
+    // Detect DNS/connection failures — don't delete key or try password, the server is unreachable
+    const isConnectionFailure = keyTestStderr.includes('could not resolve') ||
+      keyTestStderr.includes('connection refused') ||
+      keyTestStderr.includes('connection timed out') ||
+      keyTestStderr.includes('no route to host') ||
+      keyTestStderr.includes('network is unreachable') ||
+      keyTestStderr.includes('unknown port') ||
+      keyTestStderr.includes('name or service not known');
+
+    if (isConnectionFailure) {
+      console.log('   [!] Cannot connect to ' + host + ' — server may be down or domain not resolving');
+      console.log('   SSH error: ' + (keyTest.stderr ?? '').trim());
+      console.log('');
+      console.log('   Check:');
+      console.log('     - DNS: does ' + host + ' resolve? (nslookup ' + host + ')');
+      console.log('     - Server: is the server running and accepting SSH on port 22?');
+      console.log('     - Firewall: is port 22 open?');
+      return {
+        success: false,
+        stdout: '',
+        stderr: 'Cannot connect to ' + host + ': ' + (keyTest.stderr ?? '').trim(),
+      };
+    }
+
     // Categorize key type — only remove repo-specific deploy keys, not system/.pem keys
     const isRepoSpecificKey = activeKeyPath.includes('_deploy_key') || activeKeyPath.endsWith('_factiii');
     const isPemKey = activeKeyPath.endsWith('.pem');
@@ -1069,6 +1176,72 @@ export async function sshRemoteFactiiiCommand(
       console.log('   Falling back to SSH password auth...');
       console.log('   SSH (password): ' + user + '@' + host + ' → npx stack ' + command);
       const startTime = Date.now();
+
+      // On Windows, sshpass is not available — use interactive SSH so user types password
+      if (process.platform === 'win32') {
+        console.log('   You will be prompted for the password by SSH:');
+        console.log('');
+        const result = spawnSync('ssh', [
+          '-tt',
+          '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ConnectTimeout=10',
+          '-o', 'ServerAliveInterval=60',
+          '-o', 'ServerAliveCountMax=5',
+          user + '@' + host,
+          remoteCommand,
+        ], {
+          encoding: 'utf8',
+          stdio: 'inherit',
+          timeout: 600000,
+        });
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        console.log('   SSH completed in ' + elapsed + 's');
+
+        if (result.status === 0) {
+          // Connection worked — set up SSH key for future so password isn't needed again
+          console.log('   Setting up SSH key for future connections...');
+          await autoSetupSshKey(stage, host, user, config, rootDir);
+          return { success: true, stdout: '', stderr: '' };
+        }
+
+        // Interactive SSH failed — try auto key setup as last resort
+        console.log('   [!] SSH connection failed');
+        console.log('   Setting up SSH key auth for future connections...');
+        const autoKeyResult = await autoSetupSshKey(stage, host, user, config, rootDir);
+        if (autoKeyResult) {
+          console.log('   Retrying command with SSH key...');
+          console.log('   SSH (key): ' + user + '@' + host + ' → npx stack ' + command);
+          const retryStart = Date.now();
+          const retryResult = spawnSync('ssh', [
+            '-tt',
+            '-i', autoKeyResult,
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'ConnectTimeout=10',
+            '-o', 'ServerAliveInterval=60',
+            '-o', 'ServerAliveCountMax=5',
+            user + '@' + host,
+            remoteCommand,
+          ], {
+            encoding: 'utf8',
+            stdio: 'inherit',
+            timeout: 600000,
+          });
+          const retryElapsed = Math.floor((Date.now() - retryStart) / 1000);
+          console.log('   SSH completed in ' + retryElapsed + 's');
+          return {
+            success: retryResult.status === 0,
+            stdout: '',
+            stderr: retryResult.status !== 0 ? 'SSH command exited with code ' + retryResult.status : '',
+          };
+        }
+        return {
+          success: false,
+          stdout: '',
+          stderr: 'SSH connection failed. Check password and server accessibility.',
+        };
+      }
+
+      // Linux/Mac: use sshpass for non-interactive password auth
       const result = spawnSync('sshpass', [
         '-p', password,
         'ssh',
@@ -1340,6 +1513,29 @@ export async function sshExec(
     }
 
     if (password) {
+      if (process.platform === 'win32') {
+        // Windows: no sshpass — use interactive SSH (stdio: 'inherit' so user can type password)
+        const result = spawnSync('ssh', [
+          '-tt',
+          '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ConnectTimeout=10',
+          '-o', 'ServerAliveInterval=60',
+          '-o', 'ServerAliveCountMax=5',
+          user + '@' + host,
+          command,
+        ], {
+          encoding: 'utf8',
+          stdio: 'inherit',
+        });
+
+        if (result.status !== 0) {
+          throw new Error('SSH command failed with exit code ' + result.status);
+        }
+
+        return '';
+      }
+
+      // Linux/Mac: use sshpass
       const result = spawnSync('sshpass', [
         '-p', password,
         'ssh',
