@@ -48,9 +48,6 @@ importers:
       '@factiii/auth':
         specifier: workspace:*
         version: link:packages/auth
-      '@factiii/stack':
-        specifier: 0.1.117
-        version: 0.1.117
       '@octokit/rest':
         specifier: ^20.0.2
         version: 20.1.2
@@ -954,16 +951,6 @@ packages:
   '@eslint/js@8.57.1':
     resolution: {integrity: sha512-d9zaMRSTIKDLhctzH12MtXvJKSSUhaHcjV+2Z+GK+EEY7XKpP5yR4x+N3TAcHTcu963nIr+TMcCb4DBCYX1z6Q==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
-
-  '@factiii/stack@0.1.117':
-    resolution: {integrity: sha512-FllbixKRLcHhYOzJuIGM/x0wKKdT6SbS1KJZ6jc6rJQQN9RAndUUd2OW6hhzLZjwekm5AUaJFYzvpgehwFD8zg==}
-    engines: {node: '>=18.0.0'}
-    hasBin: true
-
-  '@factiii/stack@0.1.96':
-    resolution: {integrity: sha512-iCKCIRuF1Lm6VvgLWDKCLxqs4nNHVQ5JiqLKed6NR78qnQqIc5Fu194v60xumMqjCIfbUwl99uG7AdZpAnS9Pg==}
-    engines: {node: '>=18.0.0'}
-    hasBin: true
 
   '@hono/node-server@1.19.11':
     resolution: {integrity: sha512-dr8/3zEaB+p0D2n/IUrlPF1HZm586qgJNXK1a9fhg/PzdtkK7Ksd5l312tJX2yBuALqDYBlG20QEbayqPyxn+g==}
@@ -5788,45 +5775,6 @@ snapshots:
       - supports-color
 
   '@eslint/js@8.57.1': {}
-
-  '@factiii/stack@0.1.117':
-    dependencies:
-      '@aws-sdk/client-ec2': 3.996.0
-      '@aws-sdk/client-ec2-instance-connect': 3.1001.0
-      '@aws-sdk/client-ecr': 3.996.0
-      '@aws-sdk/client-iam': 3.996.0
-      '@aws-sdk/client-rds': 3.996.0
-      '@aws-sdk/client-route-53': 3.1001.0
-      '@aws-sdk/client-s3': 3.996.0
-      '@aws-sdk/client-ses': 3.996.0
-      '@aws-sdk/client-sts': 3.996.0
-      '@factiii/stack': 0.1.96
-      '@octokit/rest': 20.1.2
-      ansible-vault: 1.3.0
-      commander: 11.1.0
-      js-yaml: 4.1.1
-      libsodium-wrappers: 0.7.15
-    transitivePeerDependencies:
-      - aws-crt
-
-  '@factiii/stack@0.1.96':
-    dependencies:
-      '@aws-sdk/client-ec2': 3.996.0
-      '@aws-sdk/client-ec2-instance-connect': 3.1001.0
-      '@aws-sdk/client-ecr': 3.996.0
-      '@aws-sdk/client-iam': 3.996.0
-      '@aws-sdk/client-rds': 3.996.0
-      '@aws-sdk/client-route-53': 3.1001.0
-      '@aws-sdk/client-s3': 3.996.0
-      '@aws-sdk/client-ses': 3.996.0
-      '@aws-sdk/client-sts': 3.996.0
-      '@octokit/rest': 20.1.2
-      ansible-vault: 1.3.0
-      commander: 11.1.0
-      js-yaml: 4.1.1
-      libsodium-wrappers: 0.7.15
-    transitivePeerDependencies:
-      - aws-crt
 
   '@hono/node-server@1.19.11(hono@4.12.8)':
     dependencies:
