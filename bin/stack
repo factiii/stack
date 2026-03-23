@@ -95,7 +95,7 @@ program
   .option('-b, --branch <branch>', 'Branch to deploy from (defaults to current branch)')
   .option('--commit <hash>', 'Commit hash to deploy (passed by workflow)')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
-  .option('--secrets [action]', 'Manage or deploy secrets (list|set|check|set-env|list-env|deploy|write-ssh-keys)')
+  .option('--secrets [action]', 'Manage or deploy secrets (list|set|get|delete|check|set-env|list-env|delete-env|deploy|write-ssh-keys)')
   .option('--value <value>', 'Secret value (for scripting)')
   .option('--restart', 'Restart containers after deploying secrets')
   .option('--dry-run', 'Show deployment plan without actually deploying')
@@ -103,7 +103,7 @@ program
     // --secrets with an action string = vault management mode
     if (typeof options.secrets === 'string') {
       const action = options.secrets;
-      const validActions = ['list', 'set', 'check', 'set-env', 'list-env', 'deploy', 'write-ssh-keys'];
+      const validActions = ['list', 'set', 'get', 'delete', 'check', 'set-env', 'list-env', 'delete-env', 'deploy', 'write-ssh-keys'];
 
       if (!validActions.includes(action)) {
         console.log('');
@@ -114,16 +114,22 @@ program
         console.log('Actions:');
         console.log('  list              List all secrets (SSH keys + env vars)');
         console.log('  set <name>        Set a secret (STAGING_SSH, PROD_SSH, etc.)');
+        console.log('  get <name>        Show a secret value');
+        console.log('  delete <name>     Delete a secret from vault');
         console.log('  check [name]      Check if secrets exist');
         console.log('  set-env <name>    Set environment variable for a stage');
         console.log('  list-env          List environment variable keys for a stage');
+        console.log('  delete-env <name> Delete environment variable from a stage');
         console.log('  deploy            Deploy secrets to staging/prod servers');
         console.log('  write-ssh-keys    Write SSH keys to ~/.ssh/ (for workflows)');
         console.log('');
         console.log('Examples:');
         console.log('  npx stack deploy --secrets list');
         console.log('  npx stack deploy --secrets set STAGING_SSH');
+        console.log('  npx stack deploy --secrets get AWS_SECRET_ACCESS_KEY');
+        console.log('  npx stack deploy --secrets delete STAGING_SSH');
         console.log('  npx stack deploy --secrets set-env DATABASE_URL --staging');
+        console.log('  npx stack deploy --secrets delete-env DATABASE_URL --staging');
         console.log('  npx stack deploy --secrets deploy --staging');
         console.log('');
         return;
@@ -154,6 +160,30 @@ program
     if (!result.success) {
       process.exit(1);
     }
+  });
+
+// Secrets command (top-level shortcut — same as deploy --secrets)
+program
+  .command('secrets [action] [name]')
+  .description('Manage Ansible Vault secrets (shortcut for deploy --secrets)')
+  .option('--staging', 'Target staging environment')
+  .option('--prod', 'Target production environment')
+  .option('--value <value>', 'Secret value (for scripting)')
+  .option('--restart', 'Restart containers after deploying secrets')
+  .action(async (action, name, options) => {
+    if (!action) {
+      // No action = interactive mode
+      const { secretsInteractive } = require('../dist/cli/secrets');
+      await secretsInteractive(options);
+      return;
+    }
+    const validActions = ['list', 'set', 'get', 'delete', 'check', 'set-env', 'list-env', 'delete-env', 'deploy', 'write-ssh-keys'];
+    if (!validActions.includes(action)) {
+      console.log('Unknown action: ' + action);
+      console.log('Valid actions: ' + validActions.join(', '));
+      return;
+    }
+    await secrets(action, name, options);
   });
 
 // Undeploy command
@@ -257,9 +287,12 @@ program.addHelpText('after', '\n' +
   'SECRETS — npx stack deploy --secrets <action>\n' +
   '  list                               Show all stored vault secrets\n' +
   '  set <name>                         Set a secret (STAGING_SSH, PROD_SSH, etc.)\n' +
+  '  get <name>                         Show a secret value\n' +
+  '  delete <name>                      Delete a secret from vault\n' +
   '  check [name]                       Check if secrets exist\n' +
   '  set-env <name> --<stage>           Set environment variable for a stage\n' +
   '  list-env --<stage>                 List environment variable keys for a stage\n' +
+  '  delete-env <name> --<stage>        Delete environment variable from a stage\n' +
   '  deploy --<stage>                   Push secrets to server\n' +
   '  write-ssh-keys                     Write SSH keys to ~/.ssh/\n' +
   '\n' +

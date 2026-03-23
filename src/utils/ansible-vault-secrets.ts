@@ -282,6 +282,69 @@ export class AnsibleVaultSecrets {
   }
 
   /**
+   * Delete a secret from the vault
+   */
+  async deleteSecret(name: string): Promise<SetSecretResult> {
+    try {
+      const vaultPath = resolveVaultPath(this.config);
+      this.ensureVaultExists(vaultPath);
+
+      const data = await this.getDecryptedFull();
+      if (!(name in data)) {
+        return { success: false, error: 'Secret not found: ' + name };
+      }
+      delete data[name];
+
+      return this.saveVault(data);
+    } catch (e) {
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
+  /**
+   * Delete an environment secret from the vault
+   */
+  async deleteEnvironmentSecret(
+    stage: 'staging' | 'prod',
+    name: string
+  ): Promise<SetSecretResult> {
+    try {
+      const vaultPath = resolveVaultPath(this.config);
+      this.ensureVaultExists(vaultPath);
+
+      const data = await this.getDecryptedFull();
+      const envKey = stage + '_envs';
+      const envBlock = data[envKey];
+
+      if (!envBlock || typeof envBlock !== 'string') {
+        return { success: false, error: 'No environment secrets found for ' + stage };
+      }
+
+      const lines = envBlock.split('\n');
+      const filtered = lines.filter(line => {
+        const eqIndex = line.indexOf('=');
+        if (eqIndex === -1) return true;
+        return line.substring(0, eqIndex).trim() !== name;
+      });
+
+      if (filtered.length === lines.length) {
+        return { success: false, error: name + ' not found in ' + stage + ' environment secrets' };
+      }
+
+      data[envKey] = filtered.join('\n');
+      return this.saveVault(data);
+    } catch (e) {
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
+  /**
    * Check which of the given secret names exist in the vault
    */
   async checkSecrets(names: string[]): Promise<CheckSecretsResult> {

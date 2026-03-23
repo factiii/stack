@@ -25,9 +25,12 @@ import type { SecretsOptions, FactiiiConfig } from '../types/index.js';
 export type SecretsAction =
   | 'list'
   | 'set'
+  | 'get'
+  | 'delete'
   | 'check'
   | 'set-env'
   | 'list-env'
+  | 'delete-env'
   | 'deploy'
   | 'write-ssh-keys';
 
@@ -180,6 +183,47 @@ export async function secrets(
       break;
     }
 
+    case 'get': {
+      if (!secretName) {
+        console.log('[ERROR] Secret name required');
+        console.log('Usage: npx stack deploy --secrets get <name>');
+        return;
+      }
+
+      const secretValue = await store.getSecret(secretName);
+      if (secretValue !== null) {
+        // For SSH keys, show truncated; for others show full value
+        if (secretName.includes('SSH') && secretValue.includes('PRIVATE KEY')) {
+          const lines = secretValue.split('\n');
+          console.log(secretName + ':');
+          console.log('  ' + (lines[0] ?? ''));
+          console.log('  ... (' + lines.length + ' lines)');
+          console.log('  ' + (lines[lines.length - 1] ?? lines[lines.length - 2] ?? ''));
+        } else {
+          console.log(secretName + ': ' + secretValue);
+        }
+      } else {
+        console.log('[!] ' + secretName + ' not found in vault');
+      }
+      break;
+    }
+
+    case 'delete': {
+      if (!secretName) {
+        console.log('[ERROR] Secret name required');
+        console.log('Usage: npx stack deploy --secrets delete <name>');
+        return;
+      }
+
+      const deleteResult = await store.deleteSecret(secretName);
+      if (deleteResult.success) {
+        console.log('[OK] Deleted ' + secretName + ' from vault');
+      } else {
+        console.log('[ERROR] ' + (deleteResult.error ?? 'Failed to delete'));
+      }
+      break;
+    }
+
     case 'check': {
       const secretNames = secretName ? [secretName] : ['STAGING_SSH', 'PROD_SSH', 'AWS_SECRET_ACCESS_KEY'];
       const result = await store.checkSecrets(secretNames);
@@ -281,6 +325,33 @@ export async function secrets(
       break;
     }
 
+    case 'delete-env': {
+      if (!secretName) {
+        console.log('[ERROR] Environment variable name required');
+        console.log('Usage: npx stack deploy --secrets delete-env <NAME> --staging|--prod');
+        return;
+      }
+
+      let deleteEnvStage: 'staging' | 'prod';
+      if (options.staging) {
+        deleteEnvStage = 'staging';
+      } else if (options.prod) {
+        deleteEnvStage = 'prod';
+      } else {
+        console.log('[ERROR] Please specify --staging or --prod');
+        return;
+      }
+
+      const deleteEnvResult = await store.deleteEnvironmentSecret(deleteEnvStage, secretName);
+      if (deleteEnvResult.success) {
+        console.log('[OK] Deleted ' + secretName + ' from ' + deleteEnvStage + ' environment');
+        console.log('Deploy with: npx stack deploy --secrets deploy --' + deleteEnvStage);
+      } else {
+        console.log('[ERROR] ' + (deleteEnvResult.error ?? 'Failed to delete'));
+      }
+      break;
+    }
+
     case 'write-ssh-keys': {
       const stagingKey = await store.getSecret('STAGING_SSH');
       const prodKey = await store.getSecret('PROD_SSH');
@@ -328,6 +399,168 @@ export async function secrets(
   }
 }
 
+/**
+ * Interactive secrets management — shows all secrets and lets user pick action.
+ * Called by `npx stack secrets` (no arguments).
+ */
+export async function secretsInteractive(options: SecretsOptions = {}): Promise<void> {
+  const { promptSingleLine } = await import('../utils/secret-prompts.js');
+  const rootDir = options.rootDir ?? process.cwd();
+  const config = loadConfigOrThrow(rootDir);
+  const store = getVaultStore(config, rootDir);
+
+  // Gather all secrets
+  const sshSecrets = ['STAGING_SSH', 'PROD_SSH'];
+  const awsSecrets = ['AWS_SECRET_ACCESS_KEY'];
+  const sshResult = await store.checkSecrets(sshSecrets);
+  const awsResult = await store.checkSecrets(awsSecrets);
+  const stagingKeys = await store.listEnvironmentSecretKeys('staging');
+  const prodKeys = await store.listEnvironmentSecretKeys('prod');
+
+  // Build numbered list
+  const allItems: { name: string; type: string; stage?: string; exists: boolean }[] = [];
+
+  for (const name of sshSecrets) {
+    allItems.push({ name, type: 'secret', exists: sshResult.status?.[name] ?? false });
+  }
+  for (const name of awsSecrets) {
+    allItems.push({ name, type: 'secret', exists: awsResult.status?.[name] ?? false });
+  }
+  for (const key of stagingKeys) {
+    allItems.push({ name: key, type: 'env', stage: 'staging', exists: true });
+  }
+  for (const key of prodKeys) {
+    allItems.push({ name: key, type: 'env', stage: 'prod', exists: true });
+  }
+
+  // Display
+  console.log('');
+  console.log('ANSIBLE VAULT SECRETS');
+  console.log('');
+
+  let idx = 1;
+  console.log('  SSH KEYS & CREDENTIALS:');
+  for (const item of allItems) {
+    if (item.type !== 'secret') continue;
+    const marker = item.exists ? '[OK]' : '[! ]';
+    console.log('    ' + idx + '. ' + marker + ' ' + item.name);
+    idx++;
+  }
+
+  if (stagingKeys.length > 0) {
+    console.log('');
+    console.log('  STAGING ENV VARS:');
+    for (const item of allItems) {
+      if (item.type !== 'env' || item.stage !== 'staging') continue;
+      console.log('    ' + idx + '. [OK] ' + item.name);
+      idx++;
+    }
+  }
+
+  if (prodKeys.length > 0) {
+    console.log('');
+    console.log('  PROD ENV VARS:');
+    for (const item of allItems) {
+      if (item.type !== 'env' || item.stage !== 'prod') continue;
+      console.log('    ' + idx + '. [OK] ' + item.name);
+      idx++;
+    }
+  }
+
+  console.log('');
+  console.log('  Actions:');
+  console.log('    [number]        → edit/set that secret');
+  console.log('    d[number]       → delete (e.g. d3)');
+  console.log('    v[number]       → view value (e.g. v1)');
+  console.log('    n               → add new secret');
+  console.log('    ne --staging    → add new env var');
+  console.log('    q               → quit');
+  console.log('');
+
+  const answer = await promptSingleLine('  Select: ');
+  if (!answer || answer.toLowerCase() === 'q') return;
+
+  // Parse action
+  const trimmed = answer.trim().toLowerCase();
+
+  // "n" = new secret
+  if (trimmed === 'n') {
+    const name = await promptSingleLine('  Secret name (e.g. STAGING_SSH, AWS_SECRET_ACCESS_KEY): ');
+    if (name) {
+      await secrets('set', name.trim(), options);
+    }
+    return;
+  }
+
+  // "ne" = new env var
+  if (trimmed === 'ne') {
+    let stage: 'staging' | 'prod';
+    if (options.staging) {
+      stage = 'staging';
+    } else if (options.prod) {
+      stage = 'prod';
+    } else {
+      const stageAnswer = await promptSingleLine('  Stage (staging/prod): ');
+      if (stageAnswer?.trim().toLowerCase() === 'prod') {
+        stage = 'prod';
+      } else {
+        stage = 'staging';
+      }
+    }
+    const envName = await promptSingleLine('  Env var name (e.g. DATABASE_URL): ');
+    if (envName) {
+      await secrets('set-env', envName.trim(), { ...options, staging: stage === 'staging', prod: stage === 'prod' });
+    }
+    return;
+  }
+
+  // Parse number-based actions: "3" = edit #3, "d3" = delete #3, "v3" = view #3
+  let action: 'set' | 'delete' | 'get' = 'set';
+  let numStr = trimmed;
+
+  if (trimmed.startsWith('d')) {
+    action = 'delete';
+    numStr = trimmed.slice(1);
+  } else if (trimmed.startsWith('v')) {
+    action = 'get';
+    numStr = trimmed.slice(1);
+  }
+
+  const num = parseInt(numStr, 10);
+  if (isNaN(num) || num < 1 || num > allItems.length) {
+    console.log('[!] Invalid selection');
+    return;
+  }
+
+  const selected = allItems[num - 1]!;
+
+  if (selected.type === 'env' && selected.stage) {
+    // Environment variable
+    const stageOpts = { ...options, staging: selected.stage === 'staging', prod: selected.stage === 'prod' };
+    if (action === 'delete') {
+      await secrets('delete-env', selected.name, stageOpts);
+    } else if (action === 'get') {
+      // Get env var value from vault
+      const envSecrets = await store.getEnvironmentSecrets(selected.stage as 'staging' | 'prod');
+      const val = envSecrets[selected.name];
+      if (val !== undefined) {
+        console.log(selected.name + '=' + val);
+      } else {
+        console.log('[!] ' + selected.name + ' not found');
+      }
+    } else {
+      await secrets('set-env', selected.name, stageOpts);
+    }
+  } else {
+    // Top-level secret
+    if (action === 'delete') {
+      await secrets('delete', selected.name, options);
+    } else if (action === 'get') {
+      await secrets('get', selected.name, options);
+    } else {
+      await secrets('set', selected.name, options);
+    }
+  }
+}
+
 export default secrets;
-
-

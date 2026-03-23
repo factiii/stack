@@ -56,7 +56,7 @@ function getDockerfilePath(repoDir: string): string {
 /**
  * Get ECR registry from config or AWS account ID via SDK
  */
-export async function getECRRegistry(config: FactiiiConfig): Promise<string> {
+export async function getECRRegistry(config: FactiiiConfig, rootDir?: string): Promise<string> {
   const region = config.aws?.region ?? 'us-east-1';
 
   // Use config value if provided
@@ -64,13 +64,54 @@ export async function getECRRegistry(config: FactiiiConfig): Promise<string> {
     return config.ecr_registry;
   }
 
+  // Ensure AWS credentials are synced from vault before SDK call
+  await syncAwsCredsFromVault(config, region, rootDir);
+
   // Construct from AWS account ID via SDK (no CLI needed)
   const { getAwsAccountId } = await import('../aws/utils/aws-helpers.js');
   const accountId = await getAwsAccountId(region);
   if (!accountId) {
-    throw new Error('Failed to get AWS account ID via SDK. Check AWS credentials.');
+    throw new Error('Failed to get AWS account ID via SDK. Check AWS credentials.\n' +
+      '   Run: npx stack fix --dev   (syncs vault credentials to ~/.aws/)\n' +
+      '   Or:  npx stack deploy --secrets list   (check if AWS_SECRET_ACCESS_KEY is stored)');
   }
   return accountId + '.dkr.ecr.' + region + '.amazonaws.com';
+}
+
+/**
+ * Sync AWS credentials from Ansible Vault to ~/.aws/credentials if missing.
+ * This ensures deploy can work without running fix first.
+ */
+async function syncAwsCredsFromVault(config: FactiiiConfig, region: string, rootDir?: string): Promise<void> {
+  try {
+    const os = await import('os');
+    const credPath = path.join(os.homedir(), '.aws', 'credentials');
+    // Check if credentials file already has valid content
+    if (fs.existsSync(credPath)) {
+      const content = fs.readFileSync(credPath, 'utf8');
+      if (content.includes('aws_access_key_id') && content.includes('aws_secret_access_key')) {
+        return; // Already configured
+      }
+    }
+
+    // Try to read from vault
+    if (!config.ansible?.vault_path) return;
+    const configKeyId = config.prod?.access_key_id;
+    if (!configKeyId) return;
+
+    const { AnsibleVaultSecrets } = await import('../../../utils/ansible-vault-secrets.js');
+    const store = new AnsibleVaultSecrets({
+      vault_path: config.ansible.vault_path,
+      vault_password_file: config.ansible.vault_password_file,
+      rootDir: rootDir ?? process.cwd(),
+    });
+    const secretKey = await store.getSecret('AWS_SECRET_ACCESS_KEY');
+    if (secretKey) {
+      const { writeAwsCredentials } = await import('../aws/utils/aws-helpers.js');
+      writeAwsCredentials(configKeyId, secretKey, region);
+      console.log('   [OK] Synced AWS credentials from vault');
+    }
+  } catch { /* vault sync is best-effort */ }
 }
 
 /**
@@ -193,7 +234,7 @@ export async function buildProductionImage(
   // Get ECR registry
   let ecrRegistry: string;
   try {
-    ecrRegistry = await getECRRegistry(config);
+    ecrRegistry = await getECRRegistry(config, _sshRootDir);
   } catch (error) {
     return {
       success: false,
@@ -322,7 +363,7 @@ export async function buildProductionImageLocally(
   // Get ECR registry
   let ecrRegistry: string;
   try {
-    ecrRegistry = await getECRRegistry(config);
+    ecrRegistry = await getECRRegistry(config, _sshRootDir);
   } catch (error) {
     return {
       success: false,

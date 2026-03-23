@@ -185,6 +185,14 @@ try {
   // Plugin not available
 }
 
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const DnsAddon = require('./addons/dns/index').default as PluginClass;
+  registry.addons['dns'] = DnsAddon;
+} catch {
+  // Plugin not available
+}
+
 // ============================================================
 // REGISTRATION FUNCTIONS
 // ============================================================
