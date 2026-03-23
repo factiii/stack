@@ -3,9 +3,10 @@
 ## Quick Start
 
 ```bash
-git clone https://github.com/factiii/auth.git
-cd auth
+git clone https://github.com/factiii/stack.git
+cd stack
 pnpm install
+cd packages/auth
 ./start.sh
 ```
 
@@ -73,14 +74,15 @@ bin/                  # CLI tool (npx @factiii/auth init)
 prisma/               # Reference Prisma schema
 ```
 
-Only `bin/`, `dist/`, `prisma/`, and `README.md` are included in the published npm package. Everything else (tests, e2e app, start.sh, seed, etc.) is for development only.
+Only `bin/`, `dist/`, `prisma/`, and `README.md` are included in the published npm package.
 
 ## Pull Requests
 
-1. Fork the repo and create a branch from `main`
+1. Create a branch from `main`
 2. Make your changes
 3. Run `pnpm test` and `pnpm lint` to verify
 4. Run `pnpm e2e` if your changes affect auth procedures
-5. Open a PR against `main`
+5. Run `pnpm changeset` from the repo root to add a changeset
+6. Open a PR against `main`
 
-CI will run lint, type checking, and the full e2e test suite on your PR.
+CI will run build, test, typecheck, and verify a changeset exists. See `BUILD.md` in the repo root for the full release workflow.
