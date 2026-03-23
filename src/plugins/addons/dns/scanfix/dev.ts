@@ -54,13 +54,13 @@ async function resolveTarget(fqdn: string): Promise<string | null> {
   // Try CNAME first
   try {
     const cnames = await dnsPromises.resolveCname(fqdn);
-    if (cnames.length > 0) return cnames[0];
+    if (cnames.length > 0) return cnames[0] ?? null;
   } catch {
     // Not a CNAME, try A record
   }
   try {
     const addresses = await dnsPromises.resolve4(fqdn);
-    if (addresses.length > 0) return addresses[0];
+    if (addresses.length > 0) return addresses[0] ?? null;
   } catch {
     // No A record either
   }
