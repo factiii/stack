@@ -39,7 +39,9 @@ import type {
 } from '../../../types/index.js';
 
 // Import OS-specific scanfix arrays
+import { envMarkerFixes } from './scanfix/env-marker.js';
 import { macFixes } from './scanfix/mac.js';
+import { tailscaleFixes } from './scanfix/tailscale.js';
 import { ubuntuFixes } from './scanfix/ubuntu.js';
 import { windowsFixes } from './scanfix/windows.js';
 import { tartFixes } from './scanfix/tart.js';
@@ -88,6 +90,10 @@ class ServerModeAddon {
   static readonly fixes: Fix[] = [
     // Mac fixes
     ...macFixes,
+    // Environment markers (all servers)
+    ...envMarkerFixes,
+    // Tailscale (Mac + Ubuntu)
+    ...tailscaleFixes,
     // Ubuntu fixes
     ...ubuntuFixes,
     // Windows fixes
