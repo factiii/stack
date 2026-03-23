@@ -106,7 +106,9 @@ function generateSlotSection(): string {
     'SERVER_PORT=$((5000 + SLOT))\n' +
     'echo "Slot $SLOT -> Client: $CLIENT_PORT, Server: $SERVER_PORT"\n' +
     '\n' +
-    '# ── Setup .env with IP + PORT ─────────────────────────────\n' +
+    '# ── Setup .env with PORT ────────────────────────────────────\n' +
+    '# IP injection is handled at runtime by @shared/env (detects IP,\n' +
+    '# auto-adds localhost + local IP to CORS). URLs stay as localhost here.\n' +
     'if [ ! -f "$REPO_DIR/.env" ]; then\n' +
     '  if [ -f "$REPO_DIR/.env.example" ]; then\n' +
     '    cp "$REPO_DIR/.env.example" "$REPO_DIR/.env"\n' +
@@ -120,16 +122,6 @@ function generateSlotSection(): string {
     '    sed -i.bak "s/^PORT=.*/PORT=$SLOT/" "$REPO_DIR/.env" && rm -f "$REPO_DIR/.env.bak"\n' +
     '  else\n' +
     '    echo "PORT=$SLOT" >> "$REPO_DIR/.env"\n' +
-    '  fi\n' +
-    '\n' +
-    '  # Replace localhost/127.0.0.1 with system IP\n' +
-    '  if [ "$SYSTEM_IP" != "127.0.0.1" ]; then\n' +
-    '    sed -i.bak \\\n' +
-    '      -e "s|http://localhost|http://$SYSTEM_IP|g" \\\n' +
-    '      -e "s|http://127\\.0\\.0\\.1|http://$SYSTEM_IP|g" \\\n' +
-    '      -e "s|YOUR_IP|$SYSTEM_IP|g" \\\n' +
-    '      "$REPO_DIR/.env" && rm -f "$REPO_DIR/.env.bak"\n' +
-    '    echo "Injected IP: $SYSTEM_IP"\n' +
     '  fi\n' +
     '\n' +
     '  # Update port references in URL values\n' +
