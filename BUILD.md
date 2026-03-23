@@ -53,18 +53,19 @@ This repo uses [changesets](https://github.com/changesets/changesets) for versio
 
 ### How it works
 
+```
+feature PR → merge to main → version PR auto-created → merge version PR → npm publish
+                                    ↑
+                        (this is your release gate)
+```
+
 1. **Make changes** on a feature branch
-2. **Add a changeset** describing what changed:
-   ```bash
-   pnpm changeset
-   ```
-   This prompts you to pick which packages changed (`@factiii/stack`, `@factiii/auth`, or both) and the semver bump type (patch/minor/major). It creates a markdown file in `.changeset/` — commit it with your PR.
+2. **Run `pnpm changeset`** — pick which package(s) changed and bump type (patch/minor/major). Commit the generated file with your PR.
+3. **Open PR to `main`** — CI runs build, test, typecheck, and verifies a changeset exists
+4. **Merge PR** — a **"chore: version packages"** PR is auto-created with bumped versions and updated changelogs
+5. **Merge the version PR when you're ready to release** — npm publish happens automatically
 
-3. **Open a PR to `main`** — CI runs build, test, typecheck, and verifies a changeset exists
-
-4. **Merge the PR** — the Release workflow detects pending changesets and auto-creates a **"chore: version packages"** PR that bumps versions and updates changelogs
-
-5. **Merge the version PR** — packages are automatically built and published to npm
+**Not every PR triggers a publish.** The version PR is the release gate — you control when to merge it. Multiple PRs can batch up: if you merge 3 PRs before merging the version PR, all changesets combine into one version bump.
 
 ### Commands
 
