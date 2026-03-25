@@ -118,11 +118,19 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
         // Find session in database
         const session = await database.session.findById(decodedToken.id);
 
-        if (!session) {
+        if (
+          !session ||
+          session.userId !== decodedToken.userId ||
+          (decodedToken.iat && decodedToken.iat < Math.floor(session.issuedAt.getTime() / 1000))
+        ) {
           await revokeSession(
             ctx,
             decodedToken.id,
-            'Session revoked: Session not found',
+            !session
+              ? 'Session revoked: Session not found'
+              : session.userId !== decodedToken.userId
+                ? 'Session revoked: Token userId mismatch'
+                : 'Session revoked: Token predates session',
             undefined,
             path
           );
