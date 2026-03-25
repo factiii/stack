@@ -1,4 +1,4 @@
-import { z, type ZodObject } from 'zod';
+import { z, type AnyZodObject } from 'zod';
 
 import type { SchemaExtensions } from './types/hooks';
 
@@ -170,19 +170,19 @@ export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
 
 /** Schemas used by auth procedures */
 export interface AuthSchemas {
-  signup: ZodObject;
-  login: ZodObject;
-  oauth: ZodObject;
+  signup: AnyZodObject;
+  login: AnyZodObject;
+  oauth: AnyZodObject;
 }
 
 /**
- * Compute merged ZodObject type.
+ * Compute merged AnyZodObject type.
  * When TExt is defined, produces a schema with both base and extension shapes.
  * When TExt is undefined, produces the base schema.
  */
-type MergedSchema<TBase extends ZodObject, TExt extends ZodObject | undefined> = [
+type MergedSchema<TBase extends AnyZodObject, TExt extends AnyZodObject | undefined> = [
   TExt,
-] extends [ZodObject]
+] extends [AnyZodObject]
   ? z.ZodObject<TBase['shape'] & TExt['shape']>
   : TBase;
 
@@ -194,13 +194,13 @@ export type CreatedSchemas<TExtensions extends SchemaExtensions = {}> = {
 };
 
 export type SignupSchemaInput<TExtensions extends SchemaExtensions = {}> = SignupInput &
-  (TExtensions['signup'] extends ZodObject ? z.infer<TExtensions['signup']> : {});
+  (TExtensions['signup'] extends AnyZodObject ? z.infer<TExtensions['signup']> : {});
 
 export type LoginSchemaInput<TExtensions extends SchemaExtensions = {}> = LoginInput &
-  (TExtensions['login'] extends ZodObject ? z.infer<TExtensions['login']> : {});
+  (TExtensions['login'] extends AnyZodObject ? z.infer<TExtensions['login']> : {});
 
 export type OAuthSchemaInput<TExtensions extends SchemaExtensions = {}> = OAuthLoginInput &
-  (TExtensions['oauth'] extends ZodObject ? z.infer<TExtensions['oauth']> : {});
+  (TExtensions['oauth'] extends AnyZodObject ? z.infer<TExtensions['oauth']> : {});
 
 /** Create schemas with optional extensions merged in */
 export function createSchemas<TExtensions extends SchemaExtensions = {}>(
