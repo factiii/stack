@@ -42,11 +42,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if (!hasAccessToken()) {
-      setIsLoading(false);
-      return;
-    }
-
     const checkAuth = async () => {
       try {
         const result = await trpc.me.query();
