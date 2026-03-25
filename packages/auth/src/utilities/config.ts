@@ -21,7 +21,7 @@ export const defaultTokenSettings: TokenSettings = {
  */
 export const defaultCookieSettings: CookieSettings = {
   secure: true,
-  sameSite: 'Strict',
+  sameSite: 'Lax',
   httpOnly: true,
   path: '/',
   maxAge: 365 * 24 * 60 * 60, // 1 year in seconds (matches jwtExpiry)
