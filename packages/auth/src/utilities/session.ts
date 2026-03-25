@@ -1,7 +1,8 @@
 import type { CreateHTTPContextOptions } from '@trpc/server/adapters/standalone';
 
+import type { ClientCookiePayload } from '../types';
 import type { ResolvedAuthConfig } from './config';
-import { setAuthCookie } from './cookies';
+import { setAuthCookies } from './cookies';
 import { createAuthToken } from './jwt';
 
 /**
@@ -89,7 +90,24 @@ export async function createSessionWithTokenAndCookie(
 ): Promise<SessionWithTokenResult> {
   const result = await createSessionWithToken(config, params);
 
-  setAuthCookie(res, result.accessToken, config.cookieSettings, config.storageKeys);
+  // Build client cookie payload from the user record
+  const user = await config.database.user.findById(params.userId);
+  const clientPayload: ClientCookiePayload = {
+    userId: params.userId,
+    updatedAt: (user?.updatedAt ?? new Date()).toISOString(),
+    ...(config.getClientCookiePayload
+      ? await config.getClientCookiePayload(params.userId)
+      : {}),
+  };
+
+  setAuthCookies(
+    res,
+    result.accessToken,
+    clientPayload,
+    config.secrets.jwt,
+    config.cookieSettings,
+    config.storageKeys,
+  );
 
   return result;
 }

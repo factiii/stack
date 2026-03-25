@@ -21,7 +21,7 @@ export const defaultTokenSettings: TokenSettings = {
  */
 export const defaultCookieSettings: CookieSettings = {
   secure: true,
-  sameSite: 'Lax',
+  sameSite: 'Strict',
   httpOnly: true,
   path: '/',
   maxAge: 365 * 24 * 60 * 60, // 1 year in seconds (matches jwtExpiry)
@@ -32,6 +32,7 @@ export const defaultCookieSettings: CookieSettings = {
  */
 export const defaultStorageKeys = {
   authToken: 'auth-token',
+  clientToken: 'auth-client',
 };
 
 /**
@@ -49,7 +50,7 @@ export const defaultFeatures: AuthFeatures = {
 
 /** Resolved config type with database adapter guaranteed. */
 export type ResolvedAuthConfig = Required<
-  Omit<AuthConfig, 'hooks' | 'oauthKeys' | 'schemaExtensions' | 'prisma'>
+  Omit<AuthConfig, 'hooks' | 'oauthKeys' | 'schemaExtensions' | 'prisma' | 'getClientCookiePayload'>
 > &
   AuthConfig & { database: DatabaseAdapter };
 

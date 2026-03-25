@@ -1,9 +1,15 @@
 export { detectBrowser, isMobileDevice, isNativeApp } from './browser';
 export {
   clearAuthCookie,
+  clearAuthCookies,
   DEFAULT_STORAGE_KEYS,
   parseAuthCookie,
+  parseClientCookie,
+  parseClientCookiePayload,
   setAuthCookie,
+  setAuthCookies,
+  setClientCookie,
+  signClientCookie,
 } from './cookies';
 export {
   createAuthToken,
