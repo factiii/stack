@@ -29,20 +29,37 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Check for changesets
+        id: changesets
+        run: |
+          if ls .changeset/*.md 1>/dev/null 2>&1 && [ "$(ls .changeset/*.md | grep -v README.md)" ]; then
+            echo "has_changesets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changesets=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Version packages
+        if: steps.changesets.outputs.has_changesets == 'true'
         run: pnpm version-packages
 
-      - name: Commit version bumps
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet || (git commit -m "chore: version packages" && git push)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Publish to npm
+        if: steps.changesets.outputs.has_changesets == 'true'
         run: pnpm release
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Commit version bumps
+        if: steps.changesets.outputs.has_changesets == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: version packages"
+          git checkout -b chore/version-packages
+          git push -f origin chore/version-packages
+          gh pr create --title "chore: version packages" --body "Auto-generated version bump." --base main --head chore/version-packages || true
+          gh pr merge --auto --squash chore/version-packages || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
