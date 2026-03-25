@@ -56,10 +56,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
           git diff --cached --quiet && exit 0
-          git commit -m "chore: version packages"
-          git checkout -b chore/version-packages
-          git push -f origin chore/version-packages
-          gh pr create --title "chore: version packages" --body "Auto-generated version bump." --base main --head chore/version-packages || true
-          gh pr merge --auto --squash chore/version-packages || true
+          git commit -m "chore: version packages [skip ci]"
+          git push origin HEAD:main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
