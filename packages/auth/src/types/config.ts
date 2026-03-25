@@ -105,7 +105,16 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
    */
   storageKeys?: {
     authToken: string;
+    /** Name for the optional non-httpOnly client cookie. Set to enable client cookie. */
+    clientToken?: string;
   };
+
+  /**
+   * Optional callback to produce extra fields for the client cookie.
+   * Called on login, register, refresh, and when authGuard detects stale updatedAt.
+   * Return value is merged into the client cookie payload alongside { userId, updatedAt }.
+   */
+  getClientCookiePayload?: (userId: number) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
   /**
    * Schema extensions for adding custom fields to auth inputs

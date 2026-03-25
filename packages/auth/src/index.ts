@@ -1,5 +1,6 @@
 export type { AuthRouter } from './router';
 export { createAuthRouter } from './router';
+export type { ClientCookiePayload, CookieSettings } from './types';
 export type { AuthConfig, AuthFeatures, SchemaExtensions, TokenSettings } from './types/config';
 export type { ResolvedAuthConfig } from './utilities/config';
 export type { AuthHooks } from './types/hooks';
@@ -36,9 +37,15 @@ export { createPrismaAdapter } from './adapters/prismaAdapter';
 export { detectBrowser, isMobileDevice, isNativeApp } from './utilities/browser';
 export {
   clearAuthCookie,
+  clearAuthCookies,
   DEFAULT_STORAGE_KEYS,
   parseAuthCookie,
+  parseClientCookie,
+  parseClientCookiePayload,
   setAuthCookie,
+  setAuthCookies,
+  setClientCookie,
+  signClientCookie,
 } from './utilities/cookies';
 export {
   createAuthToken,

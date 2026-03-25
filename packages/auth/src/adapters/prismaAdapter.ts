@@ -95,7 +95,7 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
             lastUsed: true,
             revokedAt: true,
             deviceId: true,
-            user: { select: { status: true, verifiedHumanAt: true } },
+            user: { select: { status: true, verifiedHumanAt: true, updatedAt: true } },
           },
         });
         return session as SessionWithUser | null;
@@ -114,7 +114,7 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
 
       async updateLastUsed(
         id: number
-      ): Promise<AuthSession & { user: { verifiedHumanAt: Date | null } }> {
+      ): Promise<AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } }> {
         const session = await db.session.update({
           where: { id },
           data: { lastUsed: new Date() },
@@ -128,10 +128,10 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
             lastUsed: true,
             revokedAt: true,
             deviceId: true,
-            user: { select: { verifiedHumanAt: true } },
+            user: { select: { verifiedHumanAt: true, updatedAt: true } },
           },
         });
-        return session as AuthSession & { user: { verifiedHumanAt: Date | null } };
+        return session as AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } };
       },
 
       async revoke(id: number): Promise<void> {

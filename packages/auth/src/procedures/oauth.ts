@@ -1,9 +1,11 @@
 import { TRPCError } from '@trpc/server';
 
+import { type ClientCookiePayload } from '../types';
 import type { SchemaExtensions } from '../types/hooks';
 import { type BaseProcedure } from '../types/trpc';
-import { createAuthToken, detectBrowser, setAuthCookie } from '../utilities';
+import { createAuthToken, detectBrowser } from '../utilities';
 import type { ResolvedAuthConfig } from '../utilities/config';
+import { setAuthCookies } from '../utilities/cookies';
 import { createOAuthVerifier, type OAuthProvider, type OAuthResult } from '../utilities/oauth';
 import { type CreatedSchemas, type OAuthSchemaInput } from '../validators';
 
@@ -136,9 +138,19 @@ export class OAuthLoginProcedureFactory<TExtensions extends SchemaExtensions = {
         }
       );
 
-      setAuthCookie(
+      const clientPayload: ClientCookiePayload = {
+        userId: user.id,
+        updatedAt: user.updatedAt.toISOString(),
+        ...(this.config.getClientCookiePayload
+          ? await this.config.getClientCookiePayload(user.id)
+          : {}),
+      };
+
+      setAuthCookies(
         ctx.res,
         authToken,
+        clientPayload,
+        this.config.secrets.jwt,
         this.config.cookieSettings,
         this.config.storageKeys,
       );

@@ -1,10 +1,11 @@
 import { TRPCError } from '@trpc/server';
 
+import { type ClientCookiePayload } from '../types';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { cleanBase32String, verifyTotp } from '../utilities';
 import { detectBrowser } from '../utilities/browser';
 import type { ResolvedAuthConfig } from '../utilities/config';
-import { clearAuthCookie, setAuthCookie } from '../utilities/cookies';
+import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
 import { createAuthToken } from '../utilities/jwt';
 import { comparePassword, hashPassword } from '../utilities/password';
 import type { SchemaExtensions } from '../types/hooks';
@@ -29,6 +30,16 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
     private procedure: BaseProcedure,
     private authProcedure: AuthProcedure
   ) {}
+
+  /** Build a client cookie payload, merging app-provided extra fields if configured. */
+  private async buildClientPayload(userId: number, updatedAt: Date): Promise<ClientCookiePayload> {
+    const base: ClientCookiePayload = { userId, updatedAt: updatedAt.toISOString() };
+    if (this.config.getClientCookiePayload) {
+      const extra = await this.config.getClientCookiePayload(userId);
+      return { ...base, ...extra };
+    }
+    return base;
+  }
 
   /** Returns all base auth procedures to be merged into the router. */
   createBaseProcedures(schemas: CreatedSchemas<TExtensions>) {
@@ -120,9 +131,13 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         }
       );
 
-      setAuthCookie(
+      const clientPayload = await this.buildClientPayload(user.id, new Date());
+
+      setAuthCookies(
         ctx.res,
         authToken,
+        clientPayload,
+        this.config.secrets.jwt,
         this.config.cookieSettings,
         this.config.storageKeys,
       );
@@ -256,9 +271,13 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         }
       );
 
-      setAuthCookie(
+      const clientPayload = await this.buildClientPayload(user.id, user.updatedAt);
+
+      setAuthCookies(
         ctx.res,
         authToken,
+        clientPayload,
+        this.config.secrets.jwt,
         this.config.cookieSettings,
         this.config.storageKeys,
       );
@@ -286,7 +305,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         }
       }
 
-      clearAuthCookie(ctx.res, this.config.cookieSettings, this.config.storageKeys);
+      clearAuthCookies(ctx.res, this.config.cookieSettings, this.config.storageKeys);
 
       return { success: true };
     });
@@ -308,9 +327,13 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         }
       );
 
-      setAuthCookie(
+      const clientPayload = await this.buildClientPayload(session.userId, session.user.updatedAt);
+
+      setAuthCookies(
         ctx.res,
         authToken,
+        clientPayload,
+        this.config.secrets.jwt,
         this.config.cookieSettings,
         this.config.storageKeys,
       );

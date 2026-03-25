@@ -26,3 +26,14 @@ export interface CookieSettings {
   maxAge: number; // in seconds
 }
 
+/**
+ * Client cookie payload — non-httpOnly cookie readable by CSR/SSR.
+ * Always includes userId and updatedAt. Apps can add custom fields
+ * via the getClientCookiePayload config callback.
+ */
+export interface ClientCookiePayload {
+  userId: number;
+  updatedAt: string; // ISO timestamp
+  [key: string]: unknown;
+}
+

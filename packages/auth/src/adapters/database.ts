@@ -19,6 +19,7 @@ export interface AuthUser {
   emailVerificationStatus: string;
   otpForEmailVerification: string | null;
   isActive: boolean;
+  updatedAt: Date;
 }
 
 export interface AuthSession {
@@ -71,7 +72,7 @@ export interface CreateSessionData {
 // ── Composite return types ───────────────────────────────────────────────────
 
 export type SessionWithUser = AuthSession & {
-  user: { status: string; verifiedHumanAt: Date | null };
+  user: { status: string; verifiedHumanAt: Date | null; updatedAt: Date };
 };
 
 export type SessionWithDevice = {
@@ -99,8 +100,8 @@ export interface DatabaseAdapter {
     findById(id: number): Promise<SessionWithUser | null>;
     create(data: CreateSessionData): Promise<AuthSession>;
     update(id: number, data: Partial<Pick<AuthSession, 'revokedAt' | 'lastUsed' | 'twoFaSecret' | 'deviceId'>>): Promise<AuthSession>;
-    /** Update lastUsed and return session with user's verifiedHumanAt. */
-    updateLastUsed(id: number): Promise<AuthSession & { user: { verifiedHumanAt: Date | null } }>;
+    /** Update lastUsed and return session with user's verifiedHumanAt and updatedAt. */
+    updateLastUsed(id: number): Promise<AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } }>;
     /** Set revokedAt on a single session. */
     revoke(id: number): Promise<void>;
     /** Find active (non-revoked) sessions for a user, optionally excluding one. */
