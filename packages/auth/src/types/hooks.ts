@@ -1,4 +1,4 @@
-import { type z, type AnyZodObject } from 'zod';
+import { type z, type ZodObject } from 'zod';
 
 import { type loginSchema, type oAuthLoginSchema, type signupSchema } from '../validators';
 
@@ -6,9 +6,9 @@ import { type loginSchema, type oAuthLoginSchema, type signupSchema } from '../v
  * Schema extensions for adding custom fields to auth inputs
  */
 export interface SchemaExtensions {
-  signup?: AnyZodObject;
-  login?: AnyZodObject;
-  oauth?: AnyZodObject;
+  signup?: ZodObject;
+  login?: ZodObject;
+  oauth?: ZodObject;
 }
 
 type BaseSignupInput = z.infer<typeof signupSchema>;
@@ -17,15 +17,15 @@ type BaseOAuthInput = z.infer<typeof oAuthLoginSchema>;
 
 /** Input types that include base fields plus any extension fields */
 type ExtendedSignupInput<TExtensions extends SchemaExtensions> = BaseSignupInput &
-  (TExtensions['signup'] extends AnyZodObject
+  (TExtensions['signup'] extends ZodObject
     ? z.infer<TExtensions['signup']>
     : Record<string, unknown>);
 type ExtendedLoginInput<TExtensions extends SchemaExtensions> = BaseLoginInput &
-  (TExtensions['login'] extends AnyZodObject
+  (TExtensions['login'] extends ZodObject
     ? z.infer<TExtensions['login']>
     : Record<string, unknown>);
 type ExtendedOAuthInput<TExtensions extends SchemaExtensions> = BaseOAuthInput &
-  (TExtensions['oauth'] extends AnyZodObject
+  (TExtensions['oauth'] extends ZodObject
     ? z.infer<TExtensions['oauth']>
     : Record<string, unknown>);
 
