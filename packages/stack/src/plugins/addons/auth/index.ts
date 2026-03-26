@@ -35,6 +35,23 @@ import { secretsFixes } from './scanfix/secrets.js';
 import { validateFixes } from './scanfix/validate.js';
 
 /**
+ * Load the stack-plugin contract from @factiii/auth.
+ * Returns null if auth is not installed or doesn't export it.
+ */
+function loadAuthContract() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('@factiii/auth/stack-plugin');
+  } catch {
+    // @factiii/auth not installed or doesn't export stack-plugin
+    return null;
+  }
+}
+
+// Load the contract once at module init
+const authContract = loadAuthContract();
+
+/**
  * Try to load scanfixes from @factiii/auth's stackPlugin export.
  * Returns the exported fixes if available, null otherwise.
  */
@@ -80,11 +97,13 @@ class AuthAddon {
 
   static readonly defaultServer: ServerOS = 'ubuntu';
 
-  // Env vars this plugin requires (auto-generates .env.example checks)
-  static readonly requiredEnvVars: string[] = ['JWT_SECRET'];
+  // Env vars this plugin requires — sourced from @factiii/auth's contract
+  static readonly requiredEnvVars: string[] = authContract
+    ? [...authContract.requiredEnvVars]
+    : ['JWT_SECRET'];
 
-  // Schema for stack.yml (user-editable, optional)
-  static readonly configSchema: Record<string, unknown> = {
+  // Schema for stack.yml (user-editable, optional) — sourced from @factiii/auth's contract
+  static readonly configSchema: Record<string, unknown> = authContract?.configSchema ?? {
     auth: {
       features: {
         oauth: false,
@@ -157,11 +176,14 @@ class AuthAddon {
     }
 
     // Check if auth models exist in Prisma schema
+    const modelsToCheck = authContract?.prismaModels ?? ['User', 'Session'];
     try {
       const schemaPath = path.join(rootDir, 'prisma', 'schema.prisma');
       if (fs.existsSync(schemaPath)) {
         const content = fs.readFileSync(schemaPath, 'utf8');
-        detected.auth_initialized = content.includes('model User') && content.includes('model Session');
+        detected.auth_initialized = modelsToCheck.every(
+          (model: string) => content.includes('model ' + model)
+        );
       } else {
         detected.auth_initialized = false;
       }

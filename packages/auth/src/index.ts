@@ -90,3 +90,13 @@ export {
   twoFaVerifySchema,
   verifyEmailSchema,
 } from './validators';
+
+export {
+  AUTH_REQUIRED_ENV_VARS,
+  AUTH_OAUTH_ENV_VARS,
+  AUTH_ALL_SECRET_NAMES,
+  AUTH_DEFAULT_FEATURES,
+  AUTH_CONFIG_SCHEMA,
+  AUTH_PRISMA_MODELS,
+  stackPlugin,
+} from './stack-plugin';
