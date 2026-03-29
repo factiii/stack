@@ -4,6 +4,7 @@ import { createAuthGuard } from './middleware/authGuard';
 import { BaseProcedureFactory } from './procedures/base';
 import { BiometricProcedureFactory } from './procedures/biometric';
 import { EmailVerificationProcedureFactory } from './procedures/emailVerification';
+import { MagicLinkProcedureFactory } from './procedures/magicLink';
 import { OAuthLoginProcedureFactory } from './procedures/oauth';
 import { TwoFaProcedureFactory } from './procedures/twoFa';
 import type { SchemaExtensions } from './types/hooks';
@@ -55,12 +56,17 @@ class AuthRouterFactory<TExtensions extends SchemaExtensions = {}> {
     );
     const twoFaRoutes = new TwoFaProcedureFactory(this.config, this.procedure, this.authProcedure);
 
+    const magicLinkRoutes = this.config.features.magicLink
+      ? new MagicLinkProcedureFactory(this.config, this.procedure).createMagicLinkProcedures()
+      : {};
+
     return this.t.router({
       ...baseRoutes.createBaseProcedures(this.schemas),
       ...oAuthLoginRoutes.createOAuthLoginProcedures(this.schemas),
       ...twoFaRoutes.createTwoFaProcedures(),
       ...biometricRoutes.createBiometricProcedures(),
       ...emailVerificationRoutes.createEmailVerificationProcedures(),
+      ...magicLinkRoutes,
     });
   }
 }

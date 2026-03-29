@@ -1,4 +1,5 @@
 import type {
+  AuthMagicLink,
   AuthOTP,
   AuthPasswordReset,
   AuthSession,
@@ -11,13 +12,15 @@ import type {
 } from './database';
 
 /** Internal accessor for Prisma model delegates (avoids repeating casts). */
+type PrismaDelegate = Record<string, (...args: unknown[]) => Promise<unknown>>;
 interface PrismaModelAccess {
-  user: Record<string, (...args: unknown[]) => Promise<unknown>>;
-  session: Record<string, (...args: unknown[]) => Promise<unknown>>;
-  oTP: Record<string, (...args: unknown[]) => Promise<unknown>>;
-  passwordReset: Record<string, (...args: unknown[]) => Promise<unknown>>;
-  device: Record<string, (...args: unknown[]) => Promise<unknown>>;
-  admin: Record<string, (...args: unknown[]) => Promise<unknown>>;
+  user: PrismaDelegate;
+  session: PrismaDelegate;
+  oTP: PrismaDelegate;
+  passwordReset: PrismaDelegate;
+  device: PrismaDelegate;
+  admin: PrismaDelegate;
+  magicLink?: PrismaDelegate;
 }
 
 /**
@@ -336,5 +339,27 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
         }) as Promise<{ ip: string } | null>;
       },
     },
+
+    // Only populated when the consumer's Prisma schema includes MagicLink
+    ...(db.magicLink
+      ? {
+          magicLink: {
+            async findById(id: string): Promise<AuthMagicLink | null> {
+              return db.magicLink!.findUnique({ where: { id } }) as Promise<AuthMagicLink | null>;
+            },
+
+            async create(data: { userId: number; expiresAt: Date }): Promise<AuthMagicLink> {
+              return db.magicLink!.create({ data }) as Promise<AuthMagicLink>;
+            },
+
+            async markUsed(id: string): Promise<AuthMagicLink> {
+              return db.magicLink!.update({
+                where: { id },
+                data: { usedAt: new Date() },
+              }) as Promise<AuthMagicLink>;
+            },
+          },
+        }
+      : {}),
   };
 }

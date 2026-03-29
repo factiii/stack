@@ -46,13 +46,21 @@ export const defaultFeatures: AuthFeatures = {
   emailVerification: true,
   passwordReset: true,
   otpLogin: true,
+  magicLink: false,
 };
+
+/** Resolved magic link config with defaults applied. */
+export interface ResolvedMagicLinkConfig {
+  siteUrl: string;
+  verifyPath: string;
+  defaultExpiryMs: number;
+}
 
 /** Resolved config type with database adapter guaranteed. */
 export type ResolvedAuthConfig = Required<
-  Omit<AuthConfig, 'hooks' | 'oauthKeys' | 'schemaExtensions' | 'prisma' | 'getClientCookiePayload'>
+  Omit<AuthConfig, 'hooks' | 'oauthKeys' | 'schemaExtensions' | 'prisma' | 'getClientCookiePayload' | 'magicLink'>
 > &
-  AuthConfig & { database: DatabaseAdapter };
+  AuthConfig & { database: DatabaseAdapter; magicLink?: ResolvedMagicLinkConfig };
 
 /**
  * Create a fully resolved auth config with defaults applied.
@@ -80,6 +88,13 @@ export function createAuthConfig(config: AuthConfig): ResolvedAuthConfig {
     storageKeys: { ...defaultStorageKeys, ...config.storageKeys },
     generateUsername: config.generateUsername ?? (() => `user_${Date.now()}`),
     emailService,
+    magicLink: config.magicLink
+      ? {
+          siteUrl: config.magicLink.siteUrl,
+          verifyPath: config.magicLink.verifyPath ?? '/magic-link',
+          defaultExpiryMs: config.magicLink.defaultExpiryMs ?? 7 * 24 * 60 * 60 * 1000,
+        }
+      : undefined,
   };
 }
 

@@ -59,6 +59,7 @@ export const AUTH_CONFIG_SCHEMA = {
       biometric: (defaultFeatures as AuthFeatures).biometric ?? false,
       passwordReset: (defaultFeatures as AuthFeatures).passwordReset ?? false,
       otpLogin: (defaultFeatures as AuthFeatures).otpLogin ?? false,
+      magicLink: (defaultFeatures as AuthFeatures).magicLink ?? false,
     },
     oauth_provider: 'EXAMPLE_google',
   },

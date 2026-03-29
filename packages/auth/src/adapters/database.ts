@@ -47,6 +47,13 @@ export interface AuthPasswordReset {
   userId: number;
 }
 
+export interface AuthMagicLink {
+  id: string;
+  expiresAt: Date;
+  usedAt: Date | null;
+  userId: number;
+}
+
 // ── Input types ──────────────────────────────────────────────────────────────
 
 export interface CreateUserData {
@@ -144,5 +151,12 @@ export interface DatabaseAdapter {
 
   admin: {
     findByUserId(userId: number): Promise<{ ip: string } | null>;
+  };
+
+  /** Optional — required only when features.magicLink is enabled. */
+  magicLink?: {
+    findById(id: string): Promise<AuthMagicLink | null>;
+    create(data: { userId: number; expiresAt: Date }): Promise<AuthMagicLink>;
+    markUsed(id: string): Promise<AuthMagicLink>;
   };
 }

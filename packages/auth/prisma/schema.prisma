@@ -62,6 +62,7 @@ model User {
   otps           OTP[]
   devices        Device[]        @relation("devices")
   admin          Admin?
+  magicLinks     MagicLink[]
 }
 
 // ==============================================================================
@@ -135,4 +136,18 @@ model Device {
   createdAt DateTime  @default(now())
   users     User[]    @relation("devices")
   sessions  Session[]
+}
+
+// ==============================================================================
+// MagicLink Model (optional — enable with features.magicLink)
+// ==============================================================================
+
+model MagicLink {
+  id        String    @id @default(uuid())
+  expiresAt DateTime
+  usedAt    DateTime?
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

@@ -22,6 +22,7 @@ export type { EmailAdapter } from './adapters/email';
 export { createConsoleEmailAdapter, createNoopEmailAdapter } from './adapters/email';
 
 export type {
+  AuthMagicLink,
   AuthOTP,
   AuthPasswordReset,
   AuthSession,
@@ -35,6 +36,8 @@ export type {
 export { createPrismaAdapter } from './adapters/prismaAdapter';
 
 export { detectBrowser, isMobileDevice, isNativeApp } from './utilities/browser';
+export type { CreateMagicLinkParams, CreateMagicLinkResult } from './utilities/magicLink';
+export { createMagicLink } from './utilities/magicLink';
 export {
   clearAuthCookie,
   clearAuthCookies,
