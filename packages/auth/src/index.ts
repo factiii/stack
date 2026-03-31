@@ -4,7 +4,8 @@ export type { ClientCookiePayload, CookieSettings } from './types';
 export type { AuthConfig, AuthFeatures, SchemaExtensions, TokenSettings } from './types/config';
 export type { ResolvedAuthConfig } from './utilities/config';
 export type { AuthHooks } from './types/hooks';
-export type { TrpcContext } from './types/trpc';
+export type { TrpcBuilder, TrpcContext } from './types/trpc';
+export type { CreateHTTPContextOptions } from '@trpc/server/adapters/standalone';
 export {
   createAuthConfig,
   defaultAuthConfig,

@@ -326,14 +326,15 @@ async function autoSetupSshKey(
     }
   }
 
-  // Fix remote permissions
+  // Fix remote permissions using the key we just copied (avoid extra password prompt)
   try {
     spawnSync('ssh', [
+      '-i', keyPath,
       '-o', 'StrictHostKeyChecking=no',
       '-o', 'ConnectTimeout=5',
       user + '@' + host,
       'chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys',
-    ], { stdio: 'inherit', timeout: 15000 });
+    ], { encoding: 'utf8', stdio: 'pipe', timeout: 15000 });
   } catch { /* best effort */ }
 
   // Verify key auth
@@ -411,6 +412,12 @@ async function promptAndValidatePassword(
       stdio: 'pipe',
       timeout: 15000,
     });
+
+    if (testResult.status === 5) {
+      // sshpass exit code 5 = wrong password
+      console.log('   [!] Incorrect password.');
+      return null;
+    }
 
     if (testResult.status !== 0) {
       // sshpass failed — likely keyboard-interactive auth (Mac servers)
@@ -492,16 +499,18 @@ async function promptAndValidatePassword(
         return await storePasswordAndReturn(password, stage, config, rootDir);
       }
 
-      // Step 2.5: Fix remote permissions (common issue on Mac servers)
+      // Step 2.5: Fix remote permissions using the key we just copied (avoid extra password prompt)
       console.log('   Fixing remote SSH permissions...');
       try {
         spawnSync('ssh', [
+          '-i', keyPath,
           '-o', 'StrictHostKeyChecking=no',
           '-o', 'ConnectTimeout=5',
           user + '@' + host,
           'chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys',
         ], {
-          stdio: 'inherit',
+          encoding: 'utf8',
+          stdio: 'pipe',
           timeout: 15000,
         });
       } catch { /* best effort */ }
@@ -882,47 +891,63 @@ export async function sshRemoteFactiiiCommand(
       if (!password) {
         password = await promptAndValidatePassword(stage, host, user, config, rootDir);
       }
-      if (!password) {
+
+      // promptAndValidatePassword may have set up an SSH key — check before falling back to sshpass
+      const candidateKey1 = path.join(os.homedir(), '.ssh', stage + '_deploy_key');
+      if (fs.existsSync(candidateKey1)) {
+        const kv = spawnSync('ssh', [
+          '-i', candidateKey1, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ConnectTimeout=5', user + '@' + host, 'echo ok',
+        ], { encoding: 'utf8', stdio: 'pipe', timeout: 10000 });
+        if (kv.status === 0) {
+          resolvedKeyPath = candidateKey1;
+        }
+      }
+
+      // If we now have a key, skip sshpass and fall through to Step 3
+      if (!resolvedKeyPath) {
+        if (!password) {
+          return {
+            success: false,
+            stdout: '',
+            stderr: 'No SSH key for ' + stage + '. For EC2: provide the .pem file from AWS Console.',
+          };
+        }
+        console.log('   SSH (password): ' + user + '@' + host + ' → npx stack ' + command);
+        const pwStart = Date.now();
+
+        let pwResult;
+        if (process.platform === 'win32') {
+          // Windows: no sshpass — use interactive SSH so user types password
+          console.log('   You will be prompted for the password by SSH:');
+          console.log('');
+          pwResult = spawnSync('ssh', [
+            '-tt',
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'ConnectTimeout=10',
+            '-o', 'ServerAliveInterval=60',
+            '-o', 'ServerAliveCountMax=5',
+            user + '@' + host,
+            pwRemoteCommand,
+          ], { encoding: 'utf8', stdio: 'inherit', timeout: 600000 });
+        } else {
+          pwResult = spawnSync('sshpass', [
+            '-p', password, 'ssh', '-tt',
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'ConnectTimeout=10',
+            '-o', 'ServerAliveInterval=60',
+            '-o', 'ServerAliveCountMax=5',
+            user + '@' + host,
+            pwRemoteCommand,
+          ], { encoding: 'utf8', stdio: 'inherit', timeout: 600000 });
+        }
+        console.log('   SSH completed in ' + Math.floor((Date.now() - pwStart) / 1000) + 's');
         return {
-          success: false,
+          success: pwResult.status === 0,
           stdout: '',
-          stderr: 'No SSH key for ' + stage + '. For EC2: provide the .pem file from AWS Console.',
+          stderr: pwResult.status !== 0 ? 'SSH command exited with code ' + pwResult.status : '',
         };
       }
-      console.log('   SSH (password): ' + user + '@' + host + ' → npx stack ' + command);
-      const pwStart = Date.now();
-
-      let pwResult;
-      if (process.platform === 'win32') {
-        // Windows: no sshpass — use interactive SSH so user types password
-        console.log('   You will be prompted for the password by SSH:');
-        console.log('');
-        pwResult = spawnSync('ssh', [
-          '-tt',
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'ConnectTimeout=10',
-          '-o', 'ServerAliveInterval=60',
-          '-o', 'ServerAliveCountMax=5',
-          user + '@' + host,
-          pwRemoteCommand,
-        ], { encoding: 'utf8', stdio: 'inherit', timeout: 600000 });
-      } else {
-        pwResult = spawnSync('sshpass', [
-          '-p', password, 'ssh', '-tt',
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'ConnectTimeout=10',
-          '-o', 'ServerAliveInterval=60',
-          '-o', 'ServerAliveCountMax=5',
-          user + '@' + host,
-          pwRemoteCommand,
-        ], { encoding: 'utf8', stdio: 'inherit', timeout: 600000 });
-      }
-      console.log('   SSH completed in ' + Math.floor((Date.now() - pwStart) / 1000) + 's');
-      return {
-        success: pwResult.status === 0,
-        stdout: '',
-        stderr: pwResult.status !== 0 ? 'SSH command exited with code ' + pwResult.status : '',
-      };
     }
   }
 
@@ -1170,6 +1195,33 @@ export async function sshRemoteFactiiiCommand(
     let password = getSshPasswordFromVault(stage, config, rootDir);
     if (!password) {
       password = await promptAndValidatePassword(stage, host, user, config, rootDir);
+    }
+
+    // promptAndValidatePassword may have set up an SSH key — use it directly instead of sshpass
+    const candidateKey2 = path.join(os.homedir(), '.ssh', stage + '_deploy_key');
+    if (fs.existsSync(candidateKey2)) {
+      const kv2 = spawnSync('ssh', [
+        '-i', candidateKey2, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
+        '-o', 'ConnectTimeout=5', user + '@' + host, 'echo ok',
+      ], { encoding: 'utf8', stdio: 'pipe', timeout: 10000 });
+      if (kv2.status === 0) {
+        console.log('   [OK] Using SSH key set up during password auth');
+        const ksStart = Date.now();
+        const ksResult = spawnSync('ssh', [
+          '-tt', '-i', candidateKey2,
+          '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ConnectTimeout=10',
+          '-o', 'ServerAliveInterval=60',
+          '-o', 'ServerAliveCountMax=5',
+          user + '@' + host, remoteCommand,
+        ], { encoding: 'utf8', stdio: 'inherit', timeout: 600000 });
+        console.log('   SSH completed in ' + Math.floor((Date.now() - ksStart) / 1000) + 's');
+        return {
+          success: ksResult.status === 0,
+          stdout: '',
+          stderr: ksResult.status !== 0 ? 'SSH command exited with code ' + ksResult.status : '',
+        };
+      }
     }
 
     if (password) {
