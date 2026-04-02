@@ -56,9 +56,7 @@ class AuthRouterFactory<TExtensions extends SchemaExtensions = {}> {
     );
     const twoFaRoutes = new TwoFaProcedureFactory(this.config, this.procedure, this.authProcedure);
 
-    const magicLinkRoutes = this.config.features.magicLink
-      ? new MagicLinkProcedureFactory(this.config, this.procedure).createMagicLinkProcedures()
-      : {};
+    const magicLinkRoutes = new MagicLinkProcedureFactory(this.config, this.procedure).createMagicLinkProcedures();
 
     return this.t.router({
       ...baseRoutes.createBaseProcedures(this.schemas),
