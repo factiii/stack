@@ -4,11 +4,43 @@
  * Manages authentication secrets in Ansible Vault:
  * - JWT_SECRET: auto-generated 256-bit random key
  * - OAuth keys: prompted from user (Google, Apple)
+ *
+ * Secret names are sourced from @factiii/auth's stack-plugin contract
+ * to avoid hardcoded strings drifting out of sync.
  */
 
 import * as crypto from 'crypto';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { getDefaultVaultPath } from '../../../../utils/config-helpers.js';
+
+/**
+ * Load secret name constants from @factiii/auth's stack-plugin contract.
+ * Falls back to hardcoded values if auth is not installed.
+ */
+function loadAuthSecretNames() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const contract = require('@factiii/auth/stack-plugin');
+    return {
+      requiredEnvVars: [...contract.AUTH_REQUIRED_ENV_VARS] as string[],
+      oauthEnvVars: {
+        google: [...contract.AUTH_OAUTH_ENV_VARS.google] as string[],
+        apple: [...contract.AUTH_OAUTH_ENV_VARS.apple] as string[],
+      },
+    };
+  } catch {
+    // Fallback if @factiii/auth not installed
+    return {
+      requiredEnvVars: ['JWT_SECRET'],
+      oauthEnvVars: {
+        google: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
+        apple: ['APPLE_CLIENT_ID'],
+      },
+    };
+  }
+}
+
+const authSecrets = loadAuthSecretNames();
 
 /**
  * Get auth config from FactiiiConfig (handles undefined/null)
@@ -48,16 +80,21 @@ async function getVault(config: FactiiiConfig, rootDir: string) {
   });
 }
 
+const JWT_SECRET = authSecrets.requiredEnvVars[0] ?? 'JWT_SECRET';
+const GOOGLE_CLIENT_ID = authSecrets.oauthEnvVars.google[0] ?? 'GOOGLE_CLIENT_ID';
+const GOOGLE_CLIENT_SECRET = authSecrets.oauthEnvVars.google[1] ?? 'GOOGLE_CLIENT_SECRET';
+const APPLE_CLIENT_ID = authSecrets.oauthEnvVars.apple[0] ?? 'APPLE_CLIENT_ID';
+
 export const secretsFixes: Fix[] = [
   {
     id: 'auth-jwt-secret-missing',
     stage: 'secrets',
     severity: 'critical',
-    description: 'JWT_SECRET not found in Ansible Vault (required for auth)',
+    description: JWT_SECRET + ' not found in Ansible Vault (required for auth)',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       try {
         const vault = await getVault(config, rootDir);
-        const secret = await vault.getSecret('JWT_SECRET');
+        const secret = await vault.getSecret(JWT_SECRET);
         return !secret;
       } catch {
         return false; // Vault not available, skip
@@ -69,35 +106,35 @@ export const secretsFixes: Fix[] = [
 
         // Auto-generate a cryptographically secure 256-bit secret
         const jwtSecret = crypto.randomBytes(32).toString('hex');
-        const result = await vault.setSecret('JWT_SECRET', jwtSecret);
+        const result = await vault.setSecret(JWT_SECRET, jwtSecret);
 
         if (result.success) {
-          console.log('   [OK] Generated and stored JWT_SECRET in Ansible Vault');
+          console.log('   [OK] Generated and stored ' + JWT_SECRET + ' in Ansible Vault');
           console.log('   (256-bit random key, no manual input needed)');
           return true;
         }
 
-        console.log('   Failed to store JWT_SECRET in vault');
+        console.log('   Failed to store ' + JWT_SECRET + ' in vault');
         return false;
       } catch (e) {
         console.log('   Error: ' + (e instanceof Error ? e.message : String(e)));
         return false;
       }
     },
-    manualFix: 'Generate and store JWT secret: npx stack deploy --secrets set JWT_SECRET',
+    manualFix: 'Generate and store JWT secret: npx stack deploy --secrets set ' + JWT_SECRET,
   },
 
   {
     id: 'auth-oauth-google-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: 'Google OAuth credentials not in vault (GOOGLE_CLIENT_ID)',
+    description: 'Google OAuth credentials not in vault (' + GOOGLE_CLIENT_ID + ')',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       if (!isOAuthEnabled(config, 'google')) return false;
 
       try {
         const vault = await getVault(config, rootDir);
-        const clientId = await vault.getSecret('GOOGLE_CLIENT_ID');
+        const clientId = await vault.getSecret(GOOGLE_CLIENT_ID);
         return !clientId;
       } catch {
         return false;
@@ -113,12 +150,12 @@ export const secretsFixes: Fix[] = [
         console.log('   Get credentials from: https://console.cloud.google.com/apis/credentials');
         console.log('');
 
-        const clientId = await promptForSecret('GOOGLE_CLIENT_ID', config);
-        const r1 = await vault.setSecret('GOOGLE_CLIENT_ID', clientId);
+        const clientId = await promptForSecret(GOOGLE_CLIENT_ID, config);
+        const r1 = await vault.setSecret(GOOGLE_CLIENT_ID, clientId);
         if (!r1.success) return false;
 
-        const clientSecret = await promptForSecret('GOOGLE_CLIENT_SECRET', config);
-        const r2 = await vault.setSecret('GOOGLE_CLIENT_SECRET', clientSecret);
+        const clientSecret = await promptForSecret(GOOGLE_CLIENT_SECRET, config);
+        const r2 = await vault.setSecret(GOOGLE_CLIENT_SECRET, clientSecret);
         if (!r2.success) return false;
 
         console.log('   [OK] Stored Google OAuth credentials in vault');
@@ -129,8 +166,8 @@ export const secretsFixes: Fix[] = [
     },
     manualFix:
       'Store Google OAuth credentials:\n' +
-      '      npx stack deploy --secrets set GOOGLE_CLIENT_ID\n' +
-      '      npx stack deploy --secrets set GOOGLE_CLIENT_SECRET\n' +
+      '      npx stack deploy --secrets set ' + GOOGLE_CLIENT_ID + '\n' +
+      '      npx stack deploy --secrets set ' + GOOGLE_CLIENT_SECRET + '\n' +
       '      Get from: https://console.cloud.google.com/apis/credentials',
   },
 
@@ -138,13 +175,13 @@ export const secretsFixes: Fix[] = [
     id: 'auth-oauth-apple-missing',
     stage: 'secrets',
     severity: 'warning',
-    description: 'Apple OAuth credentials not in vault (APPLE_CLIENT_ID)',
+    description: 'Apple OAuth credentials not in vault (' + APPLE_CLIENT_ID + ')',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       if (!isOAuthEnabled(config, 'apple')) return false;
 
       try {
         const vault = await getVault(config, rootDir);
-        const clientId = await vault.getSecret('APPLE_CLIENT_ID');
+        const clientId = await vault.getSecret(APPLE_CLIENT_ID);
         return !clientId;
       } catch {
         return false;
@@ -160,8 +197,8 @@ export const secretsFixes: Fix[] = [
         console.log('   Get credentials from: https://developer.apple.com/account/resources/identifiers');
         console.log('');
 
-        const clientId = await promptForSecret('APPLE_CLIENT_ID', config);
-        const r1 = await vault.setSecret('APPLE_CLIENT_ID', clientId);
+        const clientId = await promptForSecret(APPLE_CLIENT_ID, config);
+        const r1 = await vault.setSecret(APPLE_CLIENT_ID, clientId);
         if (!r1.success) return false;
 
         console.log('   [OK] Stored Apple OAuth credentials in vault');
@@ -172,7 +209,7 @@ export const secretsFixes: Fix[] = [
     },
     manualFix:
       'Store Apple OAuth credentials:\n' +
-      '      npx stack deploy --secrets set APPLE_CLIENT_ID\n' +
+      '      npx stack deploy --secrets set ' + APPLE_CLIENT_ID + '\n' +
       '      Get from: https://developer.apple.com/account/resources/identifiers',
   },
 ];

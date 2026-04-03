@@ -40,6 +40,8 @@ export interface AuthFeatures {
   passwordReset?: boolean;
   /** Enable OTP-based login */
   otpLogin?: boolean;
+  /** Enable magic link authentication */
+  magicLink?: boolean;
 }
 
 export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
@@ -122,4 +124,16 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
    * Custom fields are then available in hooks with proper typing
    */
   schemaExtensions?: TExtensions;
+
+  /**
+   * Magic link configuration (required when features.magicLink is enabled)
+   */
+  magicLink?: {
+    /** Base URL for magic link verification (e.g., "https://example.com") */
+    siteUrl: string;
+    /** Path for the verification page (default: "/magic-link") */
+    verifyPath?: string;
+    /** Default expiry in ms (default: 7 days) */
+    defaultExpiryMs?: number;
+  };
 }
