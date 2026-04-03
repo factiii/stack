@@ -1,4 +1,4 @@
-# @factiii/auth
+# @factiii/stack
 
 ## 0.7.1
 
@@ -10,14 +10,5 @@
   - Restructure monorepo — move stack to packages/stack, align versions to 0.7.0
   - Prevent repeated SSH password prompts during scan
 
-## 0.6.3
-
-### Patch Changes
-
-- b4e0eff: Added client cookie and made auth cooke strict
-
-## 0.6.2
-
-### Patch Changes
-
-- f57ab54: Update from strict to lac cookie
+- Updated dependencies [3abe40e]
+  - @factiii/auth@0.7.1
