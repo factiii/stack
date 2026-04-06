@@ -73,6 +73,7 @@ import { domainFixes } from './scanfix/domain.js';
 import { portConventionFixes } from './scanfix/port-convention.js';
 import { startShFixes } from './scanfix/start-sh.js';
 import { dbSeedFixes } from './scanfix/db-seed.js';
+import { sshVerifyFixes } from './scanfix/ssh-verify.js';
 
 // Import AWS scanfix arrays (AWS provisioning runs as part of factiii pipeline)
 import { configFixes as awsConfigFixes } from '../aws/scanfix/config.js';
@@ -249,37 +250,6 @@ class FactiiiPipeline {
           }
         }
 
-        // No SSH key — check if vault has a password for this stage (sshpass fallback)
-        if (config.ansible?.vault_path) {
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            const yamlLib = require('js-yaml');
-            const vaultPath = config.ansible.vault_path;
-            const resolvedPath = path.isAbsolute(vaultPath)
-              ? vaultPath
-              : path.join(process.cwd(), vaultPath);
-
-            if (fs.existsSync(resolvedPath)) {
-              let cmd = 'ansible-vault view "' + resolvedPath + '"';
-              if (config.ansible.vault_password_file) {
-                const osLib = require('os');
-                const pwFile = config.ansible.vault_password_file.replace(/^~/, osLib.homedir());
-                cmd += ' --vault-password-file "' + pwFile + '"';
-              }
-              // eslint-disable-next-line @typescript-eslint/no-require-imports
-              const { execSync: execSyncImport } = require('child_process');
-              const content = execSyncImport(cmd, { encoding: 'utf8', stdio: 'pipe' });
-              const parsed = yamlLib.load(content) as Record<string, unknown>;
-              const secretName = stage.toUpperCase() + '_SSH_PASSWORD';
-              if (parsed && typeof parsed === 'object' && typeof parsed[secretName] === 'string') {
-                return { reachable: true, via: 'ssh' };
-              }
-            }
-          } catch {
-            // Vault read failed — continue to other checks
-          }
-        }
-
         // If AWS config exists, allow local provisioning (no server needed yet)
         // AWS scanfixes run on the dev machine to provision infrastructure
         {
@@ -295,7 +265,8 @@ class FactiiiPipeline {
           }
         }
 
-        // No SSH key, no password, no AWS — cannot reach this stage
+        // No SSH key, no AWS — cannot reach this stage
+        // If vault has a key, run: npx stack fix --secrets to extract it to disk
         {
           const vaultName = stage === 'staging' ? 'STAGING_SSH' : 'PROD_SSH';
           return {
@@ -326,6 +297,7 @@ class FactiiiPipeline {
     ...githubCliFixes,
     ...workflowFixes,
     ...secretsFixes,
+    ...sshVerifyFixes,
     ...envFileFixes,
     ...portConventionFixes,
     ...startShFixes,
@@ -787,15 +759,66 @@ class FactiiiPipeline {
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'caution',
+      localOnly: true,
       execute: async (stage, _options, config, _rootDir): Promise<CommandResult> => {
         const serviceName = config.name + '-' + stage;
 
-        try {
-          execSync('docker exec -it ' + serviceName + ' /bin/sh', { stdio: 'inherit' });
-          return { success: true };
-        } catch (error) {
-          return { success: false, error: String(error) };
+        // On server: run docker exec directly
+        if (process.env.GITHUB_ACTIONS || process.env.FACTIII_ON_SERVER) {
+          try {
+            console.log('Type "exit" or press Ctrl+D to close the shell.');
+            console.log('');
+            execSync('docker exec -it ' + serviceName + ' /bin/sh', { stdio: 'inherit' });
+            return { success: true };
+          } catch (error) {
+            return { success: false, error: String(error) };
+          }
         }
+
+        // On dev machine: SSH to server and run docker exec
+        const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+        const environments = getEnvironmentsForStage(config, stage);
+        const envNames = Object.keys(environments);
+
+        if (envNames.length === 0) {
+          return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
+        }
+
+        const envName = envNames[0] as string;
+        const envConfig = environments[envName] as (typeof environments)[string];
+        const host = envConfig.domain;
+        const user = envConfig.ssh_user ?? 'ubuntu';
+
+        if (!host) {
+          return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
+        }
+
+        const keyPath = findSshKeyForStage(stage, config.name);
+        if (!keyPath) {
+          return { success: false, error: 'No SSH key found for ' + stage + '. Run: npx stack fix --secrets' };
+        }
+
+        const sshArgs = [
+          '-tt',
+          '-i', keyPath,
+          '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ServerAliveInterval=60',
+          '-o', 'ServerAliveCountMax=5',
+          user + '@' + host,
+          'docker exec -it ' + serviceName + ' /bin/sh',
+        ];
+
+        console.log('Connecting to ' + stage + ' container (' + user + '@' + host + ')...');
+        console.log('Type "exit" or press Ctrl+D to close the shell.');
+        console.log('');
+
+        const result = spawnSync('ssh', sshArgs, { stdio: 'inherit' });
+
+        if (result.status !== 0 && result.status !== null) {
+          return { success: false, error: 'SSH exited with code ' + result.status };
+        }
+
+        return { success: true };
       },
     },
     {

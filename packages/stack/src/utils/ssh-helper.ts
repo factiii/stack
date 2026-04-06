@@ -631,7 +631,8 @@ export async function sshRemoteFactiiiCommand(
   const repoName = config.name || 'app';
   const keyPath = findSshKeyForStage(stage, repoName);
 
-  // Step 1: If no key on disk, try extracting PROD_SSH/STAGING_SSH from vault
+  // Step 1: Fallback vault extraction (primary path is ssh-verify scanfix during scan/fix)
+  // This handles the case where someone runs a command without scanning first
   let resolvedKeyPath = keyPath;
   if (!resolvedKeyPath && config.ansible?.vault_path) {
     try {
