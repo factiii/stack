@@ -1,5 +1,13 @@
 # @factiii/stack
 
+## 0.7.2
+
+### Patch Changes
+
+- 774979b: fix: 2FA recovery now accepts email or username
+- Updated dependencies [774979b]
+  - @factiii/auth@0.7.2
+
 ## 0.7.1
 
 ### Patch Changes
