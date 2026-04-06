@@ -16,11 +16,16 @@
 | Config files (stack.yml, .env, vault) | Yes | No |
 | SSH keys, secrets | Yes | No |
 | AWS provisioning (EC2, RDS, VPC) | Yes | No |
+| GitHub workflow generation | Yes | No |
 | nginx.conf, docker-compose.yml | No | Yes |
 | SSL certificates (certbot) | No | Yes |
 | Container build + restart | No | Yes |
 
 Rule: `fix` handles config/secrets/infrastructure. `deploy` handles deployment artifacts.
+
+## Workflow Versioning
+
+Generated GitHub workflow files (`stack-ci.yml`, `stack-cicd-prod.yml`) are versioned independently from the `@factiii/stack` package via `WORKFLOW_VERSION` in `src/plugins/pipelines/factiii/utils/workflows.ts`. The outdated-workflows scanner compares this constant against the version comment in existing workflow files. Only bump `WORKFLOW_VERSION` when the workflow templates change — not on every package release.
 
 ## Multi-Pass Fix
 

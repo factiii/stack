@@ -59,7 +59,7 @@ interface EnvironmentConfig {
 ## Plugin Interfaces
 ```
 PluginStatic          — Base static (id, name, category, version, fixes, shouldLoad)
-PipelinePluginStatic  — + canReach(), commands?, generateWorkflows?
+PipelinePluginStatic  — + canReach(), commands?, generateWorkflows? (uses WORKFLOW_VERSION, not package version)
 ServerPluginStatic    — + os, packageManager, serviceManager
 PipelinePluginInstance — deployStage(), scanStage(), fixStage()
 ServerPluginInstance   — ensureServerReady()
