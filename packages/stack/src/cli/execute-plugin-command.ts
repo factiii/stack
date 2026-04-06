@@ -188,6 +188,24 @@ export async function executePluginCommand(
     console.log('');
   }
 
+  // localOnly commands always execute on the dev machine (e.g., interactive SSH)
+  if (command.localOnly) {
+    console.log('');
+    try {
+      const result: CommandResult = await command.execute(stage, options, config, rootDir);
+      if (result.success) {
+        if (result.message) console.log(result.message);
+      } else {
+        console.error('Command failed: ' + (result.error ?? 'Unknown error'));
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error('Command failed: ' + (error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
+    return;
+  }
+
   // Check reachability (same pattern as deploy)
   const reach = pipelinePlugin.canReach(stage, config);
 

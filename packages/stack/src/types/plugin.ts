@@ -87,6 +87,8 @@ export interface PluginCommand {
   stages?: Stage[];
   /** Safety level on prod - 'destructive' requires --force */
   prodSafety: ProdSafetyLevel;
+  /** If true, always execute locally on the dev machine (skip SSH/workflow routing) */
+  localOnly?: boolean;
   /** Command-specific options */
   options?: CommandOption[];
   /** Execute the command */

@@ -305,6 +305,7 @@ program.addHelpText('after', '\n' +
   'OPERATIONS — npx stack ops <command> --<stage>\n' +
   '  logs --staging [-f] [-n 50]        View container logs (-f to follow, -n for line count)\n' +
   '  restart --prod [-s service]        Restart containers without rebuilding images\n' +
+  '  ssh --staging                      SSH into the server host\n' +
   '  shell --staging                    Open /bin/sh inside the app container\n' +
   '  status --staging                   Show docker compose container status\n' +
   '  change-vault-password              Change the Ansible Vault encryption password\n' +

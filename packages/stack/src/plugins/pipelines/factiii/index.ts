@@ -799,6 +799,57 @@ class FactiiiPipeline {
       },
     },
     {
+      name: 'ssh',
+      description: 'Open an interactive SSH session to the server host',
+      category: 'ops',
+      stages: ['staging', 'prod'],
+      prodSafety: 'caution',
+      localOnly: true,
+      execute: async (stage, _options, config, _rootDir): Promise<CommandResult> => {
+        const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+        const environments = getEnvironmentsForStage(config, stage);
+        const envNames = Object.keys(environments);
+
+        if (envNames.length === 0) {
+          return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
+        }
+
+        const envName = envNames[0] as string;
+        const envConfig = environments[envName] as (typeof environments)[string];
+        const host = envConfig.domain;
+        const user = envConfig.ssh_user ?? 'ubuntu';
+
+        if (!host) {
+          return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
+        }
+
+        const keyPath = findSshKeyForStage(stage, config.name);
+        const sshArgs: string[] = [];
+
+        if (keyPath) {
+          sshArgs.push('-i', keyPath);
+        }
+
+        sshArgs.push(
+          '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ServerAliveInterval=60',
+          '-o', 'ServerAliveCountMax=5',
+          user + '@' + host,
+        );
+
+        console.log('Connecting to ' + stage + ' (' + user + '@' + host + ')...');
+        console.log('');
+
+        const result = spawnSync('ssh', sshArgs, { stdio: 'inherit' });
+
+        if (result.status !== 0 && result.status !== null) {
+          return { success: false, error: 'SSH exited with code ' + result.status };
+        }
+
+        return { success: true };
+      },
+    },
+    {
       name: 'status',
       description: 'Show running/stopped status of all Docker containers',
       category: 'ops',
