@@ -1,11 +1,19 @@
 import { TRPCError } from '@trpc/server';
 
+import type { ClientCookiePayload } from '../types';
 import { type AuthConfig } from '../types/config';
 import { type TrpcBuilder, type TrpcContext } from '../types/trpc';
 import type { DatabaseAdapter } from '../adapters/database';
 import { createPrismaAdapter } from '../adapters/prismaAdapter';
 import { defaultCookieSettings, defaultStorageKeys, defaultTokenSettings } from '../utilities/config';
-import { clearAuthCookie, parseAuthCookie, setAuthCookie } from '../utilities/cookies';
+import {
+  clearAuthCookies,
+  parseAuthCookie,
+  parseClientCookie,
+  parseClientCookiePayload,
+  setAuthCookies,
+  setClientCookie,
+} from '../utilities/cookies';
 import { createAuthToken } from '../utilities/jwt';
 import { isTokenExpiredError, isTokenInvalidError, verifyAuthToken } from '../utilities/jwt';
 
@@ -26,7 +34,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
     errorStack?: string | null,
     path?: string
   ) => {
-    clearAuthCookie(ctx.res, cookieSettings, storageKeys);
+    clearAuthCookies(ctx.res, cookieSettings, storageKeys);
 
     // Log session revocations for security auditing
     if (config.hooks?.logError) {
@@ -110,11 +118,19 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
         // Find session in database
         const session = await database.session.findById(decodedToken.id);
 
-        if (!session) {
+        if (
+          !session ||
+          session.userId !== decodedToken.userId ||
+          (decodedToken.iat && decodedToken.iat < Math.floor(session.issuedAt.getTime() / 1000))
+        ) {
           await revokeSession(
             ctx,
             decodedToken.id,
-            'Session revoked: Session not found',
+            !session
+              ? 'Session revoked: Session not found'
+              : session.userId !== decodedToken.userId
+                ? 'Session revoked: Token userId mismatch'
+                : 'Session revoked: Token predates session',
             undefined,
             path
           );
@@ -202,7 +218,47 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
               { id: session.id, userId: session.userId, verifiedHumanAt: session.user.verifiedHumanAt },
               { secret: config.secrets.jwt, expiresIn: tokenSettings.jwtExpiry },
             );
-            setAuthCookie(ctx.res, freshToken, cookieSettings, storageKeys);
+
+            const clientPayload: ClientCookiePayload = {
+              userId: session.userId,
+              updatedAt: session.user.updatedAt.toISOString(),
+              ...(config.getClientCookiePayload
+                ? await config.getClientCookiePayload(session.userId)
+                : {}),
+            };
+
+            setAuthCookies(ctx.res, freshToken, clientPayload, config.secrets.jwt, cookieSettings, storageKeys);
+          }
+        }
+
+        // Check if client cookie is stale (updatedAt mismatch or missing)
+        if (storageKeys.clientToken) {
+          const rawClientCookie = parseClientCookie(ctx.headers.cookie, storageKeys);
+          let needsRefresh = !rawClientCookie;
+
+          if (rawClientCookie && !needsRefresh) {
+            const parsed = parseClientCookiePayload(rawClientCookie, config.secrets.jwt);
+            if (!parsed || !parsed.updatedAt) {
+              needsRefresh = true;
+            } else {
+              // Compare updatedAt timestamps — if they differ, re-issue
+              const cookieUpdatedAt = parsed.updatedAt;
+              const dbUpdatedAt = session.user.updatedAt.toISOString();
+              if (cookieUpdatedAt !== dbUpdatedAt) {
+                needsRefresh = true;
+              }
+            }
+          }
+
+          if (needsRefresh) {
+            const clientPayload: ClientCookiePayload = {
+              userId: session.userId,
+              updatedAt: session.user.updatedAt.toISOString(),
+              ...(config.getClientCookiePayload
+                ? await config.getClientCookiePayload(session.userId)
+                : {}),
+            };
+            setClientCookie(ctx.res, clientPayload, config.secrets.jwt, cookieSettings, storageKeys as { clientToken: string });
           }
         }
 

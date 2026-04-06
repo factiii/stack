@@ -1,9 +1,11 @@
 export type { AuthRouter } from './router';
 export { createAuthRouter } from './router';
+export type { ClientCookiePayload, CookieSettings } from './types';
 export type { AuthConfig, AuthFeatures, SchemaExtensions, TokenSettings } from './types/config';
 export type { ResolvedAuthConfig } from './utilities/config';
 export type { AuthHooks } from './types/hooks';
-export type { TrpcContext } from './types/trpc';
+export type { TrpcBuilder, TrpcContext } from './types/trpc';
+export type { CreateHTTPContextOptions } from '@trpc/server/adapters/standalone';
 export {
   createAuthConfig,
   defaultAuthConfig,
@@ -21,6 +23,7 @@ export type { EmailAdapter } from './adapters/email';
 export { createConsoleEmailAdapter, createNoopEmailAdapter } from './adapters/email';
 
 export type {
+  AuthMagicLink,
   AuthOTP,
   AuthPasswordReset,
   AuthSession,
@@ -34,11 +37,19 @@ export type {
 export { createPrismaAdapter } from './adapters/prismaAdapter';
 
 export { detectBrowser, isMobileDevice, isNativeApp } from './utilities/browser';
+export type { CreateMagicLinkParams, CreateMagicLinkResult } from './utilities/magicLink';
+export { createMagicLink } from './utilities/magicLink';
 export {
   clearAuthCookie,
+  clearAuthCookies,
   DEFAULT_STORAGE_KEYS,
   parseAuthCookie,
+  parseClientCookie,
+  parseClientCookiePayload,
   setAuthCookie,
+  setAuthCookies,
+  setClientCookie,
+  signClientCookie,
 } from './utilities/cookies';
 export {
   createAuthToken,
@@ -83,3 +94,13 @@ export {
   twoFaVerifySchema,
   verifyEmailSchema,
 } from './validators';
+
+export {
+  AUTH_REQUIRED_ENV_VARS,
+  AUTH_OAUTH_ENV_VARS,
+  AUTH_ALL_SECRET_NAMES,
+  AUTH_DEFAULT_FEATURES,
+  AUTH_CONFIG_SCHEMA,
+  AUTH_PRISMA_MODELS,
+  stackPlugin,
+} from './stack-plugin';

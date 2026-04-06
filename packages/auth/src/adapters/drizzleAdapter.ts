@@ -174,6 +174,7 @@ export function createDrizzleAdapter(
             user: {
               status: users.status,
               verifiedHumanAt: users.verifiedHumanAt,
+              updatedAt: users.updatedAt,
             },
           })
           .from(sessions)
@@ -202,7 +203,7 @@ export function createDrizzleAdapter(
 
       async updateLastUsed(
         id: number
-      ): Promise<AuthSession & { user: { verifiedHumanAt: Date | null } }> {
+      ): Promise<AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } }> {
         // Update session
         await db
           .update(sessions)
@@ -223,6 +224,7 @@ export function createDrizzleAdapter(
             deviceId: sessions.deviceId,
             user: {
               verifiedHumanAt: users.verifiedHumanAt,
+              updatedAt: users.updatedAt,
             },
           })
           .from(sessions)
@@ -230,7 +232,7 @@ export function createDrizzleAdapter(
           .where(eq(sessions.id, id))
           .limit(1);
 
-        return rows[0] as unknown as AuthSession & { user: { verifiedHumanAt: Date | null } };
+        return rows[0] as unknown as AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } };
       },
 
       async revoke(id: number): Promise<void> {

@@ -119,6 +119,12 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
   onOAuthLinked?: (userId: number, provider: 'GOOGLE' | 'APPLE') => Promise<void>;
 
   /**
+   * Called before creating a session from a magic link verification.
+   * Return extra data to include in the session record (e.g., instanceId).
+   */
+  onBeforeMagicLinkSession?: (userId: number) => Record<string, unknown> | Promise<Record<string, unknown>>;
+
+  /**
    * Custom validation for biometric verification
    * Return timeout in ms, or null to skip timeout enforcement
    */

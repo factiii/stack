@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/validators.ts', 'src/drizzle.ts'],
+  entry: ['src/index.ts', 'src/validators.ts', 'src/drizzle.ts', 'src/stack-plugin.ts'],
   format: ['esm', 'cjs'],
   dts: true,
   sourcemap: false,

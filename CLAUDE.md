@@ -1,14 +1,38 @@
-# @factiii/stack CLI - AI Rules
+# @factiii/stack Monorepo - AI Rules
 
 ## Hard Rules
 - NEVER run `npx stack` in this repo (test in app repos via `pnpm link`)
 - NEVER `git add/commit/push` without user approval
 - NEVER delete/modify existing code comments without asking
 - NEVER add a `Co-Authored-By` trailer to commits
-- ALWAYS check STANDARDS.md before modifying plugin/workflow/architecture code
+- ALWAYS check packages/stack/STANDARDS.md before modifying plugin/workflow/architecture code
 - WARN on standards violations before proceeding
 
-## Standards (from STANDARDS.md)
+## Monorepo Structure
+```
+/                           # Workspace root (private, not published)
+├── packages/
+│   ├── stack/              # @factiii/stack — CLI + infrastructure management
+│   │   ├── src/
+│   │   ├── bin/
+│   │   ├── test/
+│   │   ├── ansible/
+│   │   └── package.json
+│   └── auth/               # @factiii/auth — JWT, OAuth, 2FA, sessions
+│       ├── src/
+│       ├── bin/
+│       ├── tests/
+│       └── package.json
+├── tsconfig.base.json      # Shared TypeScript settings
+├── .changeset/             # Linked versioning for both packages
+└── .github/workflows/      # CI + release
+```
+
+**Build:** `pnpm build` (from root builds both; auth first since stack depends on it)
+**Test:** `pnpm test` (from root runs both test suites)
+**Filter:** `pnpm --filter @factiii/stack <cmd>` or `pnpm --filter @factiii/auth <cmd>`
+
+## Standards (from packages/stack/STANDARDS.md)
 1. **Thin workflows** - Only: trigger + secrets + SSH + CLI. No setup/clone/install/build/bash>5 lines. Exception: Node.js bootstrap.
 2. **Local-only scan/fix** - NO SSH in fix functions. NO `GITHUB_ACTIONS` checks in fix functions. Pipeline routes via `canReach()`.
 3. **Plugin structure** - 1000+ line plugins split into index.ts, scanfix/, environment files.
@@ -19,11 +43,11 @@
 8. **Server plugins** - Define OS commands, NOT deployment targets.
 
 ## Tech Stack
-Node.js + TypeScript, pnpm, Commander.js, YAML config (stack.yml/stackAuto.yml/stack.local.yml; legacy factiii.yml supported), Docker, GitHub Actions, AWS ECR, Ansible Vault, SSH direct deployment
+Node.js + TypeScript, pnpm workspaces, Commander.js, YAML config (stack.yml/stackAuto.yml/stack.local.yml; legacy factiii.yml supported), Docker, GitHub Actions, AWS ECR, Ansible Vault, SSH direct deployment
 
 ## Architecture
 
-**Plugin categories:** PIPELINES (factiii, aws) | SERVERS (mac, ubuntu, windows, amazon-linux) | FRAMEWORKS (expo, prisma-trpc) | ADDONS (server-mode, openclaw)
+**Plugin categories:** PIPELINES (factiii, aws) | SERVERS (mac, ubuntu, windows, amazon-linux) | FRAMEWORKS (expo, prisma-trpc) | ADDONS (server-mode, openclaw, auth)
 
 **Stages:** `--dev`, `--secrets`, `--staging`, `--prod` → pipeline returns `via:'local'`, `via:'ssh'`, `via:'workflow'`, or `reachable:false`
 
@@ -57,11 +81,11 @@ Node.js + TypeScript, pnpm, Commander.js, YAML config (stack.yml/stackAuto.yml/s
 - Dev account (dev + staging): `factiii-{project}-dev` user, `factiii-{project}-dev` S3 bucket
 - Prod account (prod only): `factiii-{project}-prod` user, `factiii-{project}` S3 bucket
 
-**Deployment flow:** See `.spec/flow.md` for 4-step 0-to-deployed process and fix vs deploy boundary.
+**Deployment flow:** See `packages/stack/.spec/flow.md` for 4-step 0-to-deployed process and fix vs deploy boundary.
 
-## Structure
+## Stack Package Structure
 ```
-src/
+packages/stack/src/
 ├── cli/                    # Command implementations (scan.ts, fix.ts, deploy.ts, secrets.ts, etc.)
 ├── generators/             # generate-compose.ts, generate-nginx.ts, generate-stack-auto.ts
 ├── plugins/
@@ -84,16 +108,16 @@ src/
 ├── types/                  # TypeScript type definitions
 └── constants/              # Config file paths, reserved keys
 ```
-Entry: `bin/stack` | Docs: STANDARDS.md, README.md
+Entry: `packages/stack/bin/stack` | Docs: packages/stack/STANDARDS.md, packages/stack/README.md
 
 ## Key Files
-- `src/plugins/pipelines/factiii/index.ts` - canReach(), deployStage(), fixes[], commands[]
-- `src/utils/ssh-helper.ts` - sshExec(), findSshKeyForStage(), sshRemoteFactiiiCommand()
-- `src/utils/ansible-vault-secrets.ts` - Vault encryption/decryption
-- `src/utils/config-helpers.ts` - extractEnvironments(), loadLocalConfig(), LocalConfig interface
-- `src/cli/scan.ts` - Two-phase bootstrap: detect missing config → run bootstrap fixes → re-scan
-- `src/plugins/pipelines/factiii/scanfix/bootstrap.ts` - Self-bootstrap scanfixes
-- `src/utils/generate-stack-yml.ts` - Auto-detects name, github_repo, frameworks
+- `packages/stack/src/plugins/pipelines/factiii/index.ts` - canReach(), deployStage(), fixes[], commands[]
+- `packages/stack/src/utils/ssh-helper.ts` - sshExec(), findSshKeyForStage(), sshRemoteFactiiiCommand()
+- `packages/stack/src/utils/ansible-vault-secrets.ts` - Vault encryption/decryption
+- `packages/stack/src/utils/config-helpers.ts` - extractEnvironments(), loadLocalConfig(), LocalConfig interface
+- `packages/stack/src/cli/scan.ts` - Two-phase bootstrap: detect missing config → run bootstrap fixes → re-scan
+- `packages/stack/src/plugins/pipelines/factiii/scanfix/bootstrap.ts` - Self-bootstrap scanfixes
+- `packages/stack/src/utils/generate-stack-yml.ts` - Auto-detects name, github_repo, frameworks
 
 ## Code Patterns
 - **File generation:** Check exists → compare content → skip if unchanged → write

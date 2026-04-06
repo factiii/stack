@@ -19,6 +19,7 @@ export interface AuthUser {
   emailVerificationStatus: string;
   otpForEmailVerification: string | null;
   isActive: boolean;
+  updatedAt: Date;
 }
 
 export interface AuthSession {
@@ -43,6 +44,13 @@ export interface AuthOTP {
 export interface AuthPasswordReset {
   id: string;
   createdAt: Date;
+  userId: number;
+}
+
+export interface AuthMagicLink {
+  id: string;
+  expiresAt: Date;
+  usedAt: Date | null;
   userId: number;
 }
 
@@ -71,7 +79,7 @@ export interface CreateSessionData {
 // ── Composite return types ───────────────────────────────────────────────────
 
 export type SessionWithUser = AuthSession & {
-  user: { status: string; verifiedHumanAt: Date | null };
+  user: { status: string; verifiedHumanAt: Date | null; updatedAt: Date };
 };
 
 export type SessionWithDevice = {
@@ -99,8 +107,8 @@ export interface DatabaseAdapter {
     findById(id: number): Promise<SessionWithUser | null>;
     create(data: CreateSessionData): Promise<AuthSession>;
     update(id: number, data: Partial<Pick<AuthSession, 'revokedAt' | 'lastUsed' | 'twoFaSecret' | 'deviceId'>>): Promise<AuthSession>;
-    /** Update lastUsed and return session with user's verifiedHumanAt. */
-    updateLastUsed(id: number): Promise<AuthSession & { user: { verifiedHumanAt: Date | null } }>;
+    /** Update lastUsed and return session with user's verifiedHumanAt and updatedAt. */
+    updateLastUsed(id: number): Promise<AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } }>;
     /** Set revokedAt on a single session. */
     revoke(id: number): Promise<void>;
     /** Find active (non-revoked) sessions for a user, optionally excluding one. */
@@ -143,5 +151,12 @@ export interface DatabaseAdapter {
 
   admin: {
     findByUserId(userId: number): Promise<{ ip: string } | null>;
+  };
+
+  /** Optional — required only when features.magicLink is enabled. */
+  magicLink?: {
+    findById(id: string): Promise<AuthMagicLink | null>;
+    create(data: { userId: number; expiresAt: Date }): Promise<AuthMagicLink>;
+    markUsed(id: string): Promise<AuthMagicLink>;
   };
 }

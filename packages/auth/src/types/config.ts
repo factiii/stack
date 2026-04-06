@@ -40,6 +40,8 @@ export interface AuthFeatures {
   passwordReset?: boolean;
   /** Enable OTP-based login */
   otpLogin?: boolean;
+  /** Enable magic link authentication */
+  magicLink?: boolean;
 }
 
 export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
@@ -105,7 +107,16 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
    */
   storageKeys?: {
     authToken: string;
+    /** Name for the optional non-httpOnly client cookie. Set to enable client cookie. */
+    clientToken?: string;
   };
+
+  /**
+   * Optional callback to produce extra fields for the client cookie.
+   * Called on login, register, refresh, and when authGuard detects stale updatedAt.
+   * Return value is merged into the client cookie payload alongside { userId, updatedAt }.
+   */
+  getClientCookiePayload?: (userId: number) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
   /**
    * Schema extensions for adding custom fields to auth inputs
@@ -113,4 +124,16 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
    * Custom fields are then available in hooks with proper typing
    */
   schemaExtensions?: TExtensions;
+
+  /**
+   * Magic link configuration (required when features.magicLink is enabled)
+   */
+  magicLink?: {
+    /** Base URL for magic link verification (e.g., "https://example.com") */
+    siteUrl: string;
+    /** Path for the verification page (default: "/magic-link") */
+    verifyPath?: string;
+    /** Default expiry in ms (default: 7 days) */
+    defaultExpiryMs?: number;
+  };
 }

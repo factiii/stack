@@ -176,14 +176,14 @@ export interface AuthSchemas {
 }
 
 /**
- * Compute merged ZodObject type.
+ * Compute merged AnyZodObject type.
  * When TExt is defined, produces a schema with both base and extension shapes.
  * When TExt is undefined, produces the base schema.
  */
 type MergedSchema<TBase extends AnyZodObject, TExt extends AnyZodObject | undefined> = [
   TExt,
 ] extends [AnyZodObject]
-  ? z.ZodObject<TBase['shape'] & TExt['shape'], 'strip', z.ZodTypeAny>
+  ? z.ZodObject<TBase['shape'] & TExt['shape']>
   : TBase;
 
 /** Result type from createSchemas - preserves concrete schema types */
