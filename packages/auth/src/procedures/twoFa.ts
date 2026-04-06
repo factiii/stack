@@ -182,7 +182,7 @@ export class TwoFaProcedureFactory {
       this.checkConfig();
       const { username, password } = input;
 
-      const user = await this.config.database.user.findByUsernameInsensitive(username);
+      const user = await this.config.database.user.findByEmailOrUsernameInsensitive(username);
 
       if (!user || !user.twoFaEnabled) {
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid credentials.' });
@@ -218,7 +218,7 @@ export class TwoFaProcedureFactory {
       this.checkConfig();
       const { code, username } = input;
 
-      const user = await this.config.database.user.findByUsernameInsensitive(username);
+      const user = await this.config.database.user.findByEmailOrUsernameInsensitive(username);
 
       if (!user) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
