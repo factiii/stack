@@ -40,9 +40,20 @@ prod:
 Auto-populated by generators. User can override with `OVERRIDE` pattern. Contains detected values: `ssh_user`, `dockerfile`, `package_manager`, `node_version`, `pnpm_version`, `prisma_schema`, `prisma_version`, AWS resource IDs.
 
 ## stack.local.yml
-Per-developer. Key fields:
+Per-developer, gitignored. Key fields:
 - `dev_os`: mac | ubuntu | windows (auto-detected)
 - `dev_only`: true (default) — set false to unlock staging/prod stages
+- `claude_skills`: false (default) — opt-in for **host-machine fixes** that
+  write Claude Code skills into `~/.claude/skills/`. Off by default because
+  `~/.claude/` is the developer's personal Claude config, not project state.
+  When true, `npx stack fix --dev` installs factiii Claude Code skills (e.g.
+  `prod-check`). Hand-edited skill files are never overwritten — delete the
+  file to refresh. See STANDARDS.md "Host-Machine Fixes" for the rule and
+  the pattern any new host-touching scanfix must follow.
+
+`init` writes `claude_skills` as a commented stub in newly created
+`stack.local.yml` files (and appends the stub to existing files that lack
+it) so the option is discoverable but off until the dev opts in.
 
 ## Key Utilities
 ```

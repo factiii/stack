@@ -38,6 +38,7 @@ export const RESERVED_CONFIG_KEYS = [
   'openclaw',  // OpenClaw addon config (not an environment)
   'auth',      // Auth addon config (not an environment)
   'aws',       // AWS global config (not an environment)
+  'claude_skills', // Per-dev opt-in for host-machine Claude Code skill fixes (stack.local.yml)
 ] as const;
 
 /**
@@ -193,6 +194,10 @@ export interface LocalConfig {
   openclaw?: boolean | {
     model?: string;
   };
+  // Opt-in: install Claude Code skills into ~/.claude/skills/ during `npx stack fix --dev`.
+  // Off by default because ~/.claude/ is the developer's personal Claude config, not project state.
+  // See STANDARDS.md "Host-Machine Fixes" for the rationale.
+  claude_skills?: boolean;
 }
 
 /**

@@ -53,7 +53,15 @@ export async function init(options: InitOptions = {}): Promise<void> {
       '# Set to false to unlock staging/prod stages:\n' +
       '#   npx stack scan --staging   (auto-unlocks on first run)\n' +
       '#   or manually change to: dev_only: false\n' +
-      'dev_only: true\n';
+      'dev_only: true\n\n' +
+      '# Claude Code skills (opt-in, default: off)\n' +
+      '# When true, `npx stack fix --dev` installs factiii Claude Code skills\n' +
+      '# (e.g. prod-check) into ~/.claude/skills/ on this machine. Off by default\n' +
+      '# because ~/.claude/ is your personal Claude config — stack will not write\n' +
+      '# to your home directory unless you ask it to. Existing hand-edited skill\n' +
+      '# files are never overwritten; delete one to refresh it.\n' +
+      '# Uncomment and set true to enable:\n' +
+      '# claude_skills: true\n';
     fs.writeFileSync(localPath, content, 'utf8');
     console.log('  [OK] Created ' + STACK_LOCAL_FILENAME + ' (dev_os: ' + devOS + ', dev_only: true)');
   } else {
@@ -75,6 +83,23 @@ export async function init(options: InitOptions = {}): Promise<void> {
       console.log('  [OK] Added dev_only: true to ' + STACK_LOCAL_FILENAME);
     } else {
       console.log('  [OK] ' + STACK_LOCAL_FILENAME + ' (dev_only: true)');
+    }
+
+    // Append the claude_skills opt-in stub if it's missing entirely.
+    // We never flip an existing setting — only document the option for devs
+    // who haven't seen it yet.
+    if (!localContent.includes('claude_skills')) {
+      localContent = localContent.trimEnd() + '\n\n' +
+        '# Claude Code skills (opt-in, default: off)\n' +
+        '# When true, `npx stack fix --dev` installs factiii Claude Code skills\n' +
+        '# (e.g. prod-check) into ~/.claude/skills/ on this machine. Off by default\n' +
+        '# because ~/.claude/ is your personal Claude config — stack will not write\n' +
+        '# to your home directory unless you ask it to. Existing hand-edited skill\n' +
+        '# files are never overwritten; delete one to refresh it.\n' +
+        '# Uncomment and set true to enable:\n' +
+        '# claude_skills: true\n';
+      fs.writeFileSync(localPath, localContent, 'utf8');
+      console.log('  [OK] Added claude_skills opt-in stub to ' + STACK_LOCAL_FILENAME);
     }
   }
   console.log('');

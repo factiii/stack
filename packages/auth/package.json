@@ -62,6 +62,7 @@
     "README.md"
   ],
   "scripts": {
+    "prebuild": "npm run clean",
     "build": "tsup",
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",

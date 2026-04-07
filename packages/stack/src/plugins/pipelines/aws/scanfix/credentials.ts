@@ -381,7 +381,107 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
       console.log('   Logged in as: ' + (identity ?? vaultKeyId));
       return true;
     } catch (e) {
-      console.log('   Error reading vault: ' + (e instanceof Error ? e.message : String(e)));
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Integrity check failed') || msg.includes('wrong password')) {
+        const { promptSingleLine } = await import('../../../../utils/secret-prompts.js');
+        console.log('');
+        console.log('   ============================================================');
+        console.log('   VAULT PASSWORD INCORRECT');
+        console.log('   ============================================================');
+        console.log('   Cannot read AWS credentials — vault password in ~/.vault_pass');
+        console.log('   does not match the password used to encrypt the vault.');
+        console.log('');
+        console.log('   Options:');
+        console.log('   1) Enter the correct vault password now');
+        console.log('   2) Recreate the vault (existing secrets will be lost)');
+        console.log('   3) Skip for now (continue with other fixes)');
+        console.log('   ============================================================');
+        console.log('');
+        const choice = await promptSingleLine('   Choose (1, 2, or 3): ');
+
+        if (choice === '1') {
+          const passFile = (config.ansible?.vault_password_file ?? '~/.vault_pass')
+            .replace(/^~/, os.homedir());
+          const vaultPath = config.ansible?.vault_path ?? '';
+          const fullVaultPath = path.isAbsolute(vaultPath)
+            ? vaultPath
+            : path.join(rootDir, vaultPath);
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { Vault: VaultLib } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { decryptSync: (data: string) => string } };
+          const vaultContent = fs.readFileSync(fullVaultPath, 'utf8')
+            .replace(/^\uFEFF/, '')
+            .trim();
+
+          const maxAttempts = 3;
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const newPass = await promptSingleLine('   Enter the correct vault password (' + attempt + '/' + maxAttempts + '): ', { hidden: true });
+            if (!newPass) {
+              console.log('   No password entered');
+              if (attempt < maxAttempts) continue;
+              break;
+            }
+
+            try {
+              const v = new VaultLib({ password: newPass });
+              v.decryptSync(vaultContent);
+
+              // Success — write the password
+              fs.writeFileSync(passFile, newPass + '\n', { mode: 0o600 });
+              console.log('   [OK] Updated ' + passFile + ' — retrying sync...');
+              return await _syncCredentials(config, rootDir);
+            } catch {
+              if (attempt < maxAttempts) {
+                console.log('   [!] Wrong password — try again');
+              }
+            }
+          }
+
+          // All attempts failed — auto-skip
+          console.log('   [!] 3 failed attempts — skipping vault for now');
+          setCredentialsSyncFailed();
+          return true;
+        }
+
+        if (choice === '2') {
+          const vaultPath = config.ansible?.vault_path ?? '';
+          const fullVaultPath = path.isAbsolute(vaultPath)
+            ? vaultPath
+            : path.join(rootDir, vaultPath);
+          const backupPath = fullVaultPath + '.bak.' + Date.now();
+          try {
+            fs.copyFileSync(fullVaultPath, backupPath);
+            console.log('   Backed up old vault → ' + backupPath);
+          } catch {
+            // Continue even if backup fails
+          }
+          try {
+            fs.unlinkSync(fullVaultPath);
+            const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+            const vault = new AnsibleVaultSecrets({
+              vault_path: vaultPath,
+              vault_password_file: config.ansible?.vault_password_file ?? '~/.vault_pass',
+              rootDir,
+            });
+            await vault.setSecret('_initialized', 'true');
+            console.log('   [OK] Created new vault with current password');
+            console.log('   [!] You will need to re-store AWS credentials and other secrets');
+            return false; // Still need to re-populate credentials
+          } catch (e2) {
+            console.log('   [!] Failed to create new vault: ' + (e2 instanceof Error ? e2.message : String(e2)));
+            return false;
+          }
+        }
+
+        if (choice === '3') {
+          console.log('   [--] Skipping vault — continuing with other fixes');
+          setCredentialsSyncFailed();
+          return true; // Return true so blocking doesn't halt remaining fixes
+        }
+
+        return false;
+      } else {
+        console.log('   Error reading vault: ' + msg);
+      }
       return false;
     }
   }
@@ -440,8 +540,13 @@ export const credentialsFixes: Fix[] = [
             // Vault doesn't match stack.yml — needs user intervention (fix will handle)
             return true;
           }
-        } catch {
-          // Vault unreadable
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes('Integrity check failed') || msg.includes('wrong password')) {
+            // Vault password is wrong — flag so fix can show clear guidance
+            return true;
+          }
+          // Other vault errors — fall through
         }
       }
 

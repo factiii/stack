@@ -8,7 +8,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { getFactiiiVersion } from '../../../../utils/version-check.js';
+
+// Bump this only when workflow templates actually change.
+// This decouples workflow regeneration from every @factiii/stack release.
+export const WORKFLOW_VERSION = '1';
 
 /**
  * Generate GitHub workflow files in the target repository
@@ -17,8 +20,7 @@ export async function generateWorkflows(rootDir: string): Promise<void> {
   const workflowsDir = path.join(rootDir, '.github', 'workflows');
   const sourceDir = path.join(__dirname, '../workflows');
 
-  // Get package version
-  const version = getFactiiiVersion();
+  const version = WORKFLOW_VERSION;
 
   // Create .github/workflows if it doesn't exist
   if (!fs.existsSync(workflowsDir)) {
