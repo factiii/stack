@@ -2,8 +2,8 @@ import { TRPCError } from '@trpc/server';
 
 import { type ClientCookiePayload } from '../types';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
-import { cleanBase32String, verifyTotp } from '../utilities';
 import { detectBrowser } from '../utilities/browser';
+import { isTwoFaEnabled, verifyTwoFaChallenge } from './twoFa/verifyChallenge';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
 import { createAuthToken } from '../utilities/jwt';
@@ -99,7 +99,6 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         password: hashedPassword,
         status: 'ACTIVE',
         tag: this.config.features.biometric ? 'BOT' : 'HUMAN',
-        twoFaEnabled: false,
         emailVerificationStatus: 'UNVERIFIED',
         verifiedHumanAt: null,
       });
@@ -204,7 +203,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         });
       }
 
-      if (user.twoFaEnabled && this.config.features?.twoFa) {
+      if (isTwoFaEnabled(this.config, user) && this.config.features?.twoFa) {
         if (!code) {
           return {
             success: false,
@@ -213,30 +212,8 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
           };
         }
 
-        let validCode = false;
-
-        const secrets = await this.config.database.session.findTwoFaSecretsByUserId(user.id);
-
-        for (const s of secrets) {
-          if (s.twoFaSecret && (await verifyTotp(code, cleanBase32String(s.twoFaSecret)))) {
-            validCode = true;
-            break;
-          }
-        }
-
-        if (!validCode) {
-          const checkOTP = await this.config.database.otp.findValidByUserAndCode(
-            user.id,
-            Number(code)
-          );
-
-          if (checkOTP) {
-            validCode = true;
-            await this.config.database.otp.delete(checkOTP.id);
-          }
-        }
-
-        if (!validCode) {
+        const valid = await verifyTwoFaChallenge(this.config, user, code);
+        if (!valid) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'Invalid 2FA code.',

@@ -1,7 +1,13 @@
-export type { AuthRouter } from './router';
+export type { AuthRouter, DeviceAuthRouter, StandardAuthRouter } from './router';
 export { createAuthRouter } from './router';
 export type { ClientCookiePayload, CookieSettings } from './types';
-export type { AuthConfig, AuthFeatures, SchemaExtensions, TokenSettings } from './types/config';
+export type {
+  AuthConfig,
+  AuthFeatures,
+  SchemaExtensions,
+  TokenSettings,
+  TwoFaMode,
+} from './types/config';
 export type { ResolvedAuthConfig } from './utilities/config';
 export type { AuthHooks } from './types/hooks';
 export type { TrpcBuilder, TrpcContext } from './types/trpc';
@@ -31,10 +37,10 @@ export type {
   CreateSessionData,
   CreateUserData,
   DatabaseAdapter,
-  SessionWithDevice,
   SessionWithUser,
 } from './adapters/database';
-export { createPrismaAdapter } from './adapters/prismaAdapter';
+export type { DeviceAuthAdapter, SessionWithDevice } from './adapters/deviceAuth';
+export { createPrismaAdapter, createPrismaDeviceAdapter } from './adapters/prismaAdapter';
 
 export { detectBrowser, isMobileDevice, isNativeApp } from './utilities/browser';
 export type { CreateMagicLinkParams, CreateMagicLinkResult } from './utilities/magicLink';
@@ -102,5 +108,8 @@ export {
   AUTH_DEFAULT_FEATURES,
   AUTH_CONFIG_SCHEMA,
   AUTH_PRISMA_MODELS,
+  AUTH_PRISMA_MODELS_STANDARD,
+  AUTH_PRISMA_MODELS_DEVICE,
+  getAuthPrismaModels,
   stackPlugin,
 } from './stack-plugin';

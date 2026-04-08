@@ -90,7 +90,6 @@ export class OAuthLoginProcedureFactory<TExtensions extends SchemaExtensions = {
           oauthId,
           status: 'ACTIVE',
           tag: this.config.features.biometric ? 'BOT' : 'HUMAN',
-          twoFaEnabled: false,
           verifiedHumanAt: null,
         });
 

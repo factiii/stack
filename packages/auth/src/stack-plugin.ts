@@ -55,6 +55,9 @@ export const AUTH_CONFIG_SCHEMA = {
     features: {
       oauth: false,
       twoFa: (defaultFeatures as AuthFeatures).twoFa ?? false,
+      // 'standard' = user-centric TOTP (default for new consumers).
+      // 'device'   = legacy factiii mobile-bound flow (requires deviceAuth adapter).
+      twoFaMode: (defaultFeatures as AuthFeatures).twoFaMode ?? 'standard',
       emailVerification: (defaultFeatures as AuthFeatures).emailVerification ?? false,
       biometric: (defaultFeatures as AuthFeatures).biometric ?? false,
       passwordReset: (defaultFeatures as AuthFeatures).passwordReset ?? false,
@@ -67,9 +70,22 @@ export const AUTH_CONFIG_SCHEMA = {
 
 /**
  * Prisma model names that auth requires.
- * Stack checks for these in the Prisma schema to detect auth initialization.
+ *
+ * Standard mode (default) needs only `User` and `Session`. Device mode
+ * additionally requires the `Device` model for the push-token flow.
  */
-export const AUTH_PRISMA_MODELS = ['User', 'Session'] as const;
+export const AUTH_PRISMA_MODELS_STANDARD = ['User', 'Session'] as const;
+export const AUTH_PRISMA_MODELS_DEVICE = ['User', 'Session', 'Device'] as const;
+
+/** Get the required prisma models for the configured 2FA mode. */
+export function getAuthPrismaModels(
+  twoFaMode: 'standard' | 'device' = 'standard'
+): readonly string[] {
+  return twoFaMode === 'device' ? AUTH_PRISMA_MODELS_DEVICE : AUTH_PRISMA_MODELS_STANDARD;
+}
+
+/** @deprecated Use `getAuthPrismaModels(mode)` — defaults here to standard mode. */
+export const AUTH_PRISMA_MODELS = AUTH_PRISMA_MODELS_STANDARD;
 
 /**
  * The stackPlugin export that @factiii/stack looks for.
@@ -81,5 +97,10 @@ export const stackPlugin = {
   oauthEnvVars: AUTH_OAUTH_ENV_VARS,
   allSecretNames: AUTH_ALL_SECRET_NAMES,
   configSchema: AUTH_CONFIG_SCHEMA,
-  prismaModels: AUTH_PRISMA_MODELS,
+  prismaModels: AUTH_PRISMA_MODELS_STANDARD,
+  prismaModelsByMode: {
+    standard: AUTH_PRISMA_MODELS_STANDARD,
+    device: AUTH_PRISMA_MODELS_DEVICE,
+  },
+  getPrismaModels: getAuthPrismaModels,
 };

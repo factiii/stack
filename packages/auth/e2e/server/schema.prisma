@@ -37,7 +37,8 @@ model User {
   emailVerificationStatus EmailVerificationStatus @default(UNVERIFIED)
   password                String?
   username                String                  @unique
-  twoFaEnabled            Boolean                 @default(false)
+  twoFaSecret             String?
+  twoFaBackupCodes        String[]                @default([])
   oauthProvider           OAuthProvider?
   oauthId                 String?
   tag                     UserTag                 @default(HUMAN)
@@ -48,25 +49,20 @@ model User {
   sessions      Session[]
   passwordReset PasswordReset[]
   otps          OTP[]
-  devices       Device[]        @relation("devices")
   admin         Admin?
 }
 
 model Session {
   id          Int       @id @default(autoincrement())
   socketId    String?   @unique
-  twoFaSecret String?   @unique
   issuedAt    DateTime  @default(now())
   browserName String    @default("Unknown")
   lastUsed    DateTime  @default(now()) @updatedAt
-  device      Device?   @relation(fields: [deviceId], references: [id])
-  deviceId    Int?
   userId      Int
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   revokedAt   DateTime?
 
   @@index([userId])
-  @@index([deviceId])
 }
 
 model Admin {
@@ -95,12 +91,4 @@ model OTP {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-}
-
-model Device {
-  id        Int       @id @default(autoincrement())
-  pushToken String    @unique
-  createdAt DateTime  @default(now())
-  users     User[]    @relation("devices")
-  sessions  Session[]
 }

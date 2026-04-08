@@ -74,7 +74,8 @@ const createContext = ({ req, res }: CreateHTTPContextOptions): TrpcContext => (
     },
     features: {
       twoFa: true,
-      twoFaRequiresDevice: false, // Disable device requirement for testing
+      // E2E uses the default standard (user-centric TOTP) flow.
+      // No deviceAuth needed.
       biometric: false,
       emailVerification: true,
     },
@@ -95,11 +96,15 @@ const createContext = ({ req, res }: CreateHTTPContextOptions): TrpcContext => (
     authRouter,
     t.router({
       me: authProcedure.query(async ({ ctx }) => {
-        const user = await prisma.user.findUnique({
+        const row = await prisma.user.findUnique({
           where: { id: ctx.userId },
-          select: { id: true, email: true, username: true, twoFaEnabled: true }
+          select: { id: true, email: true, username: true, twoFaSecret: true }
         });
-        return { user };
+        if (!row) return { user: null };
+        // Standard mode: 2FA is on iff the user has a TOTP secret. Derive
+        // the boolean here so the consumer UI never sees the raw secret.
+        const { twoFaSecret, ...rest } = row;
+        return { user: { ...rest, twoFaEnabled: twoFaSecret != null } };
       })
     })
   );

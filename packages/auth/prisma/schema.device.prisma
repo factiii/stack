@@ -1,5 +1,15 @@
 // ==============================================================================
-// Auth Schema
+// @factiii/auth — DEVICE reference schema (legacy factiii mobile-bound flow)
+// ==============================================================================
+//
+// Use this schema when running with `features.twoFaMode: 'device'`.
+// 2FA secrets live per-session (`Session.twoFaSecret`), and enrollment is
+// gated on a registered mobile device (`Device` table). The device's push
+// token is reused as TOTP key material.
+//
+// **Most consumers do NOT want this** — use `schema.standard.prisma` for the
+// normal user-centric TOTP flow. This file exists for `../factiii` and any
+// other consumer that already runs the legacy mobile-bound flow.
 // ==============================================================================
 
 generator client {
@@ -43,6 +53,11 @@ enum OAuthProvider {
 model User {
   id                      Int                     @id @default(autoincrement())
   createdAt               DateTime                @default(now())
+  // Required by AuthUser/runtime: login/refresh embed `updatedAt.toISOString()`
+  // in the client cookie payload, and adapters select this column on every
+  // session lookup. Without it, login crashes with
+  // "Cannot read properties of undefined (reading 'toISOString')".
+  updatedAt               DateTime                @default(now()) @updatedAt
   status                  UserStatus              @default(ACTIVE)
   email                   String                  @unique
   emailVerificationStatus EmailVerificationStatus @default(UNVERIFIED)
@@ -72,6 +87,7 @@ model User {
 model Session {
   id          Int       @id @default(autoincrement())
   socketId    String?   @unique
+  // Device-mode 2FA: TOTP secret lives per-session, scoped to the registered device.
   twoFaSecret String?   @unique
   issuedAt    DateTime  @default(now())
   browserName String    @default("Unknown")
@@ -127,7 +143,7 @@ model OTP {
 }
 
 // ==============================================================================
-// Device Model
+// Device Model — only required when features.twoFaMode is 'device'.
 // ==============================================================================
 
 model Device {

@@ -5,7 +5,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const schemaSource = join(__dirname, '..', 'prisma', 'schema.prisma');
+// Default to the standard (user-centric TOTP) schema, which matches the
+// default `twoFaMode: 'standard'`. Consumers running the legacy device flow
+// should copy prisma/schema.device.prisma manually instead.
+const schemaSource = join(__dirname, '..', 'prisma', 'schema.standard.prisma');
 const targetDir = resolve(process.cwd(), 'prisma');
 const targetFile = join(targetDir, 'auth-schema.prisma');
 
@@ -84,8 +87,13 @@ function resolveORMForInit() {
 
 // ── Drizzle schema template ─────────────────────────────────────────────────
 
-const DRIZZLE_SCHEMA_TEMPLATE = `import { pgTable, pgEnum, serial, text, integer, boolean, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+const DRIZZLE_SCHEMA_TEMPLATE = `import { pgTable, pgEnum, serial, text, integer, boolean, timestamp } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+
+// Standard 2FA mode (the default). The TOTP secret + backup codes live on
+// the user; 2FA is "on" iff \`twoFaSecret\` is non-null. No \`Device\` table,
+// no per-session 2FA columns. If you need the legacy device/push-token
+// flow, see prisma/schema.device.prisma in @factiii/auth.
 
 // ==============================================================================
 // Enums
@@ -108,7 +116,8 @@ export const users = pgTable('User', {
   emailVerificationStatus: emailVerificationStatusEnum('emailVerificationStatus').default('UNVERIFIED').notNull(),
   password: text('password'),
   username: text('username').unique().notNull(),
-  twoFaEnabled: boolean('twoFaEnabled').default(false).notNull(),
+  twoFaSecret: text('twoFaSecret'),
+  twoFaBackupCodes: text('twoFaBackupCodes').array().default([]).notNull(),
   oauthProvider: oauthProviderEnum('oauthProvider'),
   oauthId: text('oauthId'),
   tag: userTagEnum('tag').default('HUMAN').notNull(),
@@ -124,11 +133,9 @@ export const users = pgTable('User', {
 export const sessions = pgTable('Session', {
   id: serial('id').primaryKey(),
   socketId: text('socketId').unique(),
-  twoFaSecret: text('twoFaSecret').unique(),
   issuedAt: timestamp('issuedAt').defaultNow().notNull(),
   browserName: text('browserName').default('Unknown').notNull(),
   lastUsed: timestamp('lastUsed').defaultNow().notNull(),
-  deviceId: integer('deviceId').references(() => devices.id),
   userId: integer('userId').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   revokedAt: timestamp('revokedAt'),
 });
@@ -165,25 +172,6 @@ export const otps = pgTable('OTP', {
 });
 
 // ==============================================================================
-// Devices
-// ==============================================================================
-
-export const devices = pgTable('Device', {
-  id: serial('id').primaryKey(),
-  pushToken: text('pushToken').unique().notNull(),
-  createdAt: timestamp('createdAt').defaultNow().notNull(),
-});
-
-// ==============================================================================
-// Join Tables (many-to-many)
-// ==============================================================================
-
-export const devicesToUsers = pgTable('_devices', {
-  deviceId: integer('A').references(() => devices.id, { onDelete: 'cascade' }).notNull(),
-  userId: integer('B').references(() => users.id, { onDelete: 'cascade' }).notNull(),
-});
-
-// ==============================================================================
 // Relations
 // ==============================================================================
 
@@ -191,13 +179,11 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   sessions: many(sessions),
   passwordResets: many(passwordResets),
   otps: many(otps),
-  devices: many(devicesToUsers),
   admin: one(admins),
 }));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] }),
-  device: one(devices, { fields: [sessions.deviceId], references: [devices.id] }),
 }));
 
 export const adminsRelations = relations(admins, ({ one }) => ({
@@ -210,16 +196,6 @@ export const passwordResetsRelations = relations(passwordResets, ({ one }) => ({
 
 export const otpsRelations = relations(otps, ({ one }) => ({
   user: one(users, { fields: [otps.userId], references: [users.id] }),
-}));
-
-export const devicesRelations = relations(devices, ({ many }) => ({
-  sessions: many(sessions),
-  users: many(devicesToUsers),
-}));
-
-export const devicesToUsersRelations = relations(devicesToUsers, ({ one }) => ({
-  device: one(devices, { fields: [devicesToUsers.deviceId], references: [devices.id] }),
-  user: one(users, { fields: [devicesToUsers.userId], references: [users.id] }),
 }));
 `;
 
@@ -306,9 +282,7 @@ function initDrizzle() {
     console.log('    sessions: schema.sessions,');
     console.log('    otps: schema.otps,');
     console.log('    passwordResets: schema.passwordResets,');
-    console.log('    devices: schema.devices,');
     console.log('    admins: schema.admins,');
-    console.log('    devicesToUsers: schema.devicesToUsers,');
     console.log('  });');
   } catch (err) {
     console.error('Failed to generate schema:', err.message);
@@ -642,7 +616,7 @@ function doctor() {
     if (drizzleSchema.found) {
       try {
         const schemaContent = readFileSync(resolve(process.cwd(), drizzleSchema.location), 'utf-8');
-        const requiredTables = ['users', 'sessions', 'admins', 'passwordResets', 'otps', 'devices'];
+        const requiredTables = ['users', 'sessions', 'admins', 'passwordResets', 'otps'];
         for (const table of requiredTables) {
           // Look for pgTable/mysqlTable/sqliteTable calls or export names
           const tableRegex = new RegExp(`(?:Table|export).*${table}`, 'i');

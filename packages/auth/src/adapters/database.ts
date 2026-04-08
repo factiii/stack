@@ -1,6 +1,10 @@
 /**
  * ORM-agnostic database adapter interface for @factiii/auth.
  * Implement this interface to use any database/ORM with the auth library.
+ *
+ * This is the **core** adapter — every consumer must implement it.
+ * Consumers using the device-mode 2FA flow additionally implement
+ * `DeviceAuthAdapter` (see ./deviceAuth.ts).
  */
 
 // ── Auth model types (ORM-agnostic) ──────────────────────────────────────────
@@ -11,7 +15,16 @@ export interface AuthUser {
   email: string;
   username: string;
   password: string | null;
-  twoFaEnabled: boolean;
+  /**
+   * Device-mode only. The standard schema has no such column; 2FA-on is
+   * derived from `twoFaSecret != null`. Use `isTwoFaEnabled(config, user)`
+   * from `procedures/twoFa/verifyChallenge` to read across both modes.
+   */
+  twoFaEnabled?: boolean;
+  /** Standard-mode only. TOTP secret; non-null means 2FA is enabled. */
+  twoFaSecret?: string | null;
+  /** Standard-mode only. Single-use recovery codes. */
+  twoFaBackupCodes?: string[];
   oauthProvider: string | null;
   oauthId: string | null;
   tag: string;
@@ -26,12 +39,10 @@ export interface AuthSession {
   id: number;
   userId: number;
   socketId: string | null;
-  twoFaSecret: string | null;
   browserName: string;
   issuedAt: Date;
   lastUsed: Date;
   revokedAt: Date | null;
-  deviceId: number | null;
 }
 
 export interface AuthOTP {
@@ -62,7 +73,6 @@ export interface CreateUserData {
   password: string | null;
   status: string;
   tag: string;
-  twoFaEnabled: boolean;
   emailVerificationStatus: string;
   verifiedHumanAt: Date | null;
   oauthProvider?: string;
@@ -82,12 +92,6 @@ export type SessionWithUser = AuthSession & {
   user: { status: string; verifiedHumanAt: Date | null; updatedAt: Date };
 };
 
-export type SessionWithDevice = {
-  twoFaSecret: string | null;
-  deviceId: number | null;
-  device: { pushToken: string } | null;
-};
-
 // ── Database adapter interface ───────────────────────────────────────────────
 
 export interface DatabaseAdapter {
@@ -100,13 +104,23 @@ export interface DatabaseAdapter {
     findActiveById(id: number): Promise<AuthUser | null>;
     create(data: CreateUserData): Promise<AuthUser>;
     update(id: number, data: Partial<Omit<AuthUser, 'id'>>): Promise<AuthUser>;
+    /** Read just the standard-mode 2FA secret + backup codes for a user. */
+    findTwoFaSecret(id: number): Promise<{ twoFaSecret: string | null; twoFaBackupCodes: string[] }>;
+    /** Persist the standard-mode 2FA secret and backup codes. Non-null secret == 2FA on. */
+    setTwoFaSecret(id: number, secret: string, backupCodes: string[]): Promise<void>;
+    /** Replace the backup codes without touching the TOTP secret. */
+    setBackupCodes(id: number, backupCodes: string[]): Promise<void>;
+    /** Clear the standard-mode 2FA secret + backup codes. Null secret == 2FA off. */
+    clearTwoFaSecret(id: number): Promise<void>;
+    /** Atomically remove a backup code if present. Returns true if a code was consumed. */
+    consumeBackupCode(id: number, code: string): Promise<boolean>;
   };
 
   session: {
     /** Find session by ID with user status and verifiedHumanAt joined. */
     findById(id: number): Promise<SessionWithUser | null>;
     create(data: CreateSessionData): Promise<AuthSession>;
-    update(id: number, data: Partial<Pick<AuthSession, 'revokedAt' | 'lastUsed' | 'twoFaSecret' | 'deviceId'>>): Promise<AuthSession>;
+    update(id: number, data: Partial<Pick<AuthSession, 'revokedAt' | 'lastUsed'>>): Promise<AuthSession>;
     /** Update lastUsed and return session with user's verifiedHumanAt and updatedAt. */
     updateLastUsed(id: number): Promise<AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } }>;
     /** Set revokedAt on a single session. */
@@ -115,16 +129,6 @@ export interface DatabaseAdapter {
     findActiveByUserId(userId: number, excludeSessionId?: number): Promise<Pick<AuthSession, 'id' | 'socketId' | 'userId'>[]>;
     /** Revoke all active sessions for a user, optionally excluding one. */
     revokeAllByUserId(userId: number, excludeSessionId?: number): Promise<void>;
-    /** Get twoFaSecret from all sessions that have one for a user. */
-    findTwoFaSecretsByUserId(userId: number): Promise<{ twoFaSecret: string | null }[]>;
-    /** Clear twoFaSecret on sessions for a user, optionally excluding one. */
-    clearTwoFaSecrets(userId: number, excludeSessionId?: number): Promise<void>;
-    /** Find session with device relation for TOTP verification. */
-    findByIdWithDevice(id: number, userId: number): Promise<SessionWithDevice | null>;
-    /** Revoke other sessions that share a device push token. */
-    revokeByDevicePushToken(userId: number, pushToken: string, excludeSessionId: number): Promise<void>;
-    /** Clear deviceId on all sessions for a user+device pair. */
-    clearDeviceId(userId: number, deviceId: number): Promise<void>;
   };
 
   otp: {
@@ -138,15 +142,6 @@ export interface DatabaseAdapter {
     create(userId: number): Promise<AuthPasswordReset>;
     delete(id: string): Promise<void>;
     deleteAllByUserId(userId: number): Promise<void>;
-  };
-
-  device: {
-    findByTokenSessionAndUser(pushToken: string, sessionId: number, userId: number): Promise<{ id: number } | null>;
-    upsertByPushToken(pushToken: string, sessionId: number, userId: number): Promise<void>;
-    findByUserAndToken(userId: number, pushToken: string): Promise<{ id: number } | null>;
-    disconnectUser(deviceId: number, userId: number): Promise<void>;
-    hasRemainingUsers(deviceId: number): Promise<boolean>;
-    delete(id: number): Promise<void>;
   };
 
   admin: {

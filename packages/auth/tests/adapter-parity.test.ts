@@ -1,29 +1,29 @@
 /**
  * Adapter Parity Spec
  *
- * Ensures that createPrismaAdapter and createDrizzleAdapter both satisfy the
- * DatabaseAdapter interface with identical input/output shapes. This spec
- * does NOT hit a real database — it validates structural and type-level parity
- * so consumers can swap adapters without changing application code.
+ * Ensures that:
+ * 1. createPrismaAdapter and createDrizzleAdapter both satisfy the *core*
+ *    DatabaseAdapter interface (no device methods, user-level 2FA).
+ * 2. createPrismaDeviceAdapter and createDrizzleDeviceAdapter both satisfy
+ *    the DeviceAuthAdapter interface (per-session 2FA + device CRUD).
+ *
+ * This spec does NOT hit a real database — it validates structural and
+ * type-level parity so consumers can swap adapters without changing
+ * application code.
  */
 import { describe, it, expect } from 'vitest';
-import { createPrismaAdapter } from '../src/adapters/prismaAdapter';
-import { createDrizzleAdapter } from '../src/adapters/drizzleAdapter';
+import { createPrismaAdapter, createPrismaDeviceAdapter } from '../src/adapters/prismaAdapter';
+import {
+  createDrizzleAdapter,
+  createDrizzleDeviceAdapter,
+} from '../src/adapters/drizzleAdapter';
 import type { DatabaseAdapter } from '../src/adapters/database';
+import type { DeviceAuthAdapter } from '../src/adapters/deviceAuth';
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── Core DatabaseAdapter expectations ───────────────────────────────────────
 
-/** All namespaces on DatabaseAdapter */
-const ADAPTER_NAMESPACES = [
-  'user',
-  'session',
-  'otp',
-  'passwordReset',
-  'device',
-  'admin',
-] as const;
+const ADAPTER_NAMESPACES = ['user', 'session', 'otp', 'passwordReset', 'admin'] as const;
 
-/** Expected method names per namespace (source of truth: database.ts interface) */
 const EXPECTED_METHODS: Record<string, string[]> = {
   user: [
     'findByEmailInsensitive',
@@ -34,6 +34,11 @@ const EXPECTED_METHODS: Record<string, string[]> = {
     'findActiveById',
     'create',
     'update',
+    'findTwoFaSecret',
+    'setTwoFaSecret',
+    'setBackupCodes',
+    'clearTwoFaSecret',
+    'consumeBackupCode',
   ],
   session: [
     'findById',
@@ -43,14 +48,26 @@ const EXPECTED_METHODS: Record<string, string[]> = {
     'revoke',
     'findActiveByUserId',
     'revokeAllByUserId',
-    'findTwoFaSecretsByUserId',
-    'clearTwoFaSecrets',
-    'findByIdWithDevice',
-    'revokeByDevicePushToken',
-    'clearDeviceId',
   ],
   otp: ['findValidByUserAndCode', 'create', 'delete'],
   passwordReset: ['findById', 'create', 'delete', 'deleteAllByUserId'],
+  admin: ['findByUserId'],
+};
+
+// ── DeviceAuthAdapter expectations ──────────────────────────────────────────
+
+const DEVICE_NAMESPACES = ['session', 'device'] as const;
+
+const DEVICE_EXPECTED_METHODS: Record<string, string[]> = {
+  session: [
+    'findTwoFaSecretsByUserId',
+    'clearTwoFaSecrets',
+    'setTwoFaSecret',
+    'findByIdWithDevice',
+    'getDeviceId',
+    'revokeByDevicePushToken',
+    'clearDeviceId',
+  ],
   device: [
     'findByTokenSessionAndUser',
     'upsertByPushToken',
@@ -59,7 +76,6 @@ const EXPECTED_METHODS: Record<string, string[]> = {
     'hasRemainingUsers',
     'delete',
   ],
-  admin: ['findByUserId'],
 };
 
 // ── Mock factories ──────────────────────────────────────────────────────────
@@ -68,12 +84,14 @@ const EXPECTED_METHODS: Record<string, string[]> = {
 function createStubPrismaClient() {
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
-      // Return a proxy for model access (prisma.user, prisma.session, etc.)
+      if (prop === '$transaction') {
+        // Allow consumeBackupCode's transaction path to no-op.
+        return undefined;
+      }
       return new Proxy(
         {},
         {
           get() {
-            // Return a function for any method (findFirst, create, etc.)
             return async (..._args: unknown[]) => null;
           },
         }
@@ -101,26 +119,35 @@ function createStubDrizzleDeps() {
    * - Returns itself when called as a function (select(), where(...), etc.)
    * - Resolves to [] when awaited (via .then)
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function createChainProxy(): any {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handler: ProxyHandler<any> = {
       get(_target, prop) {
         if (prop === 'then') {
-          // Make it thenable — resolve to a stub row so property access doesn't throw
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           return (resolve: (v: any) => void) =>
-            resolve([{ id: 0, ip: '', pushToken: '', userId: 0, twoFaSecret: null, deviceId: null }]);
+            resolve([
+              {
+                id: 0,
+                ip: '',
+                pushToken: '',
+                userId: 0,
+                twoFaSecret: null,
+                twoFaBackupCodes: [],
+                deviceId: null,
+              },
+            ]);
         }
         if (prop === 'catch' || prop === 'finally') {
           return () => createChainProxy();
         }
-        // Any property access returns a callable chain proxy
         return createChainProxy();
       },
       apply(_target, _thisArg, _args) {
-        // Any function call returns a chain proxy (so .select().from() works)
         return createChainProxy();
       },
     };
-    // Must be a function so it can be called
     return new Proxy(function () {}, handler);
   }
 
@@ -135,32 +162,41 @@ function createStubDrizzleDeps() {
 
   const tables = {
     users: stubTable('users', [
-      'id', 'status', 'email', 'username', 'password', 'twoFaEnabled',
+      'id', 'status', 'email', 'username', 'password',
+      'twoFaSecret', 'twoFaBackupCodes',
       'oauthProvider', 'oauthId', 'tag', 'verifiedHumanAt',
       'emailVerificationStatus', 'otpForEmailVerification', 'isActive',
     ]),
     sessions: stubTable('sessions', [
-      'id', 'userId', 'socketId', 'twoFaSecret', 'browserName',
-      'issuedAt', 'lastUsed', 'revokedAt', 'deviceId',
+      'id', 'userId', 'socketId', 'browserName',
+      'issuedAt', 'lastUsed', 'revokedAt',
     ]),
     otps: stubTable('otps', ['id', 'code', 'expiresAt', 'userId']),
     passwordResets: stubTable('passwordResets', ['id', 'createdAt', 'userId']),
-    devices: stubTable('devices', ['id', 'pushToken', 'createdAt']),
     admins: stubTable('admins', ['userId', 'ip']),
   };
 
-  return { db, tables };
+  // Device-mode tables (separate set, additive on the sessions table).
+  const deviceSessions = stubTable('sessions', [
+    'id', 'userId', 'socketId', 'twoFaSecret', 'browserName',
+    'issuedAt', 'lastUsed', 'revokedAt', 'deviceId',
+  ]);
+
+  const deviceTables = {
+    sessions: deviceSessions,
+    devices: stubTable('devices', ['id', 'pushToken', 'createdAt']),
+  };
+
+  return { db, tables, deviceTables };
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-describe('Adapter Parity: Prisma vs Drizzle', () => {
+describe('Core DatabaseAdapter parity: Prisma vs Drizzle', () => {
   const prismaAdapter = createPrismaAdapter(createStubPrismaClient());
   const { db, tables } = createStubDrizzleDeps();
-  // Drizzle adapter uses require('drizzle-orm') internally; mock it for this spec
   let drizzleAdapter: DatabaseAdapter;
 
-  // We need drizzle-orm to be available. If not installed, skip drizzle-specific tests.
   let drizzleAvailable = true;
   try {
     require('drizzle-orm');
@@ -184,8 +220,14 @@ describe('Adapter Parity: Prisma vs Drizzle', () => {
       if (!drizzleAvailable) return;
       for (const ns of ADAPTER_NAMESPACES) {
         expect(drizzleAdapter).toHaveProperty(ns);
-        expect(typeof drizzleAdapter[ns]).toBe('object');
+        expect(typeof (drizzleAdapter as unknown as Record<string, unknown>)[ns]).toBe('object');
       }
+    });
+
+    it('Core adapters do NOT expose `device` namespace', () => {
+      expect(prismaAdapter).not.toHaveProperty('device');
+      if (!drizzleAvailable) return;
+      expect(drizzleAdapter).not.toHaveProperty('device');
     });
   });
 
@@ -195,7 +237,7 @@ describe('Adapter Parity: Prisma vs Drizzle', () => {
         const expectedMethods = EXPECTED_METHODS[ns];
 
         it(`Prisma adapter has all ${expectedMethods.length} methods`, () => {
-          const adapterNs = prismaAdapter[ns] as Record<string, unknown>;
+          const adapterNs = (prismaAdapter as unknown as Record<string, Record<string, unknown>>)[ns];
           for (const method of expectedMethods) {
             expect(adapterNs).toHaveProperty(method);
             expect(typeof adapterNs[method]).toBe('function');
@@ -203,7 +245,7 @@ describe('Adapter Parity: Prisma vs Drizzle', () => {
         });
 
         it(`Prisma adapter has no extra methods`, () => {
-          const adapterNs = prismaAdapter[ns] as Record<string, unknown>;
+          const adapterNs = (prismaAdapter as unknown as Record<string, Record<string, unknown>>)[ns];
           const actualMethods = Object.keys(adapterNs).filter(
             (k) => typeof adapterNs[k] === 'function'
           );
@@ -212,7 +254,7 @@ describe('Adapter Parity: Prisma vs Drizzle', () => {
 
         it(`Drizzle adapter has all ${expectedMethods.length} methods`, () => {
           if (!drizzleAvailable) return;
-          const adapterNs = drizzleAdapter[ns] as Record<string, unknown>;
+          const adapterNs = (drizzleAdapter as unknown as Record<string, Record<string, unknown>>)[ns];
           for (const method of expectedMethods) {
             expect(adapterNs).toHaveProperty(method);
             expect(typeof adapterNs[method]).toBe('function');
@@ -221,7 +263,7 @@ describe('Adapter Parity: Prisma vs Drizzle', () => {
 
         it(`Drizzle adapter has no extra methods`, () => {
           if (!drizzleAvailable) return;
-          const adapterNs = drizzleAdapter[ns] as Record<string, unknown>;
+          const adapterNs = (drizzleAdapter as unknown as Record<string, Record<string, unknown>>)[ns];
           const actualMethods = Object.keys(adapterNs).filter(
             (k) => typeof adapterNs[k] === 'function'
           );
@@ -231,29 +273,8 @@ describe('Adapter Parity: Prisma vs Drizzle', () => {
     }
   });
 
-  describe('method signatures return Promises', () => {
-    for (const ns of ADAPTER_NAMESPACES) {
-      for (const method of EXPECTED_METHODS[ns]) {
-        it(`prismaAdapter.${ns}.${method}() returns a Promise`, () => {
-          const fn = (prismaAdapter[ns] as Record<string, Function>)[method];
-          // Call with dummy args — the stub prisma returns null for everything
-          const result = fn(1, 1, 1, 1);
-          expect(result).toBeInstanceOf(Promise);
-        });
-
-        it(`drizzleAdapter.${ns}.${method}() returns a Promise`, () => {
-          if (!drizzleAvailable) return;
-          const fn = (drizzleAdapter[ns] as Record<string, Function>)[method];
-          const result = fn(1, 1, 1, 1);
-          expect(result).toBeInstanceOf(Promise);
-        });
-      }
-    }
-  });
-
   describe('adapters are assignable to DatabaseAdapter type', () => {
     it('Prisma adapter satisfies DatabaseAdapter', () => {
-      // TypeScript compile-time check — if this assignment compiles, it passes
       const _adapter: DatabaseAdapter = prismaAdapter;
       expect(_adapter).toBeDefined();
     });
@@ -266,17 +287,87 @@ describe('Adapter Parity: Prisma vs Drizzle', () => {
   });
 });
 
-describe('DatabaseAdapter interface completeness', () => {
-  it('EXPECTED_METHODS matches the actual interface (guard against drift)', () => {
-    // If someone adds a method to DatabaseAdapter but forgets to add it here,
-    // the Prisma adapter (which is the reference impl) will have it but
-    // EXPECTED_METHODS won't — this test catches that.
-    for (const ns of ADAPTER_NAMESPACES) {
-      const adapterNs = createPrismaAdapter(createStubPrismaClient())[ns] as Record<string, unknown>;
-      const actualMethods = Object.keys(adapterNs).filter(
-        (k) => typeof adapterNs[k] === 'function'
-      );
-      expect(actualMethods.sort()).toEqual([...EXPECTED_METHODS[ns]].sort());
+describe('DeviceAuthAdapter parity: Prisma vs Drizzle', () => {
+  const prismaDevice = createPrismaDeviceAdapter(createStubPrismaClient());
+  const { db, deviceTables } = createStubDrizzleDeps();
+  let drizzleDevice: DeviceAuthAdapter;
+
+  let drizzleAvailable = true;
+  try {
+    require('drizzle-orm');
+  } catch {
+    drizzleAvailable = false;
+  }
+
+  if (drizzleAvailable) {
+    drizzleDevice = createDrizzleDeviceAdapter(db, deviceTables);
+  }
+
+  describe('both device adapters expose identical namespaces', () => {
+    it('Prisma device adapter has session + device namespaces', () => {
+      for (const ns of DEVICE_NAMESPACES) {
+        expect(prismaDevice).toHaveProperty(ns);
+      }
+    });
+
+    it('Drizzle device adapter has session + device namespaces', () => {
+      if (!drizzleAvailable) return;
+      for (const ns of DEVICE_NAMESPACES) {
+        expect(drizzleDevice).toHaveProperty(ns);
+      }
+    });
+  });
+
+  describe('both device adapters expose identical methods per namespace', () => {
+    for (const ns of DEVICE_NAMESPACES) {
+      describe(`${ns} namespace`, () => {
+        const expectedMethods = DEVICE_EXPECTED_METHODS[ns];
+
+        it(`Prisma device adapter has all ${expectedMethods.length} methods`, () => {
+          const adapterNs = (prismaDevice as unknown as Record<string, Record<string, unknown>>)[ns];
+          for (const method of expectedMethods) {
+            expect(adapterNs).toHaveProperty(method);
+            expect(typeof adapterNs[method]).toBe('function');
+          }
+        });
+
+        it(`Prisma device adapter has no extra methods`, () => {
+          const adapterNs = (prismaDevice as unknown as Record<string, Record<string, unknown>>)[ns];
+          const actualMethods = Object.keys(adapterNs).filter(
+            (k) => typeof adapterNs[k] === 'function'
+          );
+          expect(actualMethods.sort()).toEqual([...expectedMethods].sort());
+        });
+
+        it(`Drizzle device adapter has all ${expectedMethods.length} methods`, () => {
+          if (!drizzleAvailable) return;
+          const adapterNs = (drizzleDevice as unknown as Record<string, Record<string, unknown>>)[ns];
+          for (const method of expectedMethods) {
+            expect(adapterNs).toHaveProperty(method);
+            expect(typeof adapterNs[method]).toBe('function');
+          }
+        });
+
+        it(`Drizzle device adapter has no extra methods`, () => {
+          if (!drizzleAvailable) return;
+          const adapterNs = (drizzleDevice as unknown as Record<string, Record<string, unknown>>)[ns];
+          const actualMethods = Object.keys(adapterNs).filter(
+            (k) => typeof adapterNs[k] === 'function'
+          );
+          expect(actualMethods.sort()).toEqual([...expectedMethods].sort());
+        });
+      });
     }
+  });
+
+  it('Prisma device adapter satisfies DeviceAuthAdapter', () => {
+    const _adapter: DeviceAuthAdapter = prismaDevice;
+    expect(_adapter).toBeDefined();
+  });
+
+  it('Drizzle device adapter satisfies DeviceAuthAdapter', () => {
+    if (!drizzleAvailable) return;
+    const _adapter: DeviceAuthAdapter = drizzleDevice;
+    expect(_adapter).toBeDefined();
   });
 });

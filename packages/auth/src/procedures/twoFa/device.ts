@@ -1,35 +1,105 @@
+/**
+ * Device 2FA flow — legacy factiii mobile-bound TOTP.
+ *
+ * Secrets live on `Session.twoFaSecret`. Enrollment requires the user
+ * to have already registered a mobile device (push token), and the
+ * device's push token is reused as TOTP key material in `getTwofaSecret`.
+ *
+ * This is the *current* @factiii/auth behavior, preserved verbatim.
+ * It is opt-in via `features.twoFaMode: 'device'` plus a `deviceAuth` adapter.
+ */
 import { TRPCError } from '@trpc/server';
 
-import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
-import type { ResolvedAuthConfig } from '../utilities/config';
-import { comparePassword } from '../utilities/password';
-import { cleanBase32String, generateOtp, generateTotpSecret, verifyTotp } from '../utilities/totp';
+import type { AuthUser } from '../../adapters/database';
+import type { DeviceAuthAdapter } from '../../adapters/deviceAuth';
+import { type AuthProcedure, type BaseProcedure } from '../../types/trpc';
+import type { ResolvedAuthConfig } from '../../utilities/config';
+import { comparePassword } from '../../utilities/password';
+import { cleanBase32String, generateTotpSecret, verifyTotp } from '../../utilities/totp';
+import { disableTwofaSchema } from '../../validators/twoFa.shared';
 import {
   deregisterPushTokenSchema,
-  disableTwofaSchema,
   getTwofaSecretSchema,
   registerPushTokenSchema,
-  twoFaResetSchema,
-  twoFaResetVerifySchema,
-} from '../validators';
+} from '../../validators/twoFa.device';
+import { buildTwoFaResetProcedures } from './shared';
 
-/** Factory for 2FA procedures: enable/disable, TOTP secrets, and reset flows. */
-export class TwoFaProcedureFactory {
+/**
+ * Verify a 2FA challenge in device mode.
+ *
+ * 1. Try the code as a TOTP against any of the user's session secrets
+ *    (multi-device support — different sessions can hold different secrets).
+ * 2. If that fails, try it as a 6-digit email OTP from the `otps` table.
+ *
+ * Returns true if either path succeeds. Used by `base.ts` at login.
+ *
+ * This is the original @factiii/auth login-challenge behavior, preserved
+ * verbatim from `procedures/base.ts:218-237`.
+ */
+export async function verifyDeviceTwoFa(
+  config: ResolvedAuthConfig,
+  deviceAuth: DeviceAuthAdapter,
+  user: AuthUser,
+  code: string
+): Promise<boolean> {
+  const secrets = await deviceAuth.session.findTwoFaSecretsByUserId(user.id);
+
+  for (const s of secrets) {
+    if (s.twoFaSecret && (await verifyTotp(code, cleanBase32String(s.twoFaSecret)))) {
+      return true;
+    }
+  }
+
+  // Email OTP fallback (used by the device-mode reset flow as a one-time code).
+  const checkOTP = await config.database.otp.findValidByUserAndCode(user.id, Number(code));
+  if (checkOTP) {
+    await config.database.otp.delete(checkOTP.id);
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Device 2FA procedure factory — preserves the legacy factiii flow.
+ *
+ * Exposed procedures (only in device mode):
+ * - `enableTwofa`           — requires registered device, generates session secret
+ * - `disableTwofa`          — password-gated, clears session secret
+ * - `getTwofaSecret`        — re-fetch the session secret using a device push code
+ * - `registerPushToken`     — register a mobile device
+ * - `deregisterPushToken`   — remove a mobile device
+ * - `twoFaReset` / `twoFaResetVerify` — email-OTP recovery (from shared.ts)
+ */
+export class DeviceTwoFaProcedureFactory {
   constructor(
     private config: ResolvedAuthConfig,
+    private deviceAuth: DeviceAuthAdapter,
     private procedure: BaseProcedure,
     private authProcedure: AuthProcedure
   ) {}
 
   createTwoFaProcedures() {
+    const reset = buildTwoFaResetProcedures(
+      this.config,
+      this.procedure,
+      // Device-mode reset: clear every session twoFaSecret AND flip the
+      // user-level enabled flag (the only durable "is 2FA on" signal in
+      // device mode, since secrets live on ephemeral sessions).
+      async (userId) => {
+        await this.deviceAuth.session.clearTwoFaSecrets(userId);
+        await this.config.database.user.update(userId, { twoFaEnabled: false });
+      }
+    );
+
     return {
       enableTwofa: this.enableTwofa(),
       disableTwofa: this.disableTwofa(),
       getTwofaSecret: this.getTwofaSecret(),
-      twoFaReset: this.twoFaReset(),
-      twoFaResetVerify: this.twoFaResetVerify(),
       registerPushToken: this.registerPushToken(),
       deregisterPushToken: this.deregisterPushToken(),
+      twoFaReset: reset.twoFaReset,
+      twoFaResetVerify: reset.twoFaResetVerify,
     };
   }
 
@@ -61,26 +131,24 @@ export class TwoFaProcedureFactory {
         throw new TRPCError({ code: 'BAD_REQUEST', message: '2FA already enabled.' });
       }
 
-      if (this.config.features.twoFaRequiresDevice !== false) {
-        const checkSession = await this.config.database.session.findById(sessionId);
-
-        if (!checkSession?.deviceId) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'You must be logged in on mobile to enable 2FA.',
-          });
-        }
+      // Device flow REQUIRES the current session to be linked to a device.
+      const deviceId = await this.deviceAuth.session.getDeviceId(sessionId, userId);
+      if (!deviceId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'You must be logged in on mobile to enable 2FA.',
+        });
       }
 
       await this.config.database.session.revokeAllByUserId(userId, sessionId);
 
-      await this.config.database.session.clearTwoFaSecrets(userId, sessionId);
+      await this.deviceAuth.session.clearTwoFaSecrets(userId, sessionId);
 
       const secret = generateTotpSecret();
 
       await this.config.database.user.update(userId, { twoFaEnabled: true });
 
-      await this.config.database.session.update(sessionId, { twoFaSecret: secret });
+      await this.deviceAuth.session.setTwoFaSecret(sessionId, secret);
 
       if (this.config.hooks?.onTwoFaStatusChanged) {
         await this.config.hooks.onTwoFaStatusChanged(userId, true);
@@ -127,7 +195,7 @@ export class TwoFaProcedureFactory {
 
       await this.config.database.user.update(userId, { twoFaEnabled: false });
 
-      await this.config.database.session.update(sessionId, { twoFaSecret: null });
+      await this.deviceAuth.session.setTwoFaSecret(sessionId, null);
 
       if (this.config.hooks?.onTwoFaStatusChanged) {
         await this.config.hooks.onTwoFaStatusChanged(userId, false);
@@ -156,7 +224,7 @@ export class TwoFaProcedureFactory {
         throw new TRPCError({ code: 'BAD_REQUEST', message: '2FA not enabled.' });
       }
 
-      const session = await this.config.database.session.findByIdWithDevice(sessionId, userId);
+      const session = await this.deviceAuth.session.findByIdWithDevice(sessionId, userId);
 
       if (!session?.device) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid request' });
@@ -172,71 +240,8 @@ export class TwoFaProcedureFactory {
       }
 
       const secret = generateTotpSecret();
-      await this.config.database.session.update(sessionId, { twoFaSecret: secret });
+      await this.deviceAuth.session.setTwoFaSecret(sessionId, secret);
       return { secret };
-    });
-  }
-
-  private twoFaReset() {
-    return this.procedure.input(twoFaResetSchema).mutation(async ({ input }) => {
-      this.checkConfig();
-      const { username, password } = input;
-
-      const user = await this.config.database.user.findByEmailOrUsernameInsensitive(username);
-
-      if (!user || !user.twoFaEnabled) {
-        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid credentials.' });
-      }
-
-      if (!user.password) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'Social login accounts cannot use 2FA reset.',
-        });
-      }
-
-      const isMatch = await comparePassword(password, user.password);
-      if (!isMatch) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid credentials.' });
-      }
-
-      const otp = generateOtp();
-      const expiresAt = new Date(Date.now() + this.config.tokenSettings.otpValidityMs);
-
-      await this.config.database.otp.create({ userId: user.id, code: otp, expiresAt });
-
-      if (this.config.emailService) {
-        await this.config.emailService.sendOTPEmail(user.email, otp);
-      }
-
-      return { success: true };
-    });
-  }
-
-  private twoFaResetVerify() {
-    return this.procedure.input(twoFaResetVerifySchema).mutation(async ({ input }) => {
-      this.checkConfig();
-      const { code, username } = input;
-
-      const user = await this.config.database.user.findByEmailOrUsernameInsensitive(username);
-
-      if (!user) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
-      }
-
-      const otp = await this.config.database.otp.findValidByUserAndCode(user.id, code);
-
-      if (!otp) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid or expired OTP' });
-      }
-
-      await this.config.database.otp.delete(otp.id);
-
-      await this.config.database.user.update(user.id, { twoFaEnabled: false });
-
-      await this.config.database.session.clearTwoFaSecrets(user.id);
-
-      return { success: true, message: '2FA has been reset.' };
     });
   }
 
@@ -246,16 +251,16 @@ export class TwoFaProcedureFactory {
       const { userId, sessionId } = ctx;
       const { pushToken } = input;
 
-      await this.config.database.session.revokeByDevicePushToken(userId, pushToken, sessionId);
+      await this.deviceAuth.session.revokeByDevicePushToken(userId, pushToken, sessionId);
 
-      const checkDevice = await this.config.database.device.findByTokenSessionAndUser(
+      const checkDevice = await this.deviceAuth.device.findByTokenSessionAndUser(
         pushToken,
         sessionId,
         userId
       );
 
       if (!checkDevice) {
-        await this.config.database.device.upsertByPushToken(pushToken, sessionId, userId);
+        await this.deviceAuth.device.upsertByPushToken(pushToken, sessionId, userId);
       }
 
       return { registered: true };
@@ -270,17 +275,17 @@ export class TwoFaProcedureFactory {
         const { userId } = ctx;
         const { pushToken } = input;
 
-        const device = await this.config.database.device.findByUserAndToken(userId, pushToken);
+        const device = await this.deviceAuth.device.findByUserAndToken(userId, pushToken);
 
         if (device) {
-          await this.config.database.session.clearDeviceId(userId, device.id);
+          await this.deviceAuth.session.clearDeviceId(userId, device.id);
 
-          await this.config.database.device.disconnectUser(device.id, userId);
+          await this.deviceAuth.device.disconnectUser(device.id, userId);
 
-          const hasUsers = await this.config.database.device.hasRemainingUsers(device.id);
+          const hasUsers = await this.deviceAuth.device.hasRemainingUsers(device.id);
 
           if (!hasUsers) {
-            await this.config.database.device.delete(device.id);
+            await this.deviceAuth.device.delete(device.id);
           }
         }
 

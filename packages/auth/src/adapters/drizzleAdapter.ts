@@ -1,4 +1,4 @@
-import { eq, and, or, isNull, isNotNull, gte, ne, sql } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, ne, sql } from 'drizzle-orm';
 import type { AnyPgTable, PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 
 import type {
@@ -9,9 +9,9 @@ import type {
   CreateSessionData,
   CreateUserData,
   DatabaseAdapter,
-  SessionWithDevice,
   SessionWithUser,
 } from './database';
+import type { DeviceAuthAdapter, SessionWithDevice } from './deviceAuth';
 
 /**
  * A Postgres Drizzle table with column properties accessible by name.
@@ -22,9 +22,9 @@ import type {
 type DrizzleTable = AnyPgTable & Record<string, any>;
 
 /**
- * Drizzle table references required by the adapter.
- * Consumers pass their Drizzle Postgres table objects so the adapter
- * can build queries without knowing the schema file location.
+ * Drizzle table references required by the **core** adapter.
+ * Standard-mode consumers only need these. Device-mode consumers also pass
+ * a separate `DrizzleDeviceAdapterTables` set to `createDrizzleDeviceAdapter`.
  *
  * **Note:** This adapter only supports PostgreSQL via `drizzle-orm/pg-core`.
  */
@@ -33,8 +33,17 @@ export interface DrizzleAdapterTables {
   sessions: DrizzleTable;
   otps: DrizzleTable;
   passwordResets: DrizzleTable;
-  devices: DrizzleTable;
   admins: DrizzleTable;
+}
+
+/**
+ * Drizzle table references for the device-mode 2FA adapter.
+ * Required by `createDrizzleDeviceAdapter`. The `sessions` table here must
+ * have the device-flow columns (`twoFaSecret`, `deviceId`).
+ */
+export interface DrizzleDeviceAdapterTables {
+  sessions: DrizzleTable;
+  devices: DrizzleTable;
   /** Join table for many-to-many device↔user relation (if applicable). */
   devicesToUsers?: DrizzleTable;
   /** Join table for many-to-many device↔session relation (if applicable). */
@@ -48,7 +57,11 @@ export interface DrizzleAdapterTables {
 type AnyPgDatabase = PgDatabase<PgQueryResultHKT, Record<string, unknown>>;
 
 /**
- * Creates a DatabaseAdapter backed by Drizzle ORM.
+ * Creates the core DatabaseAdapter backed by Drizzle ORM.
+ *
+ * Targets the **standard** schema (no `Device` table, no per-session
+ * `twoFaSecret` column). The `users` table must have `twoFaSecret`
+ * (text, nullable) and `twoFaBackupCodes` (text[], default '{}').
  *
  * Usage:
  * ```ts
@@ -62,20 +75,18 @@ type AnyPgDatabase = PgDatabase<PgQueryResultHKT, Record<string, unknown>>;
  *   sessions: schema.sessions,
  *   otps: schema.otps,
  *   passwordResets: schema.passwordResets,
- *   devices: schema.devices,
  *   admins: schema.admins,
  * });
  * ```
  *
- * **Important:** This adapter uses Drizzle's relational query API (`db.query.*`)
- * for joins and `db.insert/update/delete` for mutations. Make sure your Drizzle
- * instance is created with `{ schema }` so relational queries work.
+ * For the device-mode 2FA flow, ALSO pass `createDrizzleDeviceAdapter(db, ...)`
+ * as `deviceAuth` on AuthConfig.
  */
 export function createDrizzleAdapter(
   db: AnyPgDatabase,
   tables: DrizzleAdapterTables
 ): DatabaseAdapter {
-  const { users, sessions, otps, passwordResets, devices, admins } = tables;
+  const { users, sessions, otps, passwordResets, admins } = tables;
 
   return {
     user: {
@@ -156,6 +167,72 @@ export function createDrizzleAdapter(
           .returning();
         return rows[0] as unknown as AuthUser;
       },
+
+      async findTwoFaSecret(
+        id: number
+      ): Promise<{ twoFaSecret: string | null; twoFaBackupCodes: string[] }> {
+        const rows = await db
+          .select({
+            twoFaSecret: users.twoFaSecret,
+            twoFaBackupCodes: users.twoFaBackupCodes,
+          })
+          .from(users)
+          .where(eq(users.id, id))
+          .limit(1);
+        const row = rows[0] as { twoFaSecret: string | null; twoFaBackupCodes: string[] | null } | undefined;
+        return {
+          twoFaSecret: row?.twoFaSecret ?? null,
+          twoFaBackupCodes: row?.twoFaBackupCodes ?? [],
+        };
+      },
+
+      async setTwoFaSecret(
+        id: number,
+        secret: string,
+        backupCodes: string[]
+      ): Promise<void> {
+        await db
+          .update(users)
+          .set({ twoFaSecret: secret, twoFaBackupCodes: backupCodes })
+          .where(eq(users.id, id));
+      },
+
+      async setBackupCodes(id: number, backupCodes: string[]): Promise<void> {
+        await db
+          .update(users)
+          .set({ twoFaBackupCodes: backupCodes })
+          .where(eq(users.id, id));
+      },
+
+      async clearTwoFaSecret(id: number): Promise<void> {
+        await db
+          .update(users)
+          .set({ twoFaSecret: null, twoFaBackupCodes: [] })
+          .where(eq(users.id, id));
+      },
+
+      async consumeBackupCode(id: number, code: string): Promise<boolean> {
+        // Drizzle doesn't have a portable transaction API for every driver,
+        // so we do read-modify-write with a unique-array constraint guard.
+        // Race conditions: with 10 backup codes used at most twice, the
+        // window is small enough that the cost is acceptable.
+        const rows = await db
+          .select({ twoFaBackupCodes: users.twoFaBackupCodes })
+          .from(users)
+          .where(eq(users.id, id))
+          .limit(1);
+        const row = rows[0] as { twoFaBackupCodes: string[] | null } | undefined;
+        if (!row) return false;
+        const codes = row.twoFaBackupCodes ?? [];
+        const idx = codes.indexOf(code);
+        if (idx === -1) return false;
+        const next = [...codes.slice(0, idx), ...codes.slice(idx + 1)];
+        await db
+          .update(users)
+          .set({ twoFaBackupCodes: next })
+          .where(eq(users.id, id));
+        return true;
+      },
     },
 
     session: {
@@ -165,12 +242,10 @@ export function createDrizzleAdapter(
             id: sessions.id,
             userId: sessions.userId,
             socketId: sessions.socketId,
-            twoFaSecret: sessions.twoFaSecret,
             browserName: sessions.browserName,
             issuedAt: sessions.issuedAt,
             lastUsed: sessions.lastUsed,
             revokedAt: sessions.revokedAt,
-            deviceId: sessions.deviceId,
             user: {
               status: users.status,
               verifiedHumanAt: users.verifiedHumanAt,
@@ -191,7 +266,7 @@ export function createDrizzleAdapter(
 
       async update(
         id: number,
-        data: Partial<Pick<AuthSession, 'revokedAt' | 'lastUsed' | 'twoFaSecret' | 'deviceId'>>
+        data: Partial<Pick<AuthSession, 'revokedAt' | 'lastUsed'>>
       ): Promise<AuthSession> {
         const rows = await db
           .update(sessions)
@@ -204,24 +279,20 @@ export function createDrizzleAdapter(
       async updateLastUsed(
         id: number
       ): Promise<AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } }> {
-        // Update session
         await db
           .update(sessions)
           .set({ lastUsed: new Date() })
           .where(eq(sessions.id, id));
 
-        // Fetch session with user join
         const rows = await db
           .select({
             id: sessions.id,
             userId: sessions.userId,
             socketId: sessions.socketId,
-            twoFaSecret: sessions.twoFaSecret,
             browserName: sessions.browserName,
             issuedAt: sessions.issuedAt,
             lastUsed: sessions.lastUsed,
             revokedAt: sessions.revokedAt,
-            deviceId: sessions.deviceId,
             user: {
               verifiedHumanAt: users.verifiedHumanAt,
               updatedAt: users.updatedAt,
@@ -232,7 +303,9 @@ export function createDrizzleAdapter(
           .where(eq(sessions.id, id))
           .limit(1);
 
-        return rows[0] as unknown as AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } };
+        return rows[0] as unknown as AuthSession & {
+          user: { verifiedHumanAt: Date | null; updatedAt: Date };
+        };
       },
 
       async revoke(id: number): Promise<void> {
@@ -272,90 +345,6 @@ export function createDrizzleAdapter(
           .update(sessions)
           .set({ revokedAt: new Date() })
           .where(and(...conditions));
-      },
-
-      async findTwoFaSecretsByUserId(
-        userId: number
-      ): Promise<{ twoFaSecret: string | null }[]> {
-        const secretRows = await db
-          .select({ twoFaSecret: sessions.twoFaSecret })
-          .from(sessions)
-          .where(and(eq(sessions.userId, userId), isNotNull(sessions.twoFaSecret)));
-        return secretRows as { twoFaSecret: string | null }[];
-      },
-
-      async clearTwoFaSecrets(userId: number, excludeSessionId?: number): Promise<void> {
-        const conditions = [eq(sessions.userId, userId)];
-        if (excludeSessionId !== undefined) {
-          conditions.push(ne(sessions.id, excludeSessionId));
-        }
-
-        await db
-          .update(sessions)
-          .set({ twoFaSecret: null })
-          .where(and(...conditions));
-      },
-
-      async findByIdWithDevice(
-        id: number,
-        userId: number
-      ): Promise<SessionWithDevice | null> {
-        const rows = await db
-          .select({
-            twoFaSecret: sessions.twoFaSecret,
-            deviceId: sessions.deviceId,
-            device: {
-              pushToken: devices.pushToken,
-            },
-          })
-          .from(sessions)
-          .leftJoin(devices, eq(sessions.deviceId, devices.id))
-          .where(and(eq(sessions.id, id), eq(sessions.userId, userId)))
-          .limit(1);
-
-        if (!rows[0]) return null;
-
-        const row = rows[0] as Record<string, unknown>;
-        const device = row.device as { pushToken?: string } | null;
-        return {
-          twoFaSecret: row.twoFaSecret as string | null,
-          deviceId: row.deviceId as number | null,
-          device: device?.pushToken ? { pushToken: device.pushToken } : null,
-        };
-      },
-
-      async revokeByDevicePushToken(
-        userId: number,
-        pushToken: string,
-        excludeSessionId: number
-      ): Promise<void> {
-        // Find device by pushToken, then revoke matching sessions
-        const deviceRows = await db
-          .select({ id: devices.id })
-          .from(devices)
-          .where(eq(devices.pushToken, pushToken))
-          .limit(1) as { id: number }[];
-
-        if (!deviceRows[0]) return;
-
-        await db
-          .update(sessions)
-          .set({ revokedAt: new Date() })
-          .where(
-            and(
-              eq(sessions.userId, userId),
-              ne(sessions.id, excludeSessionId),
-              isNull(sessions.revokedAt),
-              eq(sessions.deviceId, deviceRows[0].id)
-            )
-          );
-      },
-
-      async clearDeviceId(userId: number, deviceId: number): Promise<void> {
-        await db
-          .update(sessions)
-          .set({ deviceId: null })
-          .where(and(eq(sessions.userId, userId), eq(sessions.deviceId, deviceId)));
       },
     },
 
@@ -412,24 +401,151 @@ export function createDrizzleAdapter(
       },
     },
 
+    admin: {
+      async findByUserId(userId: number): Promise<{ ip: string } | null> {
+        const rows = await db
+          .select({ ip: admins.ip })
+          .from(admins)
+          .where(eq(admins.userId, userId))
+          .limit(1);
+        return (rows[0] as { ip: string } | undefined) ?? null;
+      },
+    },
+  };
+}
+
+/**
+ * Creates a DeviceAuthAdapter backed by Drizzle ORM.
+ *
+ * Pass this as `deviceAuth` on `AuthConfig` when using
+ * `features.twoFaMode: 'device'`. The `sessions` table passed here must
+ * have the device-flow columns (`twoFaSecret`, `deviceId`).
+ *
+ * Standard-mode consumers do NOT need this — leave `deviceAuth` undefined.
+ */
+export function createDrizzleDeviceAdapter(
+  db: AnyPgDatabase,
+  tables: DrizzleDeviceAdapterTables
+): DeviceAuthAdapter {
+  const { sessions, devices } = tables;
+
+  return {
+    session: {
+      async findTwoFaSecretsByUserId(
+        userId: number
+      ): Promise<{ twoFaSecret: string | null }[]> {
+        const secretRows = await db
+          .select({ twoFaSecret: sessions.twoFaSecret })
+          .from(sessions)
+          .where(and(eq(sessions.userId, userId), sql`${sessions.twoFaSecret} is not null`));
+        return secretRows as { twoFaSecret: string | null }[];
+      },
+
+      async clearTwoFaSecrets(userId: number, excludeSessionId?: number): Promise<void> {
+        const conditions = [eq(sessions.userId, userId)];
+        if (excludeSessionId !== undefined) {
+          conditions.push(ne(sessions.id, excludeSessionId));
+        }
+
+        await db
+          .update(sessions)
+          .set({ twoFaSecret: null })
+          .where(and(...conditions));
+      },
+
+      async setTwoFaSecret(sessionId: number, secret: string | null): Promise<void> {
+        await db
+          .update(sessions)
+          .set({ twoFaSecret: secret })
+          .where(eq(sessions.id, sessionId));
+      },
+
+      async findByIdWithDevice(
+        id: number,
+        userId: number
+      ): Promise<SessionWithDevice | null> {
+        const rows = await db
+          .select({
+            twoFaSecret: sessions.twoFaSecret,
+            deviceId: sessions.deviceId,
+            device: {
+              pushToken: devices.pushToken,
+            },
+          })
+          .from(sessions)
+          .leftJoin(devices, eq(sessions.deviceId, devices.id))
+          .where(and(eq(sessions.id, id), eq(sessions.userId, userId)))
+          .limit(1);
+
+        if (!rows[0]) return null;
+
+        const row = rows[0] as Record<string, unknown>;
+        const device = row.device as { pushToken?: string } | null;
+        return {
+          twoFaSecret: row.twoFaSecret as string | null,
+          deviceId: row.deviceId as number | null,
+          device: device?.pushToken ? { pushToken: device.pushToken } : null,
+        };
+      },
+
+      async getDeviceId(sessionId: number, userId: number): Promise<number | null> {
+        const rows = await db
+          .select({ deviceId: sessions.deviceId })
+          .from(sessions)
+          .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId)))
+          .limit(1);
+        const row = rows[0] as { deviceId: number | null } | undefined;
+        return row?.deviceId ?? null;
+      },
+
+      async revokeByDevicePushToken(
+        userId: number,
+        pushToken: string,
+        excludeSessionId: number
+      ): Promise<void> {
+        const deviceRows = (await db
+          .select({ id: devices.id })
+          .from(devices)
+          .where(eq(devices.pushToken, pushToken))
+          .limit(1)) as { id: number }[];
+
+        if (!deviceRows[0]) return;
+
+        await db
+          .update(sessions)
+          .set({ revokedAt: new Date() })
+          .where(
+            and(
+              eq(sessions.userId, userId),
+              ne(sessions.id, excludeSessionId),
+              isNull(sessions.revokedAt),
+              eq(sessions.deviceId, deviceRows[0].id)
+            )
+          );
+      },
+
+      async clearDeviceId(userId: number, deviceId: number): Promise<void> {
+        await db
+          .update(sessions)
+          .set({ deviceId: null })
+          .where(and(eq(sessions.userId, userId), eq(sessions.deviceId, deviceId)));
+      },
+    },
+
     device: {
       async findByTokenSessionAndUser(
         pushToken: string,
         sessionId: number,
         userId: number
       ): Promise<{ id: number } | null> {
-        // With Drizzle, many-to-many requires querying through join tables.
-        // This assumes the consumer's schema has the appropriate relations set up.
-        // We query devices and check for matching session and user via subqueries.
-        const rows = await db
+        const rows = (await db
           .select({ id: devices.id })
           .from(devices)
           .where(eq(devices.pushToken, pushToken))
-          .limit(1) as { id: number }[];
+          .limit(1)) as { id: number }[];
 
         if (!rows[0]) return null;
 
-        // Verify the device is connected to the session and user via join tables
         if (tables.devicesToSessions && tables.devicesToUsers) {
           const sessionLink = await db
             .select()
@@ -464,26 +580,24 @@ export function createDrizzleAdapter(
         sessionId: number,
         userId: number
       ): Promise<void> {
-        // Check if device exists
-        const existing = await db
+        const existing = (await db
           .select({ id: devices.id })
           .from(devices)
           .where(eq(devices.pushToken, pushToken))
-          .limit(1) as { id: number }[];
+          .limit(1)) as { id: number }[];
 
         let deviceId: number;
 
         if (existing[0]) {
           deviceId = existing[0].id;
         } else {
-          const insertedRows = await db
+          const insertedRows = (await db
             .insert(devices)
             .values({ pushToken })
-            .returning({ id: devices.id }) as { id: number }[];
+            .returning({ id: devices.id })) as { id: number }[];
           deviceId = insertedRows[0].id;
         }
 
-        // Connect session and user via join tables (if using explicit join tables)
         if (tables.devicesToSessions) {
           await db
             .insert(tables.devicesToSessions)
@@ -497,7 +611,6 @@ export function createDrizzleAdapter(
             .onConflictDoNothing();
         }
 
-        // Also set deviceId on the session directly
         await db
           .update(sessions)
           .set({ deviceId })
@@ -509,7 +622,7 @@ export function createDrizzleAdapter(
         pushToken: string
       ): Promise<{ id: number } | null> {
         if (tables.devicesToUsers) {
-          const joinRows = await db
+          const joinRows = (await db
             .select({ id: devices.id })
             .from(devices)
             .innerJoin(
@@ -522,16 +635,15 @@ export function createDrizzleAdapter(
                 eq(tables.devicesToUsers.userId, userId)
               )
             )
-            .limit(1) as { id: number }[];
+            .limit(1)) as { id: number }[];
           return joinRows[0] ? { id: joinRows[0].id } : null;
         }
 
-        // Fallback: just find by pushToken
-        const rows = await db
+        const rows = (await db
           .select({ id: devices.id })
           .from(devices)
           .where(eq(devices.pushToken, pushToken))
-          .limit(1) as { id: number }[];
+          .limit(1)) as { id: number }[];
         return rows[0] ? { id: rows[0].id } : null;
       },
 
@@ -562,17 +674,6 @@ export function createDrizzleAdapter(
 
       async delete(id: number): Promise<void> {
         await db.delete(devices).where(eq(devices.id, id));
-      },
-    },
-
-    admin: {
-      async findByUserId(userId: number): Promise<{ ip: string } | null> {
-        const rows = await db
-          .select({ ip: admins.ip })
-          .from(admins)
-          .where(eq(admins.userId, userId))
-          .limit(1);
-        return (rows[0] as { ip: string } | undefined) ?? null;
       },
     },
   };
