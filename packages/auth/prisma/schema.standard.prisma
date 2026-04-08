@@ -52,6 +52,11 @@ enum OAuthProvider {
 model User {
   id                      Int                     @id @default(autoincrement())
   createdAt               DateTime                @default(now())
+  // Required by AuthUser/runtime: login/refresh embed `updatedAt.toISOString()`
+  // in the client cookie payload, and the drizzle adapter selects this column
+  // on every session lookup. Without it, login crashes with
+  // "Cannot read properties of undefined (reading 'toISOString')".
+  updatedAt               DateTime                @default(now()) @updatedAt
   status                  UserStatus              @default(ACTIVE)
   email                   String                  @unique
   emailVerificationStatus EmailVerificationStatus @default(UNVERIFIED)
