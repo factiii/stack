@@ -106,16 +106,17 @@ export type AppRouter = typeof appRouter;
 
 If using Drizzle, your schema must define these tables with matching column names:
 
+Standard 2FA mode (the default) — TOTP secret + backup codes live on the user; no `Device` table, no per-session 2FA columns.
+
 | Table            | Required columns |
 |------------------|-----------------|
-| `users`          | id, status, email, username, password, twoFaEnabled, oauthProvider, oauthId, tag, verifiedHumanAt, emailVerificationStatus, otpForEmailVerification, isActive |
-| `sessions`       | id, userId, socketId, twoFaSecret, browserName, issuedAt, lastUsed, revokedAt, deviceId |
+| `users`          | id, status, email, username, password, twoFaSecret, twoFaBackupCodes, oauthProvider, oauthId, tag, verifiedHumanAt, emailVerificationStatus, otpForEmailVerification, isActive |
+| `sessions`       | id, userId, socketId, browserName, issuedAt, lastUsed, revokedAt |
 | `otps`           | id, code, expiresAt, userId |
 | `passwordResets` | id, createdAt, userId |
-| `devices`        | id, pushToken, createdAt |
 | `admins`         | userId, ip |
 
-For the Device many-to-many relations, you can either use explicit join tables (`devicesToUsers`, `devicesToSessions`) or handle them through Drizzle's relations API.
+For the legacy device-mode flow (`features.twoFaMode: 'device'`), see `prisma/schema.device.prisma` — it adds a `Device` table, `Session.twoFaSecret`, `Session.deviceId`, and a `User.twoFaEnabled` flag, and you must additionally pass `createPrismaDeviceAdapter(prisma)` (or the Drizzle equivalent) as `deviceAuth` on `AuthConfig`.
 
 ## Required environment variables
 

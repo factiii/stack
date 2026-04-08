@@ -48,7 +48,7 @@ async function seed() {
   });
   console.log(`  Created user: adminuser (id: ${adminUser.id}) with session`);
 
-  // 2FA user
+  // 2FA user — starts without 2FA; the e2e two-factor specs enable it themselves.
   const twofaUser = await prisma.user.upsert({
     where: { email: 'twofa@example.com' },
     update: {},
@@ -58,10 +58,9 @@ async function seed() {
       password,
       status: 'ACTIVE',
       emailVerificationStatus: 'VERIFIED',
-      twoFaEnabled: true,
     },
   });
-  console.log(`  Created user: twofa_user (id: ${twofaUser.id}) with 2FA enabled`);
+  console.log(`  Created user: twofa_user (id: ${twofaUser.id})`);
 
   console.log('\nSeed complete. Test credentials:');
   console.log('  All passwords: password123');

@@ -127,7 +127,7 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
       async clearTwoFaSecret(id: number): Promise<void> {
         await db.user.update({
           where: { id },
-          data: { twoFaSecret: null, twoFaBackupCodes: [], twoFaEnabled: false },
+          data: { twoFaSecret: null, twoFaBackupCodes: [] },
         });
       },
 

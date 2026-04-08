@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { type ClientCookiePayload } from '../types';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities/browser';
-import { verifyTwoFaChallenge } from './twoFa/verifyChallenge';
+import { isTwoFaEnabled, verifyTwoFaChallenge } from './twoFa/verifyChallenge';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
 import { createAuthToken } from '../utilities/jwt';
@@ -99,7 +99,6 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         password: hashedPassword,
         status: 'ACTIVE',
         tag: this.config.features.biometric ? 'BOT' : 'HUMAN',
-        twoFaEnabled: false,
         emailVerificationStatus: 'UNVERIFIED',
         verifiedHumanAt: null,
       });
@@ -204,7 +203,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         });
       }
 
-      if (user.twoFaEnabled && this.config.features?.twoFa) {
+      if (isTwoFaEnabled(this.config, user) && this.config.features?.twoFa) {
         if (!code) {
           return {
             success: false,

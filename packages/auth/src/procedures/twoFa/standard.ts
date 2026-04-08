@@ -109,12 +109,14 @@ export class StandardTwoFaProcedureFactory {
   }
 
   /**
-   * Generate a fresh TOTP secret + backup codes, persist them on the user
-   * row, and flip `twoFaEnabled` to true.
+   * Generate a fresh TOTP secret + backup codes and persist them on the user.
    *
    * Returns `{ secret, backupCodes, otpauthUrl }` so the client can render a
    * QR code, copy the secret manually, and store the backup codes somewhere
    * safe. The `onTwoFaStatusChanged` hook fires synchronously.
+   *
+   * Standard mode has no separate `twoFaEnabled` column — 2FA is "on" iff
+   * `twoFaSecret` is non-null. A single atomic write covers enrollment.
    *
    * NOTE: This is a single-step enable. If you want a "scan + confirm" UX
    * where the user proves they entered the secret correctly before 2FA
@@ -139,7 +141,7 @@ export class StandardTwoFaProcedureFactory {
         });
       }
 
-      if (user.twoFaEnabled) {
+      if (user.twoFaSecret) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: '2FA already enabled.' });
       }
 
@@ -147,7 +149,6 @@ export class StandardTwoFaProcedureFactory {
       const backupCodes = generateBackupCodes();
 
       await this.config.database.user.setTwoFaSecret(userId, secret, backupCodes);
-      await this.config.database.user.update(userId, { twoFaEnabled: true });
 
       if (this.config.hooks?.onTwoFaStatusChanged) {
         await this.config.hooks.onTwoFaStatusChanged(userId, true);
@@ -216,7 +217,7 @@ export class StandardTwoFaProcedureFactory {
 
         const user = await this.config.database.user.findById(userId);
 
-        if (!user || !user.twoFaEnabled) {
+        if (!user || !user.twoFaSecret) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: '2FA not enabled.' });
         }
         if (!user.password) {

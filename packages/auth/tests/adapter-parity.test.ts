@@ -162,7 +162,7 @@ function createStubDrizzleDeps() {
 
   const tables = {
     users: stubTable('users', [
-      'id', 'status', 'email', 'username', 'password', 'twoFaEnabled',
+      'id', 'status', 'email', 'username', 'password',
       'twoFaSecret', 'twoFaBackupCodes',
       'oauthProvider', 'oauthId', 'tag', 'verifiedHumanAt',
       'emailVerificationStatus', 'otpForEmailVerification', 'isActive',

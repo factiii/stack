@@ -207,7 +207,7 @@ export function createDrizzleAdapter(
       async clearTwoFaSecret(id: number): Promise<void> {
         await db
           .update(users)
-          .set({ twoFaSecret: null, twoFaBackupCodes: [], twoFaEnabled: false })
+          .set({ twoFaSecret: null, twoFaBackupCodes: [] })
           .where(eq(users.id, id));
       },
 

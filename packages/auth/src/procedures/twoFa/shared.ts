@@ -14,17 +14,20 @@ import {
   twoFaResetSchema,
   twoFaResetVerifySchema,
 } from '../../validators/twoFa.shared';
+import { isTwoFaEnabled } from './verifyChallenge';
 
 /**
  * Build the `twoFaReset` procedure: re-authenticates the user with
  * username + password, then emails them a 6-digit OTP they can use
  * to disable 2FA via `twoFaResetVerify`.
  *
- * Standard mode: clears `User.twoFaSecret` + backup codes.
- * Device mode: clears all `Session.twoFaSecret` rows.
+ * The `clearOnVerify` callback owns ALL mode-specific teardown:
+ *   Standard mode: clears `User.twoFaSecret` + backup codes.
+ *   Device mode:   clears all `Session.twoFaSecret` rows AND flips
+ *                  `User.twoFaEnabled` to false.
  *
- * The `clearOnVerify` callback is what makes the difference — each mode
- * passes its own implementation.
+ * Keeping every "is 2FA on?" / "turn 2FA off" decision out of this file
+ * means shared.ts never has to know which mode it's running under.
  */
 export function buildTwoFaResetProcedures(
   config: ResolvedAuthConfig,
@@ -43,7 +46,7 @@ export function buildTwoFaResetProcedures(
 
     const user = await config.database.user.findByEmailOrUsernameInsensitive(username);
 
-    if (!user || !user.twoFaEnabled) {
+    if (!user || !isTwoFaEnabled(config, user)) {
       throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid credentials.' });
     }
 
@@ -91,9 +94,7 @@ export function buildTwoFaResetProcedures(
 
       await config.database.otp.delete(otp.id);
 
-      await config.database.user.update(user.id, { twoFaEnabled: false });
-
-      // Mode-specific cleanup (clear user.twoFaSecret OR session.twoFaSecret rows)
+      // Mode-specific teardown owns clearing material AND any enabled flag.
       await clearOnVerify(user.id);
 
       if (config.hooks?.onTwoFaStatusChanged) {

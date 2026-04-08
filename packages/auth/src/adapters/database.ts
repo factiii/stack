@@ -15,11 +15,16 @@ export interface AuthUser {
   email: string;
   username: string;
   password: string | null;
-  twoFaEnabled: boolean;
-  /** TOTP secret for the standard (user-centric) 2FA flow. Null when 2FA is disabled. */
-  twoFaSecret: string | null;
-  /** Single-use recovery codes for the standard 2FA flow. Empty array when none. */
-  twoFaBackupCodes: string[];
+  /**
+   * Device-mode only. The standard schema has no such column; 2FA-on is
+   * derived from `twoFaSecret != null`. Use `isTwoFaEnabled(config, user)`
+   * from `procedures/twoFa/verifyChallenge` to read across both modes.
+   */
+  twoFaEnabled?: boolean;
+  /** Standard-mode only. TOTP secret; non-null means 2FA is enabled. */
+  twoFaSecret?: string | null;
+  /** Standard-mode only. Single-use recovery codes. */
+  twoFaBackupCodes?: string[];
   oauthProvider: string | null;
   oauthId: string | null;
   tag: string;
@@ -68,7 +73,6 @@ export interface CreateUserData {
   password: string | null;
   status: string;
   tag: string;
-  twoFaEnabled: boolean;
   emailVerificationStatus: string;
   verifiedHumanAt: Date | null;
   oauthProvider?: string;
@@ -102,11 +106,11 @@ export interface DatabaseAdapter {
     update(id: number, data: Partial<Omit<AuthUser, 'id'>>): Promise<AuthUser>;
     /** Read just the standard-mode 2FA secret + backup codes for a user. */
     findTwoFaSecret(id: number): Promise<{ twoFaSecret: string | null; twoFaBackupCodes: string[] }>;
-    /** Persist the standard-mode 2FA secret and backup codes; flips `twoFaEnabled` to true. */
+    /** Persist the standard-mode 2FA secret and backup codes. Non-null secret == 2FA on. */
     setTwoFaSecret(id: number, secret: string, backupCodes: string[]): Promise<void>;
-    /** Replace the backup codes without touching the TOTP secret or `twoFaEnabled`. */
+    /** Replace the backup codes without touching the TOTP secret. */
     setBackupCodes(id: number, backupCodes: string[]): Promise<void>;
-    /** Clear the standard-mode 2FA secret + backup codes; flips `twoFaEnabled` to false. */
+    /** Clear the standard-mode 2FA secret + backup codes. Null secret == 2FA off. */
     clearTwoFaSecret(id: number): Promise<void>;
     /** Atomically remove a backup code if present. Returns true if a code was consumed. */
     consumeBackupCode(id: number, code: string): Promise<boolean>;

@@ -83,9 +83,12 @@ export class DeviceTwoFaProcedureFactory {
     const reset = buildTwoFaResetProcedures(
       this.config,
       this.procedure,
-      // Device-mode reset clears every session twoFaSecret for the user.
+      // Device-mode reset: clear every session twoFaSecret AND flip the
+      // user-level enabled flag (the only durable "is 2FA on" signal in
+      // device mode, since secrets live on ephemeral sessions).
       async (userId) => {
         await this.deviceAuth.session.clearTwoFaSecrets(userId);
+        await this.config.database.user.update(userId, { twoFaEnabled: false });
       }
     );
 

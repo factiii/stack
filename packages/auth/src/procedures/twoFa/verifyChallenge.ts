@@ -10,6 +10,21 @@ import type { ResolvedAuthConfig } from '../../utilities/config';
 import { verifyDeviceTwoFa } from './device';
 import { verifyStandardTwoFa } from './standard';
 
+/**
+ * Mode-aware "is 2FA active for this user?" check.
+ *
+ * Standard mode derives this from `User.twoFaSecret` (single source of truth —
+ * no separate boolean column). Device mode reads `User.twoFaEnabled` because
+ * the secret material lives on `Session`, not `User`, and sessions are
+ * ephemeral.
+ */
+export function isTwoFaEnabled(config: ResolvedAuthConfig, user: AuthUser): boolean {
+  if (config.features.twoFaMode === 'device') {
+    return Boolean(user.twoFaEnabled);
+  }
+  return user.twoFaSecret != null;
+}
+
 export async function verifyTwoFaChallenge(
   config: ResolvedAuthConfig,
   user: AuthUser,
