@@ -74,7 +74,8 @@ const createContext = ({ req, res }: CreateHTTPContextOptions): TrpcContext => (
     },
     features: {
       twoFa: true,
-      twoFaRequiresDevice: false, // Disable device requirement for testing
+      // E2E uses the default standard (user-centric TOTP) flow.
+      // No deviceAuth needed.
       biometric: false,
       emailVerification: true,
     },

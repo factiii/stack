@@ -9,7 +9,7 @@ export type {
   CreateSessionData,
   CreateUserData,
   DatabaseAdapter,
-  SessionWithDevice,
   SessionWithUser,
 } from './database';
-export { createPrismaAdapter } from './prismaAdapter';
+export type { DeviceAuthAdapter, SessionWithDevice } from './deviceAuth';
+export { createPrismaAdapter, createPrismaDeviceAdapter } from './prismaAdapter';

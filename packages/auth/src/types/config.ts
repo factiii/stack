@@ -1,8 +1,21 @@
 import { type EmailAdapter } from '../adapters';
 import type { DatabaseAdapter } from '../adapters/database';
+import type { DeviceAuthAdapter } from '../adapters/deviceAuth';
 import { type CookieSettings } from '../types';
 import type { OAuthKeys } from '../utilities/oauth';
 import { type AuthHooks, type SchemaExtensions } from './hooks';
+
+/**
+ * Which 2FA flow this consumer uses.
+ *
+ * - `'standard'` (default): user-centric TOTP. Secret stored on `User.twoFaSecret`,
+ *   recovery via per-user backup codes. Works with any TOTP authenticator app
+ *   (Google Authenticator, 1Password, Authy, …). No `Device` table required.
+ * - `'device'`: legacy factiii flow. Secrets stored per-session, enrollment
+ *   requires a registered mobile device, push tokens are used as TOTP key
+ *   material. Requires the consumer to also pass a `deviceAuth` adapter.
+ */
+export type TwoFaMode = 'standard' | 'device';
 
 // Re-export SchemaExtensions for backwards compatibility
 export type { SchemaExtensions } from './hooks';
@@ -25,8 +38,12 @@ export interface TokenSettings {
 export interface AuthFeatures {
   /** Enable two-factor authentication */
   twoFa?: boolean;
-  /** Require mobile device to enable 2FA (default: true). Set to false for testing. */
-  twoFaRequiresDevice?: boolean;
+  /**
+   * Which 2FA flow to expose. Defaults to `'standard'` (user-centric TOTP).
+   * Set to `'device'` for the legacy factiii mobile-bound flow — when set,
+   * the consumer must also pass `deviceAuth` on `AuthConfig`.
+   */
+  twoFaMode?: TwoFaMode;
   /** OAuth providers configuration */
   oauth?: {
     google?: boolean;
@@ -56,6 +73,15 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
    * Prisma client instance — kept for backwards compatibility.
    */
   prisma?: unknown;
+
+  /**
+   * Device-mode 2FA adapter.
+   *
+   * Required (and only used) when `features.twoFaMode === 'device'`.
+   * Provides access to per-session twoFaSecret columns and the `Device` table.
+   * Standard-mode consumers should leave this undefined.
+   */
+  deviceAuth?: DeviceAuthAdapter;
 
   /**
    * Secret keys for JWT signing

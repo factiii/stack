@@ -53,7 +53,8 @@
       "import": "./dist/stack-plugin.mjs",
       "require": "./dist/stack-plugin.js"
     },
-    "./prisma/schema.prisma": "./prisma/schema.prisma"
+    "./prisma/schema.standard.prisma": "./prisma/schema.standard.prisma",
+    "./prisma/schema.device.prisma": "./prisma/schema.device.prisma"
   },
   "files": [
     "bin",

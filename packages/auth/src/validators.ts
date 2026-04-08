@@ -90,30 +90,6 @@ export const changePasswordSchema = z.object({
 });
 
 /**
- * Schema for 2FA verification
- */
-export const twoFaVerifySchema = z.object({
-  code: z.string().min(6, { message: 'Verification code is required' }),
-  sessionId: z.number().optional(),
-});
-
-/**
- * Schema for 2FA reset request
- */
-export const twoFaResetSchema = z.object({
-  username: z.string().min(1),
-  password: z.string().min(1),
-});
-
-/**
- * Schema for 2FA reset verification
- */
-export const twoFaResetVerifySchema = z.object({
-  code: z.number().min(100000).max(999999),
-  username: z.string().min(1),
-});
-
-/**
  * Schema for email verification
  */
 export const verifyEmailSchema = z.object({
@@ -126,46 +102,35 @@ export const verifyEmailSchema = z.object({
 export const biometricVerifySchema = z.object({});
 
 /**
- * Schema for push token registration
- */
-export const registerPushTokenSchema = z.object({
-  pushToken: z.string().min(1, { message: 'Push token is required' }),
-});
-
-/**
- * Schema for push token deregistration
- */
-export const deregisterPushTokenSchema = z.object({
-  pushToken: z.string().min(1, { message: 'Push token is required' }),
-});
-
-/**
- * Schema for getting 2FA secret
- */
-export const getTwofaSecretSchema = z.object({
-  pushCode: z.string().min(6, { message: 'Push code is required' }),
-});
-
-/**
- * Schema for disabling 2FA
- */
-export const disableTwofaSchema = z.object({
-  password: z.string().min(1, { message: 'Password is required' }),
-});
-
-/**
  * Schema for ending all sessions
  */
 export const endAllSessionsSchema = z.object({
   skipCurrentSession: z.boolean().optional().default(true),
 });
 
+// ── 2FA validators are split by mode and re-exported for convenience ────────
+//
+// Mode-agnostic schemas (login challenge, password-gated disable, email reset)
+// live in ./validators/twoFa.shared.ts and are re-exported here so existing
+// imports continue to work.
+//
+// Mode-specific schemas (standard backup-code regen / device push-token CRUD)
+// live in their own submodules and are imported directly by the corresponding
+// procedure factories — they are NOT re-exported here, so a standard-mode
+// consumer's tRPC client never sees device-flow input types and vice versa.
+export {
+  disableTwofaSchema,
+  twoFaResetSchema,
+  twoFaResetVerifySchema,
+  twoFaVerifySchema,
+  type TwoFaVerifyInput,
+} from './validators/twoFa.shared';
+
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type OAuthLoginInput = z.infer<typeof oAuthLoginSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
-export type TwoFaVerifyInput = z.infer<typeof twoFaVerifySchema>;
 export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
 
 /** Schemas used by auth procedures */

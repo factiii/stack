@@ -38,6 +38,8 @@ model User {
   password                String?
   username                String                  @unique
   twoFaEnabled            Boolean                 @default(false)
+  twoFaSecret             String?
+  twoFaBackupCodes        String[]                @default([])
   oauthProvider           OAuthProvider?
   oauthId                 String?
   tag                     UserTag                 @default(HUMAN)

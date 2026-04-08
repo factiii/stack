@@ -1,10 +1,11 @@
 import { createNoopEmailAdapter } from '../adapters';
 import type { DatabaseAdapter } from '../adapters/database';
+import type { DeviceAuthAdapter } from '../adapters/deviceAuth';
 import { createPrismaAdapter } from '../adapters/prismaAdapter';
 import type { CookieSettings } from '../types';
 import type { AuthConfig, AuthFeatures, TokenSettings } from '../types/config';
 
-export type { AuthConfig, AuthFeatures, TokenSettings } from '../types/config';
+export type { AuthConfig, AuthFeatures, TokenSettings, TwoFaMode } from '../types/config';
 export type { OAuthKeys } from './oauth';
 
 /**
@@ -36,11 +37,15 @@ export const defaultStorageKeys = {
 };
 
 /**
- * Default feature flags (all optional features disabled)
+ * Default feature flags
+ *
+ * 2FA defaults to the standard user-centric TOTP flow. Consumers wanting the
+ * legacy factiii device/push-token flow must opt in via `features.twoFaMode: 'device'`
+ * AND pass a `deviceAuth` adapter on `AuthConfig`.
  */
 export const defaultFeatures: AuthFeatures = {
   twoFa: true,
-  twoFaRequiresDevice: true,
+  twoFaMode: 'standard',
   oauth: { google: true, apple: true },
   biometric: false,
   emailVerification: true,
@@ -58,9 +63,22 @@ export interface ResolvedMagicLinkConfig {
 
 /** Resolved config type with database adapter guaranteed. */
 export type ResolvedAuthConfig = Required<
-  Omit<AuthConfig, 'hooks' | 'oauthKeys' | 'schemaExtensions' | 'prisma' | 'getClientCookiePayload' | 'magicLink'>
+  Omit<
+    AuthConfig,
+    | 'hooks'
+    | 'oauthKeys'
+    | 'schemaExtensions'
+    | 'prisma'
+    | 'getClientCookiePayload'
+    | 'magicLink'
+    | 'deviceAuth'
+  >
 > &
-  AuthConfig & { database: DatabaseAdapter; magicLink?: ResolvedMagicLinkConfig };
+  AuthConfig & {
+    database: DatabaseAdapter;
+    deviceAuth?: DeviceAuthAdapter;
+    magicLink?: ResolvedMagicLinkConfig;
+  };
 
 /**
  * Create a fully resolved auth config with defaults applied.
@@ -79,10 +97,22 @@ export function createAuthConfig(config: AuthConfig): ResolvedAuthConfig {
 
   const emailService = config.emailService ?? createNoopEmailAdapter();
 
+  const features = { ...defaultFeatures, ...config.features };
+
+  // Fail fast: device-mode 2FA requires a DeviceAuthAdapter to function.
+  if (features.twoFa && features.twoFaMode === 'device' && !config.deviceAuth) {
+    throw new Error(
+      "@factiii/auth: features.twoFaMode is 'device' but no `deviceAuth` adapter was provided. " +
+        'Pass `deviceAuth: createPrismaDeviceAdapter(prisma)` (or the drizzle equivalent) ' +
+        'on AuthConfig, or switch to features.twoFaMode: "standard".'
+    );
+  }
+
   return {
     ...config,
     database,
-    features: { ...defaultFeatures, ...config.features },
+    deviceAuth: config.deviceAuth,
+    features,
     tokenSettings: { ...defaultTokenSettings, ...config.tokenSettings },
     cookieSettings: { ...defaultCookieSettings, ...config.cookieSettings },
     storageKeys: { ...defaultStorageKeys, ...config.storageKeys },
