@@ -119,4 +119,17 @@ export function registerPluginCommands(
       registerCommand(backupCmd, cmd, pipelinePlugin);
     }
   }
+
+  // Register 'aws' subcommand group
+  const awsCommands = byCategory.get('aws');
+  if (awsCommands && awsCommands.length > 0) {
+    const cmdNames = awsCommands.map(c => c.name).join(', ');
+    const awsCmd = program
+      .command('aws')
+      .description('AWS operations (' + cmdNames + ')');
+
+    for (const cmd of awsCommands) {
+      registerCommand(awsCmd, cmd, pipelinePlugin);
+    }
+  }
 }
