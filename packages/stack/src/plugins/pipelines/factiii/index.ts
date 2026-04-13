@@ -778,43 +778,18 @@ class FactiiiPipeline {
         }
 
         // On dev machine: SSH to server and run docker exec
-        const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
-        const environments = getEnvironmentsForStage(config, stage);
-        const envNames = Object.keys(environments);
+        const target = await this.resolveSSHTarget(stage, config);
+        if (!target.success) return target;
 
-        if (envNames.length === 0) {
-          return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
-        }
-
-        const envName = envNames[0] as string;
-        const envConfig = environments[envName] as (typeof environments)[string];
-        const host = envConfig.domain;
-        const user = envConfig.ssh_user ?? 'ubuntu';
-
-        if (!host) {
-          return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
-        }
-
-        const keyPath = findSshKeyForStage(stage, config.name);
-        if (!keyPath) {
-          return { success: false, error: 'No SSH key found for ' + stage + '. Run: npx stack fix --secrets' };
-        }
-
-        const sshArgs = [
-          '-tt',
-          '-i', keyPath,
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'ServerAliveInterval=60',
-          '-o', 'ServerAliveCountMax=5',
-          user + '@' + host,
-          'docker exec -it ' + serviceName + ' /bin/sh',
-        ];
-
-        console.log('Connecting to ' + stage + ' container (' + user + '@' + host + ')...');
+        console.log('Connecting to ' + stage + ' container (' + target.user + '@' + target.host + ')...');
         console.log('Type "exit" or press Ctrl+D to close the shell.');
         console.log('');
 
-        const result = spawnSync('ssh', sshArgs, { stdio: 'inherit' });
+        const result = this.sshExecCommand(
+          target.keyPath, target.user, target.host,
+          'docker exec -it ' + serviceName + ' /bin/sh',
+          { interactive: true },
+        );
 
         if (result.status !== 0 && result.status !== null) {
           return { success: false, error: 'SSH exited with code ' + result.status };
@@ -1036,23 +1011,23 @@ class FactiiiPipeline {
           };
         }
 
-        const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
-        const environments = getEnvironmentsForStage(config, stage);
-        const envNames = Object.keys(environments);
+          const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+          const environments = getEnvironmentsForStage(config, stage);
+          const envNames = Object.keys(environments);
 
-        if (envNames.length === 0) {
-          return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
-        }
+          if (envNames.length === 0) {
+            return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
+          }
 
-        const envName = envNames[0] as string;
-        const envConfig = environments[envName] as (typeof environments)[string];
-        let domain = envConfig.domain;
+          const envName = envNames[0] as string;
+          const envConfig = environments[envName] as (typeof environments)[string];
+          let domain = envConfig.domain;
 
-        if (!domain) {
-          return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
-        }
+          if (!domain) {
+            return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
+          }
 
-        // Dev uses localhost
+      // Dev uses localhost
         if (stage === 'dev') {
           const port = (envConfig as unknown as Record<string, unknown>).port ?? '3000';
           domain = 'http://localhost:' + port;
@@ -1190,58 +1165,33 @@ class FactiiiPipeline {
           finalSql = finalSql + ' LIMIT ' + rowLimit;
         }
 
-        // === RESOLVE SSH TARGET ===
-        const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
-        const environments = getEnvironmentsForStage(config, stage);
-        const envNames = Object.keys(environments);
+        const target = await FactiiiPipeline.resolveSSHTarget(stage, config);
+        if (!target.success) return target;
 
-        if (envNames.length === 0) {
-          return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
-        }
-
-        const envName = envNames[0] as string;
-        const envConfig = environments[envName] as (typeof environments)[string];
-        const host = envConfig.domain;
-        const user = envConfig.ssh_user ?? 'ubuntu';
-
-        if (!host) {
-          return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
-        }
-
-        const keyPath = findSshKeyForStage(stage, config.name);
-        if (!keyPath) {
-          return { success: false, error: 'No SSH key found for ' + stage + '. Run: npx stack fix --secrets' };
-        }
-
-        const containerName = config.name + '-' + stage;
+        const appContainer = config.name + '-' + stage;
+        const dbContainer = 'factiii_postgres';
         // Escape single quotes for shell
         const escapedSql = finalSql.replace(/'/g, "'\\''");
 
         console.log('');
         console.log('── DB Query (' + stage + ') ──');
         console.log('READ ONLY — destructive queries are blocked');
-        console.log('Container: ' + containerName);
+        console.log('App: ' + appContainer + ' | DB: ' + dbContainer);
         console.log('');
         console.log('SQL: ' + finalSql);
         console.log('');
 
-        const dockerCmd = 'docker exec ' + containerName + ' sh -c \'psql "$DATABASE_URL" -c "' + escapedSql.replace(/"/g, '\\"') + '"\'';
+        // Grab DATABASE_URL from the app container, then run psql in the postgres container
+        const dockerCmd = 'DB_URL=$(docker exec ' + appContainer + ' printenv DATABASE_URL) && docker exec ' + dbContainer + ' psql "$DB_URL" -c "' + escapedSql.replace(/"/g, '\\"') + '"';
 
-        const sshArgs = [
-          '-i', keyPath,
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'ConnectTimeout=10',
-          user + '@' + host,
-          dockerCmd,
-        ];
-
-        const result = spawnSync('ssh', sshArgs, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+        const result = FactiiiPipeline.sshExecCommand(
+          target.keyPath, target.user, target.host, dockerCmd,
+        );
 
         if (result.stdout) {
           console.log(result.stdout);
         }
         if (result.stderr) {
-          // psql outputs notices to stderr — show them but don't fail on them
           const stderr = result.stderr.trim();
           if (stderr) console.error(stderr);
         }
@@ -1330,6 +1280,85 @@ class FactiiiPipeline {
       },
     },
   ];
+
+  // ============================================================
+  // SSH HELPERS
+  // ============================================================
+
+  /**
+   * Resolve SSH target (host, user, key) for a stage.
+   * Shared by localOnly commands that manually SSH to run remote commands.
+   */
+  static async resolveSSHTarget(stage: Stage, config: FactiiiConfig): Promise<
+    { success: true; host: string; user: string; keyPath: string } |
+    { success: false; error: string }
+  > {
+    const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+    const environments = getEnvironmentsForStage(config, stage);
+    const envNames = Object.keys(environments);
+
+    if (envNames.length === 0) {
+      return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
+    }
+
+    const envName = envNames[0] as string;
+    const envConfig = environments[envName] as (typeof environments)[string];
+    const host = envConfig.domain;
+    const user = envConfig.ssh_user ?? 'ubuntu';
+
+    if (!host) {
+      return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
+    }
+
+    const keyPath = findSshKeyForStage(stage, config.name);
+    if (!keyPath) {
+      return { success: false, error: 'No SSH key found for ' + stage + '. Run: npx stack fix --secrets' };
+    }
+
+    return { success: true, host, user, keyPath };
+  }
+
+  /**
+   * Run a command on a remote server via SSH with a login shell.
+   * Uses bash -lc to ensure PATH includes docker/colima/etc.
+   */
+  static sshExecCommand(
+    keyPath: string, user: string, host: string, remoteCmd: string,
+    options?: { interactive?: boolean },
+  ): { stdout: string; stderr: string; status: number | null } {
+    const sshArgs: string[] = [];
+
+    if (options?.interactive) {
+      sshArgs.push('-tt');
+    }
+
+    sshArgs.push(
+      '-i', keyPath,
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', options?.interactive ? 'ServerAliveInterval=60' : 'ConnectTimeout=10',
+    );
+
+    if (options?.interactive) {
+      sshArgs.push('-o', 'ServerAliveCountMax=5');
+    }
+
+    sshArgs.push(
+      user + '@' + host,
+      'bash -lc ' + JSON.stringify(remoteCmd),
+    );
+
+    if (options?.interactive) {
+      const result = spawnSync('ssh', sshArgs, { stdio: 'inherit' });
+      return { stdout: '', stderr: '', status: result.status };
+    }
+
+    const result = spawnSync('ssh', sshArgs, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return {
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+      status: result.status,
+    };
+  }
 
   // ============================================================
   // STATIC METHODS
