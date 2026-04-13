@@ -657,7 +657,7 @@ class FactiiiPipeline {
       prodSafety: 'safe',
       options: [
         { flags: '-f, --follow', description: 'Follow log output' },
-        { flags: '-n, --lines <number>', description: 'Number of lines to show', defaultValue: '100' },
+        { flags: '-n, --lines <number>', description: 'Number of lines to show', defaultValue: '30' },
         { flags: '-s, --service <name>', description: 'Service name (default: app container)' },
         { flags: '-t, --timestamps', description: 'Show timestamps on each log line' },
         { flags: '--grep <pattern>', description: 'Filter logs by pattern' },
@@ -667,7 +667,7 @@ class FactiiiPipeline {
       execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
         const serviceName = (options.service as string) ?? config.name + '-' + stage;
         const followFlag = options.follow ? '-f' : '';
-        const lines = (options.lines as string) ?? '100';
+        const lines = (options.lines as string) ?? '30';
         const timestampFlag = options.timestamps ? '--timestamps' : '';
         const sinceFlag = options.since ? '--since ' + String(options.since) : '';
         const grepPattern = options.grep ? String(options.grep) : '';
@@ -778,43 +778,18 @@ class FactiiiPipeline {
         }
 
         // On dev machine: SSH to server and run docker exec
-        const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
-        const environments = getEnvironmentsForStage(config, stage);
-        const envNames = Object.keys(environments);
+        const target = await this.resolveSSHTarget(stage, config);
+        if (!target.success) return target;
 
-        if (envNames.length === 0) {
-          return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
-        }
-
-        const envName = envNames[0] as string;
-        const envConfig = environments[envName] as (typeof environments)[string];
-        const host = envConfig.domain;
-        const user = envConfig.ssh_user ?? 'ubuntu';
-
-        if (!host) {
-          return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
-        }
-
-        const keyPath = findSshKeyForStage(stage, config.name);
-        if (!keyPath) {
-          return { success: false, error: 'No SSH key found for ' + stage + '. Run: npx stack fix --secrets' };
-        }
-
-        const sshArgs = [
-          '-tt',
-          '-i', keyPath,
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'ServerAliveInterval=60',
-          '-o', 'ServerAliveCountMax=5',
-          user + '@' + host,
-          'docker exec -it ' + serviceName + ' /bin/sh',
-        ];
-
-        console.log('Connecting to ' + stage + ' container (' + user + '@' + host + ')...');
+        console.log('Connecting to ' + stage + ' container (' + target.user + '@' + target.host + ')...');
         console.log('Type "exit" or press Ctrl+D to close the shell.');
         console.log('');
 
-        const result = spawnSync('ssh', sshArgs, { stdio: 'inherit' });
+        const result = this.sshExecCommand(
+          target.keyPath, target.user, target.host,
+          'docker exec -it ' + serviceName + ' /bin/sh',
+          { interactive: true },
+        );
 
         if (result.status !== 0 && result.status !== null) {
           return { success: false, error: 'SSH exited with code ' + result.status };
@@ -1007,7 +982,383 @@ class FactiiiPipeline {
         };
       },
     },
+
+    // ────────────────────────────────────────────────────────────
+    // OPS: API QUERY (safe — hits existing API routes)
+    // ────────────────────────────────────────────────────────────
+    {
+      name: 'api-query',
+      description: 'Query server API routes for data analysis (safe, read-only)',
+      category: 'ops',
+      stages: ['dev', 'staging', 'prod'],
+      prodSafety: 'safe',
+      localOnly: true,
+      options: [
+        { flags: '--url <path>', description: 'API route path (e.g., /api/health)' },
+        { flags: '--method <method>', description: 'HTTP method (GET, POST)', defaultValue: 'GET' },
+        { flags: '--body <json>', description: 'JSON request body for POST/PUT' },
+        { flags: '--header <header...>', description: 'Additional headers (key:value)' },
+      ],
+      execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
+        const urlPath = options.url as string;
+        if (!urlPath) {
+          return {
+            success: false,
+            error: 'API route required (--url /api/...)\n\n' +
+              'Example:\n' +
+              '  npx stack ops api-query --' + stage + ' --url /api/health\n' +
+              '  npx stack ops api-query --' + stage + ' --url /api/users/count --method GET',
+          };
+        }
+
+          const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+          const environments = getEnvironmentsForStage(config, stage);
+          const envNames = Object.keys(environments);
+
+          if (envNames.length === 0) {
+            return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
+          }
+
+          const envName = envNames[0] as string;
+          const envConfig = environments[envName] as (typeof environments)[string];
+          let domain = envConfig.domain;
+
+          if (!domain) {
+            return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
+          }
+
+      // Dev uses localhost
+        if (stage === 'dev') {
+          const port = (envConfig as unknown as Record<string, unknown>).port ?? '3000';
+          domain = 'http://localhost:' + port;
+        } else if (!domain.startsWith('http')) {
+          domain = 'https://' + domain;
+        }
+
+        const fullUrl = domain + urlPath;
+        const method = ((options.method as string) ?? 'GET').toUpperCase();
+
+        console.log('── API Query (' + stage + ') ──');
+        console.log(method + ' ' + fullUrl);
+        console.log('');
+
+        try {
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          const rawHeaders = options.header as string[] | undefined;
+          if (rawHeaders) {
+            for (const h of rawHeaders) {
+              const [key, ...rest] = h.split(':');
+              if (key && rest.length > 0) headers[key.trim()] = rest.join(':').trim();
+            }
+          }
+
+          const fetchOpts: RequestInit = { method, headers };
+          if (options.body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+            fetchOpts.body = options.body as string;
+          }
+
+          const resp = await fetch(fullUrl, fetchOpts);
+          const text = await resp.text();
+
+          console.log('Status: ' + resp.status + ' ' + resp.statusText);
+          console.log('');
+
+          // Try pretty-print JSON, fall back to raw text
+          try {
+            const json = JSON.parse(text);
+            console.log(JSON.stringify(json, null, 2));
+          } catch {
+            console.log(text);
+          }
+
+          return { success: resp.ok };
+        } catch (error) {
+          return { success: false, error: 'Request failed: ' + (error instanceof Error ? error.message : String(error)) };
+        }
+      },
+    },
+
+    // ────────────────────────────────────────────────────────────
+    // OPS: DB QUERY (dangerous — direct SQL via SSH)
+    // ────────────────────────────────────────────────────────────
+    {
+      name: 'db-query',
+      description: 'Run a read-only SQL query against the database via SSH',
+      category: 'ops',
+      stages: ['staging', 'prod'],
+      prodSafety: 'caution',
+      localOnly: true,
+      options: [
+        { flags: '--sql <query>', description: 'SQL query to execute' },
+        { flags: '--dangerous', description: 'Acknowledge direct DB access (required)' },
+        { flags: '--limit <rows>', description: 'Max rows to return', defaultValue: '100' },
+      ],
+      execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
+        const sql = options.sql as string;
+        const dangerous = options.dangerous as boolean;
+        const rowLimit = parseInt((options.limit as string) ?? '100', 10);
+
+        if (!sql) {
+          return { success: false, error: 'SQL query required (--sql "SELECT ...")\n\nFor safe data analysis, prefer:\n  npx stack ops api-query --' + stage + ' --url /api/...' };
+        }
+
+        if (!dangerous) {
+          console.error('');
+          console.error('================================================================');
+          console.error('  DIRECT DATABASE ACCESS');
+          console.error('================================================================');
+          console.error('');
+          console.error('  This command runs SQL directly against the ' + stage + ' database.');
+          console.error('  You must acknowledge by adding --dangerous.');
+          console.error('');
+          console.error('  RULES:');
+          console.error('  - READ ONLY — write queries are blocked');
+          console.error('  - Avoid selecting secrets/passwords/tokens');
+          console.error('  - Results are auto-limited to ' + rowLimit + ' rows');
+          console.error('');
+          console.error('  Example:');
+          console.error('    npx stack ops db-query --' + stage + ' --dangerous --sql "SELECT id, email FROM users LIMIT 10"');
+          console.error('');
+          console.error('  For safe analysis, prefer API routes:');
+          console.error('    npx stack ops api-query --' + stage + ' --url /api/...');
+          console.error('');
+          console.error('================================================================');
+          return { success: false, error: 'Add --dangerous to acknowledge direct DB access' };
+        }
+
+        // === BLOCK DESTRUCTIVE SQL ===
+        const upperSql = sql.toUpperCase().replace(/\s+/g, ' ').trim();
+        const destructivePatterns = [
+          /\bINSERT\b/, /\bUPDATE\b/, /\bDELETE\b/,
+          /\bDROP\b/, /\bALTER\b/, /\bTRUNCATE\b/,
+          /\bCREATE\b/, /\bGRANT\b/, /\bREVOKE\b/,
+          /\bEXEC\b/, /\bCALL\b/,
+        ];
+
+        const isDestructive = destructivePatterns.some(p => p.test(upperSql));
+        if (isDestructive) {
+          console.error('');
+          console.error('================================================================');
+          console.error('  BLOCKED: DESTRUCTIVE SQL QUERY');
+          console.error('================================================================');
+          console.error('');
+          console.error('  The query contains write/modify operations.');
+          console.error('  db-query is READ ONLY — no INSERT, UPDATE, DELETE, DROP,');
+          console.error('  ALTER, TRUNCATE, CREATE, GRANT, REVOKE, EXEC, or CALL.');
+          console.error('');
+          console.error('================================================================');
+          return { success: false, error: 'Destructive queries are blocked in db-query' };
+        }
+
+        // === WARN ON SENSITIVE COLUMNS ===
+        const sensitivePattern = /\b(password|secret|token|api_key|private_key|credential|ssn|credit_card|hash)\b/i;
+        if (sensitivePattern.test(sql) && !/\bCOUNT\b/i.test(sql)) {
+          console.warn('');
+          console.warn('WARNING: Query may touch sensitive columns (password/secret/token/key).');
+          console.warn('Consider selecting only the columns you need.');
+          console.warn('');
+        }
+
+        // === AUTO-APPEND LIMIT ===
+        let finalSql = sql.trim().replace(/;$/, '');
+        if (!/\bLIMIT\b/i.test(finalSql)) {
+          finalSql = finalSql + ' LIMIT ' + rowLimit;
+        }
+
+        const target = await FactiiiPipeline.resolveSSHTarget(stage, config);
+        if (!target.success) return target;
+
+        const appContainer = config.name + '-' + stage;
+        const dbContainer = 'factiii_postgres';
+        // Escape single quotes for shell
+        const escapedSql = finalSql.replace(/'/g, "'\\''");
+
+        console.log('');
+        console.log('── DB Query (' + stage + ') ──');
+        console.log('READ ONLY — destructive queries are blocked');
+        console.log('App: ' + appContainer + ' | DB: ' + dbContainer);
+        console.log('');
+        console.log('SQL: ' + finalSql);
+        console.log('');
+
+        // Grab DATABASE_URL from the app container, then run psql in the postgres container
+        const dockerCmd = 'DB_URL=$(docker exec ' + appContainer + ' printenv DATABASE_URL) && docker exec ' + dbContainer + ' psql "$DB_URL" -c "' + escapedSql.replace(/"/g, '\\"') + '"';
+
+        const result = FactiiiPipeline.sshExecCommand(
+          target.keyPath, target.user, target.host, dockerCmd,
+        );
+
+        if (result.stdout) {
+          console.log(result.stdout);
+        }
+        if (result.stderr) {
+          const stderr = result.stderr.trim();
+          if (stderr) console.error(stderr);
+        }
+
+        if (result.status !== 0 && result.status !== null) {
+          return { success: false, error: 'Query failed (exit code ' + result.status + ')' };
+        }
+
+        return { success: true };
+      },
+    },
+
+    // ────────────────────────────────────────────────────────────
+    // AWS COMMANDS
+    // ────────────────────────────────────────────────────────────
+    {
+      name: 'aws',
+      description: 'Run an AWS CLI command with stage-appropriate credentials',
+      category: 'aws',
+      stages: ['staging', 'prod'],
+      prodSafety: 'caution',
+      localOnly: true,
+      execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
+        const awsCmd = ((options.cmd as string) ?? '').trim();
+        if (!awsCmd) {
+          return {
+            success: false,
+            error: 'AWS command required\n\n' +
+              'Examples:\n' +
+              '  npx stack aws --' + stage + ' "s3 ls"\n' +
+              '  npx stack aws --' + stage + ' "ec2 describe-instances"\n' +
+              '  npx stack aws --' + stage + ' "rds describe-db-instances"',
+          };
+        }
+
+        // Resolve AWS credentials from vault via the credentials file
+        // The aws scanfix/credentials.ts writes ~/.aws/credentials from vault
+        // We rely on that being synced — check if credentials exist
+        const awsCredPath = (process.env.HOME ?? '') + '/.aws/credentials';
+        let hasCredentials = false;
+        try {
+          const content = fs.readFileSync(awsCredPath, 'utf8');
+          hasCredentials = /aws_access_key_id\s*=\s*\S+/.test(content);
+        } catch {
+          // no credentials file
+        }
+
+        if (!hasCredentials) {
+          // Try to sync credentials from vault
+          console.log('AWS credentials not found locally. Run scan to sync from vault:');
+          console.log('  npx stack scan --' + stage);
+          console.log('');
+          return { success: false, error: 'AWS credentials not available. Run npx stack scan --' + stage + ' first to sync from vault.' };
+        }
+
+        // Get region from config
+        const { getAwsConfig } = await import('../aws/utils/aws-helpers.js');
+        const awsConfig = getAwsConfig(config);
+        const region = awsConfig.region;
+
+        console.log('── AWS CLI (' + stage + ') ──');
+        console.log('Region: ' + region);
+        console.log('Command: aws ' + awsCmd);
+        console.log('');
+
+        // Split the command string into args for spawn
+        const args = awsCmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+        // Strip quotes from args
+        const cleanArgs = args.map(a => a.replace(/^["']|["']$/g, ''));
+
+        // Add --region if not already specified and not a global command
+        if (!cleanArgs.includes('--region')) {
+          cleanArgs.push('--region', region);
+        }
+
+        const result = spawnSync('aws', cleanArgs, {
+          stdio: 'inherit',
+          env: { ...process.env, AWS_DEFAULT_REGION: region },
+        });
+
+        if (result.status !== 0 && result.status !== null) {
+          return { success: false, error: 'AWS command exited with code ' + result.status };
+        }
+
+        return { success: true };
+      },
+    },
   ];
+
+  // ============================================================
+  // SSH HELPERS
+  // ============================================================
+
+  /**
+   * Resolve SSH target (host, user, key) for a stage.
+   * Shared by localOnly commands that manually SSH to run remote commands.
+   */
+  static async resolveSSHTarget(stage: Stage, config: FactiiiConfig): Promise<
+    { success: true; host: string; user: string; keyPath: string } |
+    { success: false; error: string }
+  > {
+    const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
+    const environments = getEnvironmentsForStage(config, stage);
+    const envNames = Object.keys(environments);
+
+    if (envNames.length === 0) {
+      return { success: false, error: 'No ' + stage + ' environment found in stack.yml' };
+    }
+
+    const envName = envNames[0] as string;
+    const envConfig = environments[envName] as (typeof environments)[string];
+    const host = envConfig.domain;
+    const user = envConfig.ssh_user ?? 'ubuntu';
+
+    if (!host) {
+      return { success: false, error: 'No domain configured for ' + envName + ' in stack.yml' };
+    }
+
+    const keyPath = findSshKeyForStage(stage, config.name);
+    if (!keyPath) {
+      return { success: false, error: 'No SSH key found for ' + stage + '. Run: npx stack fix --secrets' };
+    }
+
+    return { success: true, host, user, keyPath };
+  }
+
+  /**
+   * Run a command on a remote server via SSH with a login shell.
+   * Uses bash -lc to ensure PATH includes docker/colima/etc.
+   */
+  static sshExecCommand(
+    keyPath: string, user: string, host: string, remoteCmd: string,
+    options?: { interactive?: boolean },
+  ): { stdout: string; stderr: string; status: number | null } {
+    const sshArgs: string[] = [];
+
+    if (options?.interactive) {
+      sshArgs.push('-tt');
+    }
+
+    sshArgs.push(
+      '-i', keyPath,
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', options?.interactive ? 'ServerAliveInterval=60' : 'ConnectTimeout=10',
+    );
+
+    if (options?.interactive) {
+      sshArgs.push('-o', 'ServerAliveCountMax=5');
+    }
+
+    sshArgs.push(
+      user + '@' + host,
+      'bash -lc ' + JSON.stringify(remoteCmd),
+    );
+
+    if (options?.interactive) {
+      const result = spawnSync('ssh', sshArgs, { stdio: 'inherit' });
+      return { stdout: '', stderr: '', status: result.status };
+    }
+
+    const result = spawnSync('ssh', sshArgs, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return {
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+      status: result.status,
+    };
+  }
 
   // ============================================================
   // STATIC METHODS

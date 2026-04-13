@@ -53,7 +53,7 @@ export type ProdSafetyLevel = 'safe' | 'caution' | 'destructive';
 /**
  * Command categories for grouping in help
  */
-export type CommandCategory = 'db' | 'ops' | 'backup';
+export type CommandCategory = 'db' | 'ops' | 'backup' | 'aws';
 
 /**
  * Command option definition

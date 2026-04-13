@@ -119,4 +119,25 @@ export function registerPluginCommands(
       registerCommand(backupCmd, cmd, pipelinePlugin);
     }
   }
+
+  // Register 'aws' as a top-level command with a positional AWS command string.
+  // Simpler than a subcommand group: `npx stack aws --prod "s3 ls"`.
+  const awsCommands = byCategory.get('aws');
+  if (awsCommands && awsCommands.length > 0) {
+    const awsCmd = awsCommands[0];
+    if (awsCmd) {
+      program
+        .command('aws [command...]')
+        .description('Run an AWS CLI command with stage-appropriate credentials')
+        .option('--dev', 'Run on dev environment')
+        .option('--staging', 'Run on staging environment')
+        .option('--prod', 'Run on production environment')
+        .allowUnknownOption()
+        .action(async (commandParts: string[], options: Record<string, unknown>) => {
+          options.cmd = (commandParts ?? []).join(' ');
+          const { executePluginCommand } = await import('./execute-plugin-command.js');
+          await executePluginCommand(awsCmd, options, pipelinePlugin);
+        });
+    }
+  }
 }
