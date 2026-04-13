@@ -1258,25 +1258,22 @@ class FactiiiPipeline {
     // AWS COMMANDS
     // ────────────────────────────────────────────────────────────
     {
-      name: 'run',
+      name: 'aws',
       description: 'Run an AWS CLI command with stage-appropriate credentials',
       category: 'aws',
       stages: ['staging', 'prod'],
       prodSafety: 'caution',
       localOnly: true,
-      options: [
-        { flags: '--cmd <command>', description: 'AWS CLI command to run (e.g., "s3 ls", "ec2 describe-instances")' },
-      ],
       execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
-        const awsCmd = options.cmd as string;
+        const awsCmd = ((options.cmd as string) ?? '').trim();
         if (!awsCmd) {
           return {
             success: false,
-            error: 'AWS command required (--cmd "...")\n\n' +
+            error: 'AWS command required\n\n' +
               'Examples:\n' +
-              '  npx stack aws run --' + stage + ' --cmd "s3 ls"\n' +
-              '  npx stack aws run --' + stage + ' --cmd "ec2 describe-instances --region us-east-1"\n' +
-              '  npx stack aws run --' + stage + ' --cmd "rds describe-db-instances"',
+              '  npx stack aws --' + stage + ' "s3 ls"\n' +
+              '  npx stack aws --' + stage + ' "ec2 describe-instances"\n' +
+              '  npx stack aws --' + stage + ' "rds describe-db-instances"',
           };
         }
 
