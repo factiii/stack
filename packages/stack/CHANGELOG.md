@@ -1,5 +1,15 @@
 # @factiii/stack
 
+## 0.9.0
+
+### Minor Changes
+
+- 630de2a: Add AWS CLI passthrough, api-query, and db-query ops commands
+  - `npx stack aws --<stage> "s3 ls"` — run AWS CLI commands with stage-appropriate credentials
+  - `npx stack ops api-query --<stage> --url /api/health` — query server API routes
+  - `npx stack ops db-query --<stage> --dangerous --sql "SELECT ..."` — read-only SQL via SSH
+  - Extract reusable SSH helpers (resolveSSHTarget, sshExecCommand) in factiii pipeline
+
 ## 0.8.0
 
 ### Minor Changes
