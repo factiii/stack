@@ -74,7 +74,9 @@ import { portConventionFixes } from './scanfix/port-convention.js';
 import { startShFixes } from './scanfix/start-sh.js';
 import { dbSeedFixes } from './scanfix/db-seed.js';
 import { sshVerifyFixes } from './scanfix/ssh-verify.js';
+import { sshTunnelFixes } from './scanfix/ssh-tunnel.js';
 import { claudeSkillFixes } from './scanfix/claude-skills.js';
+import { stackVersionPinFixes } from './scanfix/stack-version-pin.js';
 
 // Import AWS scanfix arrays (AWS provisioning runs as part of factiii pipeline)
 import { configFixes as awsConfigFixes } from '../aws/scanfix/config.js';
@@ -293,12 +295,14 @@ class FactiiiPipeline {
     ...preflightFixes,
     ...bootstrapFixes,
     ...configFixes,
+    ...stackVersionPinFixes,
     ...domainFixes,
     ...vaultFixes,
     ...githubCliFixes,
     ...workflowFixes,
     ...secretsFixes,
     ...sshVerifyFixes,
+    ...sshTunnelFixes,
     ...envFileFixes,
     ...portConventionFixes,
     ...startShFixes,

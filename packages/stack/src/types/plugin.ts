@@ -123,6 +123,29 @@ export interface Fix {
    * nothing else can run without it.
    */
   blocking?: boolean;
+  /**
+   * Optional: ids of fixes that must succeed before this one runs.
+   *
+   * The DAG runner (utils/dag-runner.ts) orders fixes by these edges, runs
+   * siblings with no shared prereqs in parallel, and marks a fix as `skipped`
+   * (not `failed`) if any of its requires are skipped/failed — so errors
+   * collect cleanly instead of cascading into false "broken" reports.
+   *
+   * Typical chains:
+   *   vault-password-file → vault-unlocked → staging-ssh-key-to-disk → ssh-tunnel-staging
+   *   ssh-tunnel-staging → [every other staging fix]
+   */
+  requires?: string[];
+  /**
+   * Optional: named resource this fix holds. Fixes sharing any id in their
+   * serializeOn lists run serially with respect to each other even when they
+   * have no direct `requires` edge. Use for shared mutable resources: the
+   * single SSH tunnel, interactive prompts, a lock file, etc.
+   *
+   * Example: every staging fix sets `serializeOn: ['ssh-staging']` so they
+   * share one tunnel until a multiplexing channel layer lands later.
+   */
+  serializeOn?: string[];
   scan: (config: FactiiiConfig, rootDir: string) => Promise<boolean>;
   fix?: ((config: FactiiiConfig, rootDir: string) => Promise<boolean>) | null;
   manualFix: string;
