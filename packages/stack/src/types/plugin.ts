@@ -91,13 +91,29 @@ export interface PluginCommand {
   localOnly?: boolean;
   /** Command-specific options */
   options?: CommandOption[];
-  /** Execute the command */
+  /** Execute the command (always runs on the dev machine). */
   execute: (
     stage: Stage,
     options: Record<string, unknown>,
     config: FactiiiConfig,
     rootDir: string
   ) => Promise<CommandResult>;
+  /**
+   * Optional: remote command string to exec on the stage's server via the
+   * shared SSH tunnel. When set and the stage is staging/prod,
+   * `executePluginCommand` opens `ssh-tunnel-<stage>` once, runs this
+   * string through `tunnelExec`, and streams the output back to dev.
+   * Typical shape:
+   *   (stage, opts, cfg) => `sudo docker compose -f ~/.factiii/${cfg.name}/docker-compose.yml logs --tail 30 ${cfg.name}-${stage}`
+   * Commands without a `remoteCmd` and a staging/prod target fail fast with
+   * a clear "not migrated to dev-direct yet" error instead of silently
+   * reaching for a server-side stack CLI that no longer exists.
+   */
+  remoteCmd?: (
+    stage: Stage,
+    options: Record<string, unknown>,
+    config: FactiiiConfig
+  ) => string;
 }
 
 /**

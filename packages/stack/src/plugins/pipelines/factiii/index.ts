@@ -58,7 +58,7 @@ import type {
   CommandResult,
 } from '../../../types/index.js';
 import { loadRelevantPlugins } from '../../index.js';
-import { findSshKeyForStage, sshRemoteFactiiiCommand } from '../../../utils/ssh-helper.js';
+import { findSshKeyForStage } from '../../../utils/ssh-helper.js';
 
 // Import scanfix arrays
 import { preflightFixes } from './scanfix/preflight.js';
@@ -207,78 +207,46 @@ class FactiiiPipeline {
         return { reachable: true, via: 'local' };
 
       case 'staging':
-      case 'prod':
-        // If GITHUB_ACTIONS is set, we're running inside a workflow on the server
-        // Return 'local' so fixes run directly without triggering another workflow
-        if (process.env.GITHUB_ACTIONS || process.env.FACTIII_ON_SERVER) {
+      case 'prod': {
+        // Dev-direct model: every command runs on the dev machine. Staging/prod
+        // fixes that need server state reach through a per-stage SSH tunnel
+        // (see utils/ssh-tunnel.ts + the ssh-tunnel-<stage> scanfix). We no
+        // longer return via: 'ssh' — there's no remote stack CLI to invoke.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
+        const stageEnvs = getEnvironmentsForStage(config, stage);
+        const stageEnvValues = Object.values(stageEnvs) as EnvironmentConfig[];
+
+        const allExample = stageEnvValues.every((e: EnvironmentConfig) =>
+          !e.domain || e.domain.toUpperCase().startsWith('EXAMPLE')
+        );
+        const hasAws = stageEnvValues.some((e: EnvironmentConfig) =>
+          !!e.access_key_id || !!e.config
+        );
+
+        if (allExample && stageEnvValues.length > 0 && !hasAws) {
+          return {
+            reachable: false,
+            reason: stage + ' domain is still a placeholder (EXAMPLE_...).\n' +
+              '   Replace the EXAMPLE_ value in stack.yml with your actual domain.',
+          };
+        }
+
+        // Reachable when the domain is set (tunnel can be opened) or AWS
+        // config lets provisioning run from the dev machine. The SSH key is
+        // fetched lazily by the ssh-tunnel-<stage> scanfix — its absence no
+        // longer short-circuits reachability, it just surfaces as that
+        // scanfix failing with a manual-fix hint.
+        if (hasAws || !allExample) {
           return { reachable: true, via: 'local' };
         }
 
-        // ============================================================
-        // CRITICAL: Block SSH to EXAMPLE_ placeholder domains
-        // ============================================================
-        // If domain still has EXAMPLE_ prefix, the user hasn't configured
-        // it yet. Never attempt SSH to a placeholder domain.
-        // ============================================================
-        {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
-          const stageEnvs = getEnvironmentsForStage(config, stage);
-          const stageEnvValues = Object.values(stageEnvs) as EnvironmentConfig[];
-          const allExample = stageEnvValues.every((e: EnvironmentConfig) =>
-            !e.domain || e.domain.toUpperCase().startsWith('EXAMPLE')
-          );
-          if (allExample && stageEnvValues.length > 0) {
-            // Check if AWS config exists — allow local provisioning even with EXAMPLE_ domain
-            const hasAws = stageEnvValues.some((e: EnvironmentConfig) =>
-              !!e.access_key_id || !!e.config
-            );
-            if (hasAws) {
-              return { reachable: true, via: 'local' };
-            }
-            return {
-              reachable: false,
-              reason: stage + ' domain is still a placeholder (EXAMPLE_...).\n' +
-                '   Replace the EXAMPLE_ value in stack.yml with your actual domain.',
-            };
-          }
-        }
-
-        // On dev machine: check for SSH key to reach server directly
-        // This is the primary path - direct SSH is faster than GitHub workflows
-        {
-          const sshKey = findSshKeyForStage(stage, config.name);
-          if (sshKey) {
-            return { reachable: true, via: 'ssh' };
-          }
-        }
-
-        // If AWS config exists, allow local provisioning (no server needed yet)
-        // AWS scanfixes run on the dev machine to provision infrastructure
-        {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
-          const envs = getEnvironmentsForStage(config, stage);
-          const envValues = Object.values(envs) as EnvironmentConfig[];
-          const hasAws = envValues.some((e: EnvironmentConfig) =>
-            !!e.access_key_id || !!e.config
-          );
-          if (hasAws) {
-            return { reachable: true, via: 'local' };
-          }
-        }
-
-        // No SSH key, no AWS — cannot reach this stage
-        // If vault has a key, run: npx stack fix --secrets to extract it to disk
-        {
-          const vaultName = stage === 'staging' ? 'STAGING_SSH' : 'PROD_SSH';
-          return {
-            reachable: false,
-            reason: vaultName + ' not found (no key at ~/.ssh/' + stage + '_deploy_key).\n' +
-              '   Run: npx stack fix --secrets   (stores key in vault + writes to disk)\n' +
-              '   Or:  npx stack deploy --secrets set ' + vaultName + ' && npx stack deploy --secrets write-ssh-keys',
-          };
-        }
+        // No domain, no AWS — nothing to reach.
+        return {
+          reachable: false,
+          reason: 'No ' + stage + ' environment with a real domain or AWS config in stack.yml.',
+        };
+      }
 
       default:
         return { reachable: false, reason: `Unknown stage: ${stage}` };
@@ -1468,58 +1436,42 @@ class FactiiiPipeline {
       return { success: false, error: reach.reason };
     }
 
-    if (reach.via === 'ssh') {
-      // For prod with AWS config: build locally on dev machine, then SSH only for pull+restart
-      // This avoids building Docker on resource-constrained prod servers (e.g., t3.micro 1GB RAM)
-      if (stage === 'prod' && this._config.aws) {
-        console.log(`   Deploying to ${stage} via local build + SSH pull...`);
+    // Dev-direct: everything runs on the dev machine. For AWS prod, that
+    // means local build + SSH pull/restart (deployProd already does this
+    // git-free/node-free on the server). For other stages, the server
+    // plugin's deploy() runs via the shared SSH tunnel.
+    if (stage === 'prod' && this._config.aws) {
+      console.log(`   Deploying to ${stage} via local build + SSH pull...`);
 
-        // Step 1: Build Docker image locally and push to ECR (on dev machine)
-        if (!process.env.SKIP_BUILD) {
-          const { extractEnvironments } = await import('../../../utils/config-helpers.js');
-          const environments = extractEnvironments(this._config);
-          const stagingConfig = environments.staging;
+      if (!process.env.SKIP_BUILD) {
+        const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+        const environments = extractEnvironments(this._config);
+        const stagingConfig = environments.staging;
 
-          if (stagingConfig?.domain) {
-            console.log('   🔨 Building production image on staging server...');
-            const buildResult = await FactiiiPipeline.buildProductionImage(
-              this._config,
-              stagingConfig
-            );
-            if (!buildResult.success) {
-              return buildResult;
-            }
-          } else {
-            // No staging server — build locally on dev machine
-            console.log('   🔨 Building production image locally...');
-            const buildResult = await FactiiiPipeline.buildProductionImageLocally(this._config);
-            if (!buildResult.success) {
-              return buildResult;
-            }
+        if (stagingConfig?.domain) {
+          console.log('   🔨 Building production image on staging server...');
+          const buildResult = await FactiiiPipeline.buildProductionImage(
+            this._config,
+            stagingConfig,
+          );
+          if (!buildResult.success) {
+            return buildResult;
           }
         } else {
-          console.log('   ⏭️  Skipping build step (SKIP_BUILD is set)');
+          console.log('   🔨 Building production image locally...');
+          const buildResult = await FactiiiPipeline.buildProductionImageLocally(this._config);
+          if (!buildResult.success) {
+            return buildResult;
+          }
         }
-
-        // Step 2: SSH to prod server only for pull + restart (deployProd handles this)
-        const { deployProd } = await import('../aws/prod.js');
-        return deployProd(this._config, stage);
+      } else {
+        console.log('   ⏭️  Skipping build step (SKIP_BUILD is set)');
       }
 
-      // For non-prod or non-AWS: use the original SSH remote command flow
-      console.log(`   Deploying to ${stage} via direct SSH...`);
-      let sshCommand = 'deploy --' + stage;
-      if (options.branch) sshCommand += ' --branch ' + options.branch;
-      if (options.commit) sshCommand += ' --commit ' + options.commit;
-      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, sshCommand);
-      return {
-        success: sshResult.success,
-        message: sshResult.success ? 'Deployment complete via SSH' : undefined,
-        error: sshResult.success ? undefined : sshResult.stderr || 'SSH deployment failed',
-      };
+      const { deployProd } = await import('../aws/prod.js');
+      return deployProd(this._config, stage);
     }
 
-    // via: 'local' - we can run directly (dev stage, or on-server in workflow)
     const localResult = await this.runLocalDeploy(stage, options);
 
     // Also deploy to Vercel if configured (addon triggered by pipeline)
@@ -1552,30 +1504,9 @@ class FactiiiPipeline {
    */
   async scanStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean }> {
     const reach = FactiiiPipeline.canReach(stage, this._config);
-
-    if (!reach.reachable) {
-      return { handled: true };
-    }
-
-    if (reach.via === 'ssh') {
-      // Get domain for display
-      const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
-      const envs = getEnvironmentsForStage(this._config, stage);
-      const envValues = Object.values(envs) as { domain?: string }[];
-      const domain = envValues[0]?.domain || 'unknown';
-
-      console.log('');
-      console.log('┌─ ' + stage.toUpperCase() + ' (via SSH → ' + domain + ')');
-      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
-      console.log('└─');
-
-      if (!sshResult.success) {
-        console.log('   [!] ' + stage + ' scan failed: ' + sshResult.stderr);
-      }
-      return { handled: true };
-    }
-
-    // via: 'local' - caller should run locally
+    if (!reach.reachable) return { handled: true };
+    // Dev-direct: every stage scans locally on the dev machine. Scanfixes
+    // reach the server (when they need to) through the per-stage SSH tunnel.
     return { handled: false };
   }
 
@@ -1587,30 +1518,8 @@ class FactiiiPipeline {
    */
   async fixStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean; success?: boolean; error?: string }> {
     const reach = FactiiiPipeline.canReach(stage, this._config);
-
-    if (!reach.reachable) {
-      return { handled: true, success: false, error: reach.reason };
-    }
-
-    if (reach.via === 'ssh') {
-      // Get domain for display
-      const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
-      const envs = getEnvironmentsForStage(this._config, stage);
-      const envValues = Object.values(envs) as { domain?: string; ssh_user?: string }[];
-      const domain = envValues[0]?.domain || 'unknown';
-
-      console.log('');
-      console.log('┌─ ' + stage.toUpperCase() + ' (via SSH → ' + domain + ')');
-      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
-      console.log('└─');
-
-      // The remote fix already printed its own summary inline.
-      // Don't double-report: just mark as handled. The user already saw
-      // the server's detailed output (manual fixes, errors, etc.).
-      return { handled: true, success: sshResult.success };
-    }
-
-    // via: 'local' - caller should run locally
+    if (!reach.reachable) return { handled: true, success: false, error: reach.reason };
+    // Dev-direct: every stage's fixes run locally on the dev machine.
     return { handled: false };
   }
 

@@ -222,30 +222,50 @@ export async function executePluginCommand(
     return;
   }
 
-  if (reach.via === 'ssh') {
-    // Route command to server via SSH — re-runs `npx stack {cmd}` on remote
-    // with FACTIII_ON_SERVER=true so it executes locally there
-    const { sshRemoteFactiiiCommand } = await import('../utils/ssh-helper.js');
-
-    // Rebuild option flags (skip stage/force flags — already in the command)
-    let optionFlags = '';
-    for (const [key, value] of Object.entries(options)) {
-      if (['dev', 'staging', 'prod', 'force'].includes(key)) continue;
-      if (value === true) optionFlags += ' --' + key;
-      else if (value && value !== false) optionFlags += ' --' + key + ' ' + String(value);
-    }
-
-    const remoteCmd = command.category + ' ' + command.name + ' --' + stage + optionFlags;
-    console.log('');
-    console.log('Running ' + command.category + ':' + command.name + ' on ' + stage + ' via SSH...');
-    console.log('');
-
-    const sshResult = await sshRemoteFactiiiCommand(stage as Stage, config, remoteCmd);
-    if (!sshResult.success) {
+  // Dev-direct: staging/prod commands run from dev through the per-stage
+  // SSH tunnel. The command declares a `remoteCmd` that returns the shell
+  // string to exec on the server; we open `ssh-tunnel-<stage>` and run it.
+  if ((stage === 'staging' || stage === 'prod')) {
+    if (!command.remoteCmd) {
       console.error('');
-      console.error('Command failed: ' + (sshResult.stderr || 'SSH command exited with non-zero status'));
+      console.error('Command "' + command.category + ' ' + command.name + '" does not yet support dev-direct ' + stage + '.');
+      console.error('  The server no longer runs the stack CLI. Add `remoteCmd: (stage, opts, cfg) => "..."` to this');
+      console.error('  plugin command so it can be invoked through the shared SSH tunnel.');
+      console.error('');
       process.exit(1);
     }
+
+    const { openTunnel, tunnelExec, closeTunnel, getTunnel } = await import('../utils/ssh-tunnel.js');
+    const { findSshKeyForStage, getEnvConfigForStage } = await import('../utils/ssh-helper.js');
+
+    const envConfig = getEnvConfigForStage(stage as Stage, config);
+    if (!envConfig?.domain) {
+      console.error('\nNo ' + stage + ' environment with a domain configured in stack.yml.\n');
+      process.exit(1);
+    }
+    const keyPath = findSshKeyForStage(stage as Stage, config.name);
+    if (!keyPath) {
+      console.error('\nNo SSH key found at ~/.ssh/' + stage + '_deploy_key.\n  Run: npx stack deploy --secrets write-ssh-keys\n');
+      process.exit(1);
+    }
+
+    console.log('');
+    console.log('Running ' + command.category + ':' + command.name + ' on ' + stage + ' via SSH tunnel...');
+    console.log('');
+
+    const tunnelOwned = !getTunnel(stage);
+    const tunnel = openTunnel(stage, envConfig, keyPath);
+    try {
+      const cmd = command.remoteCmd(stage, options, config);
+      const out = tunnelExec(tunnel, cmd);
+      if (out) console.log(out);
+    } catch (e) {
+      console.error('');
+      console.error('Command failed: ' + (e instanceof Error ? e.message : String(e)));
+      if (tunnelOwned) closeTunnel(tunnel);
+      process.exit(1);
+    }
+    if (tunnelOwned) closeTunnel(tunnel);
     return;
   }
 

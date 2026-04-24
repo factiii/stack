@@ -13,7 +13,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getStackConfigPath } from '../constants/config-files.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
-import { sshRemoteFactiiiCommand } from '../utils/ssh-helper.js';
 import {
   reportCommitStatus,
   reportPRComment,
@@ -130,19 +129,12 @@ export async function prCheck(options: PRCheckOptions = {}): Promise<PRCheckResu
     return { success: buildResult.success };
   }
 
-  // From dev machine: SSH to staging and run pr-check there
-  if (reach.via === 'ssh') {
-    console.log('\n🔗 Running PR check via SSH on staging...\n');
-    const result = await sshRemoteFactiiiCommand('staging', config, 'pr-check --staging');
-    return {
-      success: result.success,
-      error: result.success ? undefined : result.stderr,
-    };
-  }
-
-  // Workflow: tell user to open a PR
+  // Dev-direct: PR check runs inside the CI workflow (GITHUB_ACTIONS=true
+  // path above) or locally on dev during development. There's no server-side
+  // stack CLI to remote-invoke anymore — staging is a deploy target only.
   console.log('\n⚠️  PR check runs automatically when you open a PR to main.');
   console.log('   Ensure factiii-pr-check.yml workflow is committed.');
+  console.log('   To run the builds locally: GITHUB_ACTIONS=true npx stack pr-check');
   return { success: true };
 }
 
