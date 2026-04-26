@@ -74,19 +74,6 @@ interface PluginClass {
 }
 
 /**
- * Pipeline plugin class interface (mirrors deploy.ts pattern)
- */
-interface PipelinePluginClass {
-  id: string;
-  category: 'pipeline';
-  new(config: FactiiiConfig): PipelinePluginInstance;
-}
-
-interface PipelinePluginInstance {
-  scanStage(stage: Stage, options: Record<string, unknown>): Promise<{ handled: boolean }>;
-}
-
-/**
  * Load relevant plugins based on config.
  * Returns null if no config exists (bootstrap needed).
  */
@@ -531,64 +518,35 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
     }
   }
 
-  // Load all plugins (guaranteed non-null after bootstrap check above)
+  // Reachability check (drives BLOCKERS output and short-circuits unreachable stages).
   const plugins = (await loadPlugins(rootDir))!;
-
-  // Get all pipeline plugins to check reachability (multi-pipeline support)
   const pipelinePlugins = getAllPipelinePlugins(plugins);
 
-  // Check reachability for each stage.
-  // Dev-direct: every reachable stage runs locally on the dev machine.
   const reachability: Record<string, Reachability> = {};
-  const localStages: Stage[] = [];
-
   for (const stage of stages) {
     if (stage === 'dev') {
       reachability[stage] = { reachable: true, via: 'local' };
-      localStages.push(stage);
       continue;
     }
-
-    if (pipelinePlugins.length > 0) {
-      // Check all pipeline plugins — first reachable wins
-      reachability[stage] = checkReachability(pipelinePlugins, stage, config);
-
-      if (reachability[stage]?.reachable) {
-        localStages.push(stage);
-      }
-    } else {
-      // No pipeline plugin or no canReach method - assume all reachable locally
-      reachability[stage] = { reachable: true, via: 'local' };
-      localStages.push(stage);
-    }
+    reachability[stage] =
+      pipelinePlugins.length > 0
+        ? checkReachability(pipelinePlugins, stage, config)
+        : { reachable: true, via: 'local' };
   }
+  const reachableStages = stages.filter((s) => reachability[s]?.reachable);
 
-  // Collect all fixes from all plugins (deduplicate by id+stage)
+  // Collect all fixes (deduplicate, env-var fixes, OS-filter — same as before).
   const allFixes: Fix[] = [];
   const seenFixKeys = new Set<string>();
   for (const plugin of plugins) {
-    // Add plugin fixes
     for (const fix of plugin.fixes ?? []) {
       const key = fix.id + ':' + fix.stage;
-      if (seenFixKeys.has(key)) continue; // Skip duplicate
+      if (seenFixKeys.has(key)) continue;
       seenFixKeys.add(key);
       allFixes.push({ ...fix, plugin: plugin.id });
     }
-
-    // Add auto-generated env var fixes
     const envFixes = generateEnvVarFixes(plugin, rootDir, config);
     allFixes.push(...envFixes);
-  }
-
-  // Run scan() for each fix, collect problems found
-  const problems: ScanProblems = {
-    dev: [],
-    staging: [],
-    prod: [],
-  };
-
-  if (!options.silent) {
-    console.log('Scanning...\n');
   }
 
   // Get target server OS for each stage (for OS filtering)
@@ -609,50 +567,40 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
     stageToOS['dev'] = localConfig.dev_os as ServerOS;
   }
 
-  for (const fix of allFixes) {
-    // Skip if stage not in local stages
-    if (!localStages.includes(fix.stage)) continue;
-
-    // Target stage filtering: Skip secret fixes that don't match deployment target
-    // When running `npx stack fix --staging`, only run staging-related secret fixes
-    // When running `npx stack fix --prod`, only run prod-related secret fixes
-    if (targetStage && fix.targetStage && fix.targetStage !== targetStage) {
-      continue; // Skip this fix - target stage doesn't match
-    }
-
-    // OS filtering: Skip fixes that don't match the target OS
+  // Apply target-stage and OS filters.
+  const filteredFixes = allFixes.filter((fix) => {
+    if (targetStage && fix.targetStage && fix.targetStage !== targetStage) return false;
     if (fix.os) {
       const targetOS = stageToOS[fix.stage];
       if (targetOS) {
         const fixOSList = Array.isArray(fix.os) ? fix.os : [fix.os];
-        if (!fixOSList.includes(targetOS)) {
-          continue; // Skip this fix - OS doesn't match
-        }
+        if (!fixOSList.includes(targetOS)) return false;
       }
     }
+    return true;
+  });
 
-    const startTime = performance.now();
-    try {
-      // Run the scan function
-      const hasProblem = await fix.scan(config, rootDir);
-      const duration = performance.now() - startTime;
+  // Run the chain. applyFixes=false because this is scan.
+  const { runStageChain } = await import('../utils/stage-chain.js');
+  const chainResult = await runStageChain(filteredFixes, {
+    config,
+    rootDir,
+    stages: reachableStages,
+    applyFixes: false,
+  });
 
-      // Log timing for slow checks (> 500ms)
-      if (duration > 500 && !options.silent) {
-        console.log('   [' + duration.toFixed(0) + 'ms] ' + fix.id);
-      }
-
-      if (hasProblem) {
-        const stageKey = fix.stage as keyof ScanProblems;
-        if (stageKey in problems) {
-          problems[stageKey].push(fix);
-        }
-      }
-    } catch (e) {
-      // Scan failed - treat as problem
-      if (!options.silent) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        console.log('  [!] Error scanning ' + fix.id + ': ' + errorMessage);
+  // Convert StageChainResult into the legacy ScanProblems shape so existing
+  // callers (notably fix.ts during its transitional state, the JSON consumers,
+  // anything that reads scan()'s return value) continue to work.
+  const problems: ScanProblems = { dev: [], staging: [], prod: [] };
+  for (const stage of stages) {
+    const stageResult = chainResult.byStage.get(stage);
+    if (!stageResult) continue;
+    for (const fix of filteredFixes) {
+      if (fix.stage !== stage) continue;
+      const outcome = stageResult.outcomes.get(fix.id);
+      if (outcome && outcome.issueDetected) {
+        problems[stage].push(fix);
       }
     }
   }
