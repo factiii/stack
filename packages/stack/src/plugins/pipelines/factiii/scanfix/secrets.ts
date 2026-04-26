@@ -548,7 +548,7 @@ async function manualSshKeyEntry(
 export const secretsFixes: Fix[] = [
   {
     id: 'missing-vault-password-file',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔐 Vault password file not found (required to decrypt secrets)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
@@ -599,7 +599,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-staging-ssh',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔑 STAGING_SSH secret not found in Ansible Vault',
     targetStage: 'staging', // Only run when targeting staging deployment
@@ -644,7 +644,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-prod-ssh',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔑 PROD_SSH secret not found in Ansible Vault',
     targetStage: 'prod', // Only run when targeting prod deployment
@@ -1035,7 +1035,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-staging-ssh-password',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '🔑 STAGING_SSH_PASSWORD not in vault (needed if staging uses password auth)',
     targetStage: 'staging', // Only run when targeting staging deployment
@@ -1108,7 +1108,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-prod-ssh-password',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '🔑 PROD_SSH_PASSWORD not in vault (needed if prod uses password auth)',
     targetStage: 'prod', // Only run when targeting prod deployment
@@ -1181,7 +1181,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-aws-secret',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '🔑 AWS_SECRET_ACCESS_KEY not found in Ansible Vault (needed for ECR)',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -1241,7 +1241,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-ssh-key-staging',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔑 STAGING_SSH key file not on disk (required for staging access)',
     targetStage: 'staging', // Only run when targeting staging deployment
@@ -1313,7 +1313,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-ssh-key-prod',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔑 PROD_SSH key file not on disk (required for prod access)',
     targetStage: 'prod', // Only run when targeting prod deployment

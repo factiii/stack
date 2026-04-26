@@ -20,7 +20,7 @@ import { promptSingleLine } from '../../../../utils/secret-prompts.js';
 export const vaultFixes: Fix[] = [
   {
     id: 'group-vars-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '📁 group_vars/all/ directory not found',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -38,7 +38,7 @@ export const vaultFixes: Fix[] = [
 
   {
     id: 'vault-file-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔐 Encrypted vault file not found',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -71,7 +71,7 @@ export const vaultFixes: Fix[] = [
 
   {
     id: 'vault-password-mismatch',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔐 Vault password does not match existing vault file',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {

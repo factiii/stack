@@ -88,7 +88,7 @@ const APPLE_CLIENT_ID = authSecrets.oauthEnvVars.apple[0] ?? 'APPLE_CLIENT_ID';
 export const secretsFixes: Fix[] = [
   {
     id: 'auth-jwt-secret-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: JWT_SECRET + ' not found in Ansible Vault (required for auth)',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -126,7 +126,7 @@ export const secretsFixes: Fix[] = [
 
   {
     id: 'auth-oauth-google-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: 'Google OAuth credentials not in vault (' + GOOGLE_CLIENT_ID + ')',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -173,7 +173,7 @@ export const secretsFixes: Fix[] = [
 
   {
     id: 'auth-oauth-apple-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: 'Apple OAuth credentials not in vault (' + APPLE_CLIENT_ID + ')',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {

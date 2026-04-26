@@ -54,7 +54,7 @@ function makeVaultKeyFix(targetStage: 'staging' | 'prod'): Fix {
   const secretName = targetStage.toUpperCase() + '_SSH';
   return {
     id: 'ssh-vault-key-to-disk-' + targetStage,
-    stage: 'secrets',
+    stage: 'dev',
     targetStage,
     severity: 'critical',
     description: secretName + ' key is in vault but not on disk — extracting',

@@ -647,7 +647,7 @@ export const credentialsFixes: Fix[] = [
   },
   {
     id: 'aws-credentials-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔑 AWS credentials not available (env vars or Ansible Vault)',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
@@ -738,7 +738,7 @@ export const credentialsFixes: Fix[] = [
   },
   {
     id: 'aws-credentials-invalid',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '🔑 AWS credentials are invalid or expired',
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {

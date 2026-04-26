@@ -301,7 +301,7 @@ async function _ensureIamAccessInner(config: FactiiiConfig, region: string): Pro
 export const iamFixes: Fix[] = [
   {
     id: 'aws-iam-admin-user-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '👤 IAM admin user not created (required for dev workflows)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
@@ -422,7 +422,7 @@ export const iamFixes: Fix[] = [
   },
   {
     id: 'aws-iam-prod-user-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '👤 IAM prod user not created (deployment access for staging/prod)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
