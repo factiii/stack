@@ -39,7 +39,7 @@
  *   - config.ts: When checking/generating stack.yml
  *   - github-cli.ts: When checking GitHub CLI installation (dev)
  *   - workflows.ts: When checking/generating GitHub workflows (dev)
- *   - secrets.ts: When checking GitHub Secrets (secrets stage)
+ *   - secrets.ts: When checking Ansible Vault secrets (vault unlock, SSH key extraction)
  * ============================================================
  */
 
@@ -155,23 +155,18 @@ class FactiiiPipeline {
    *
    * Return values:
    *   { reachable: true, via: 'local' } - Run fixes on this machine
-   *   { reachable: true, via: 'ssh' } - SSH directly to the server
    *   { reachable: false, reason: '...' } - Cannot reach, show error
    *
-   * Note: 'workflow' path was removed — deploy/fix/scan workflows are gone.
-   * SSH from dev machine is now the only remote execution path.
-   * GitHub Actions only runs CI (build + test), not deployment.
+   * Dev-direct model: all execution happens on the dev machine. Staging/prod
+   * fixes that need server state reach through an SSH tunnel opened by
+   * runStageChain (see utils/ssh-tunnel.ts). canReach() never returns
+   * via: 'ssh' — there is no remote stack CLI to invoke.
    *
    * For the Factiii pipeline:
    *   - dev: always local
-   *   - secrets: needs vault password
    *   - staging/prod:
-   *       - If GITHUB_ACTIONS=true → local (we're on the server)
-   *       - If SSH key exists → ssh (direct SSH from dev machine)
+   *       - If SSH key exists at ~/.ssh/{stage}_deploy_key → local (tunnel via runStageChain)
    *       - Otherwise → not reachable (guide user to set up SSH keys)
-   *
-   * CRITICAL: When SSHing to a server, the command MUST include
-   *   --staging or --prod to prevent infinite loops.
    * ============================================================
    */
   static canReach(stage: Stage, config: FactiiiConfig): Reachability {
@@ -388,7 +383,7 @@ class FactiiiPipeline {
   /**
    * Change the Ansible Vault password for the configured vault file.
    *
-   * This runs locally on the dev machine (secrets stage) and uses:
+   * This runs locally on the dev machine and uses:
    *   ansible-vault rekey <vault_path> --vault-password-file <old> --new-vault-password-file <new>
    *
    * It then overwrites the configured vault_password_file with the new password

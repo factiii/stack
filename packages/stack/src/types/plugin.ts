@@ -129,7 +129,7 @@ export interface Fix {
   os?: ServerOS | ServerOS[];
   /**
    * Optional: Only run this fix for specific deployment targets
-   * Used for secrets stage to differentiate staging vs prod secrets
+   * Used to differentiate staging vs prod secrets within dev-stage fix runs
    * Example: A fix with targetStage: 'staging' only runs when deploying to staging
    */
   targetStage?: 'staging' | 'prod';
@@ -148,8 +148,8 @@ export interface Fix {
    * collect cleanly instead of cascading into false "broken" reports.
    *
    * Typical chains:
-   *   vault-password-file → vault-unlocked → staging-ssh-key-to-disk → ssh-tunnel-staging
-   *   ssh-tunnel-staging → [every other staging fix]
+   *   vault-password-file → vault-unlocked → staging-ssh-key-to-disk
+   *   staging-ssh-key-to-disk → [every staging fix that needs server state]
    */
   requires?: string[];
   /**

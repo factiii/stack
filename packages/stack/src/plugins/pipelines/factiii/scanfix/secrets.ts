@@ -1,6 +1,6 @@
 /**
  * Ansible Vault Secrets fixes for Factiii Pipeline plugin
- * Handles Ansible Vault secrets validation for secrets stage
+ * Handles Ansible Vault secrets validation (vault unlock, SSH key extraction)
  */
 
 import * as fs from 'fs';

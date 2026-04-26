@@ -35,8 +35,8 @@ export interface TunnelHandle {
 }
 
 // Process-wide cache: one tunnel per stage. Scanfixes look up their stage's
-// tunnel via `getTunnel(stage)`; the `ssh-tunnel-<stage>` scanfix is the one
-// that calls openTunnel to populate this map.
+// tunnel via `getTunnel(stage)`; `runStageChain` is responsible for opening
+// and closing tunnels (calling openTunnel/closeTunnel at the chain boundaries).
 const tunnelsByStage = new Map<string, TunnelHandle>();
 let exitHandlerRegistered = false;
 
@@ -104,8 +104,9 @@ export function openTunnel(
 
 /**
  * Look up the tunnel already opened for a stage (returns null if nothing
- * opened one yet). Scanfixes that run after `ssh-tunnel-<stage>` call this
- * to acquire the shared handle rather than opening their own connection.
+ * opened one yet). Scanfixes call this to acquire the shared handle rather
+ * than opening their own connection; `runStageChain` opens the tunnel before
+ * the fix DAG runs and closes it after.
  */
 export function getTunnel(stage: string): TunnelHandle | null {
   return tunnelsByStage.get(stage) ?? null;

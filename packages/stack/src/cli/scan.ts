@@ -16,14 +16,13 @@
  *
  * How this works:
  *
- * 1. User specifies stage: --dev, --secrets, --staging, --prod
+ * 1. User specifies stage: --dev, --staging, --prod
  *    Or no flag = all stages in order
  *
  * 2. This file groups all plugin fixes by their stage property
  *
  * 3. For each requested stage, asks PIPELINE PLUGIN: canReach(stage)?
  *    - { reachable: true, via: 'local' } → run fixes locally
- *    - { reachable: true, via: 'ssh' } → pipeline SSHs to server
  *    - { reachable: false, reason: '...' } → show error, stop
  *
  * CRITICAL: This file does NOT know about:
@@ -287,7 +286,7 @@ function displayProblems(
     if (reachability[stage]) {
       const stageProblems = problems[stage as keyof ScanProblems] ?? [];
       const reach = reachability[stage];
-      if (reach?.reachable && reach.via === 'local') {
+      if (reach?.reachable) {
         totalProblems += stageProblems.length;
       }
     }
@@ -347,8 +346,8 @@ function displayProblems(
         console.log('           npx stack deploy --secrets write-ssh-keys  (extract keys to ~/.ssh/)');
       } else if (reasonLower.includes('github_token')) {
         console.log('    Fix: export GITHUB_TOKEN=your_token');
-        console.log('         Or set up SSH keys instead (preferred):');
-        console.log('           npx stack fix --secrets');
+        console.log('         Or set up SSH keys (preferred):');
+        console.log('           npx stack deploy --secrets write-ssh-keys');
       } else {
         console.log('    Fix: npx stack fix');
       }

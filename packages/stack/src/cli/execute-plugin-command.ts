@@ -6,8 +6,7 @@
  * 1. Determine target stage from --staging or --prod
  * 2. Check prodSafety - block destructive ops without --force
  * 3. Ask pipeline plugin canReach(stage)
- * 4. If via: 'workflow' -> trigger workflow
- * 5. If via: 'local' -> execute command directly
+ * 4. If via: 'local' -> execute command directly (all routes are local in dev-direct model)
  */
 
 import { execSync, spawn } from 'child_process';

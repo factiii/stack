@@ -8,7 +8,7 @@
  * this fix automatically stores it in Ansible Vault as PROD_SSH so that:
  * - Other dev machines can pull the key via `npx stack deploy --secrets write-ssh-keys`
  * - The `missing-prod-ssh` secrets check passes
- * - canReach('prod') returns via: 'ssh' on subsequent runs
+ * - canReach('prod') returns { reachable: true, via: 'local' } on subsequent runs
  *
  * Uses AWS SDK v3 for Elastic IP lookup.
  */

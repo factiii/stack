@@ -47,7 +47,7 @@ async function readVaultSecret(secretName: string, config: FactiiiConfig, rootDi
 }
 
 // ────────────────────────────────────────────────────────────
-// Fix A: Extract vault SSH key to disk (secrets stage)
+// Fix A: Extract vault SSH key to disk
 // ────────────────────────────────────────────────────────────
 
 function makeVaultKeyFix(targetStage: 'staging' | 'prod'): Fix {

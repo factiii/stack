@@ -3,7 +3,7 @@
  *
  * Runs auto-fixes for detected problems.
  * For remote stages (staging/prod), delegates to pipeline plugin.
- * For local stages (dev/secrets), runs fixes directly.
+ * For local stages (dev), runs fixes directly.
  *
  * ============================================================
  * STAGE EXECUTION PATTERN
