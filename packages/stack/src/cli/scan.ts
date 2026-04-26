@@ -150,7 +150,7 @@ async function runBootstrapFixes(plugins: PluginClass[], rootDir: string): Promi
 /**
  * Generate env var fixes from plugin requiredEnvVars
  */
-function generateEnvVarFixes(
+export function generateEnvVarFixes(
   plugin: PluginClass,
   rootDir: string,
   _config: FactiiiConfig

@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import { loadConfig, isDevOnly } from '../utils/config-helpers.js';
+import { generateEnvVarFixes } from './scan.js';
 import type { FactiiiConfig, Fix, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
 
 interface PluginClass {
@@ -80,6 +81,9 @@ async function runChainAsFix(
       seen.add(key);
       allFixes.push({ ...fix, plugin: (plugin as { id: string }).id });
     }
+    // Add auto-generated env var fixes from plugin requiredEnvVars
+    const envFixes = generateEnvVarFixes(plugin as { id: string; category: string; requiredEnvVars?: string[] }, rootDir, config);
+    allFixes.push(...envFixes);
   }
 
   const filtered = allFixes.filter((fix) => {
