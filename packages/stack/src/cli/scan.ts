@@ -265,15 +265,6 @@ function getStageStatus(
     };
   }
 
-  // Stage is reachable remotely (pipeline handles it)
-  if (reach && reach.reachable && reach.via !== 'local') {
-    return {
-      icon: '[~]',
-      label: 'Via ' + reach.via,
-      detail: 'Handled by pipeline plugin',
-    };
-  }
-
   // Stage is directly reachable (local)
   if (problemCount === 0) {
     return {
@@ -390,8 +381,7 @@ function displayProblems(
 
       const stageProblems = problems[stage as keyof ScanProblems] ?? [];
 
-      // Skip stages not scanned locally
-      if (!reach.reachable || reach.via !== 'local') {
+      if (!reach.reachable) {
         continue;
       }
 
@@ -418,13 +408,6 @@ function displayProblems(
     console.log('Found ' + totalProblems + ' issue' + (totalProblems > 1 ? 's' : '') + '.');
     console.log('Hint: Run: npx stack fix\n');
   }
-}
-
-/**
- * Get pipeline plugin from loaded plugins
- */
-function getPipelinePlugin(plugins: PluginClass[]): PluginClass | undefined {
-  return plugins.find((p) => p.category === 'pipeline');
 }
 
 /**
@@ -553,16 +536,13 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
 
   // Get all pipeline plugins to check reachability (multi-pipeline support)
   const pipelinePlugins = getAllPipelinePlugins(plugins);
-  const pipelinePlugin = getPipelinePlugin(plugins);
 
-  // Check reachability for each stage
-  // Separate local vs remote stages — pipeline plugin handles remote
+  // Check reachability for each stage.
+  // Dev-direct: every reachable stage runs locally on the dev machine.
   const reachability: Record<string, Reachability> = {};
   const localStages: Stage[] = [];
-  const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
-    // dev always runs locally — it never routes via SSH
     if (stage === 'dev') {
       reachability[stage] = { reachable: true, via: 'local' };
       localStages.push(stage);
@@ -574,11 +554,7 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
       reachability[stage] = checkReachability(pipelinePlugins, stage, config);
 
       if (reachability[stage]?.reachable) {
-        if (reachability[stage]!.via === 'local') {
-          localStages.push(stage);
-        } else {
-          remoteStages.push(stage);
-        }
+        localStages.push(stage);
       }
     } else {
       // No pipeline plugin or no canReach method - assume all reachable locally
@@ -677,19 +653,6 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
       if (!options.silent) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         console.log('  [!] Error scanning ' + fix.id + ': ' + errorMessage);
-      }
-    }
-  }
-
-  // Remote stages: delegate to pipeline plugin
-  if (remoteStages.length > 0 && !options.silent) {
-    const PipelineClass = pipelinePlugin as unknown as PipelinePluginClass;
-    if (PipelineClass && typeof PipelineClass === 'function') {
-      const pipeline = new PipelineClass(config);
-      if (typeof pipeline.scanStage === 'function') {
-        for (const stage of remoteStages) {
-          await pipeline.scanStage(stage, {});
-        }
       }
     }
   }

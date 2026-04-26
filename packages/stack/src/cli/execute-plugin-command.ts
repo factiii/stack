@@ -216,12 +216,6 @@ export async function executePluginCommand(
     process.exit(1);
   }
 
-  if (reach.via === 'workflow') {
-    // Trigger workflow to run command on server
-    await triggerCommandWorkflow(command, stage, options);
-    return;
-  }
-
   // Dev-direct: staging/prod commands run from dev through the per-stage
   // SSH tunnel. The command declares a `remoteCmd` that returns the shell
   // string to exec on the server; we open `ssh-tunnel-<stage>` and run it.

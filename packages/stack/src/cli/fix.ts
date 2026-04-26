@@ -288,13 +288,11 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   // Load all plugins to check reachability
   const plugins = await loadRelevantPlugins(rootDir, config);
   const pipelinePlugins = getAllPipelinePlugins(plugins as unknown as PluginClass[]);
-  const pipelinePlugin = getPipelinePlugin(plugins as unknown as PluginClass[]);
 
-  // Check reachability for each stage
-  // Separate local vs remote — pipeline plugin handles remote
+  // Check reachability for each stage.
+  // Dev-direct: every reachable stage runs locally on the dev machine.
   const reachability: Record<string, Reachability> = {};
   const localStages: Stage[] = [];
-  const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
     // dev always runs locally — it never routes via SSH
@@ -309,11 +307,7 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
       reachability[stage] = checkReachability(pipelinePlugins, stage, config);
 
       if (reachability[stage]?.reachable) {
-        if (reachability[stage]!.via === 'local') {
-          localStages.push(stage);
-        } else {
-          remoteStages.push(stage);
-        }
+        localStages.push(stage);
       }
     } else {
       // No pipeline plugin or no canReach method - assume all reachable locally
@@ -322,34 +316,8 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
     }
   }
 
-  // Run local fixes for directly reachable stages
+  // Run fixes for all reachable stages locally (dev-direct: no remote delegation)
   const result = await runLocalFixes({ ...options, targetStage }, localStages);
-
-  // Remote stages: delegate to the pipeline plugin that claims each stage
-  for (const stage of remoteStages) {
-    const claimingPlugin = findPipelineForStage(pipelinePlugins, stage, config);
-    if (!claimingPlugin) continue;
-
-    const PipelineClass = claimingPlugin as unknown as PipelinePluginClass;
-    const pipeline = new PipelineClass(config);
-
-    if (typeof pipeline.fixStage !== 'function') {
-      // Pipeline doesn't have fixStage — run fixes locally instead
-      const localResult = await runLocalFixes({ ...options, stages: [stage] }, [stage]);
-      result.fixed += localResult.fixed;
-      result.manual += localResult.manual;
-      result.failed += localResult.failed;
-      result.fixes.push(...localResult.fixes);
-      continue;
-    }
-
-    const remoteResult = await pipeline.fixStage(stage, {}) as { handled: boolean; success?: boolean; error?: string };
-    if (!remoteResult.handled) continue;
-
-    // Remote fix already printed its own detailed summary inline.
-    // Don't add a duplicate entry to the local summary — the user already saw
-    // the server's output with individual fix results.
-  }
 
   // ============================================================
   // SUMMARY
