@@ -20,13 +20,12 @@ export interface ScanOptions extends BaseOptions {
   dev?: boolean;
   staging?: boolean;
   prod?: boolean;
-  secrets?: boolean;
   stages?: Stage[];
   commit?: string;
   silent?: boolean;
   /**
    * Target deployment stage (staging or prod)
-   * Used to filter secret-stage fixes - only run secrets for this target
+   * Filters fixes by deployment target stage
    */
   targetStage?: 'staging' | 'prod';
 }
@@ -36,7 +35,6 @@ export interface ScanOptions extends BaseOptions {
  */
 export interface ScanProblems {
   dev: Fix[];
-  secrets: Fix[];
   staging: Fix[];
   prod: Fix[];
 }

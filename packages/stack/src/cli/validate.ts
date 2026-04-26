@@ -14,7 +14,6 @@ export async function validate(_options: ValidateOptions = {}): Promise<boolean>
 
   const totalProblems =
     problems.dev.length +
-    problems.secrets.length +
     problems.staging.length +
     problems.prod.length;
 

@@ -124,7 +124,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   // ============================================================
 
   // Map environment name to stage (staging2 -> staging, prod2 -> prod, etc.)
-  // Do this FIRST because 'dev' and 'secrets' don't require environment configs
+  // Do this FIRST because 'dev' doesn't require environment configs
   let stage: Stage;
   try {
     stage = getStageFromEnvironment(environment);
@@ -134,9 +134,9 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     return { success: false, error: errorMessage };
   }
 
-  // Special stages (dev, secrets) don't require environment configuration
-  // They run locally and don't need server configs
-  if (stage !== 'dev' && stage !== 'secrets') {
+  // Dev stage doesn't require environment configuration
+  // It runs locally and doesn't need server configs
+  if (stage !== 'dev') {
     // Validate environment exists in config (only for staging/prod)
     const environments = extractEnvironments(config);
 
@@ -169,10 +169,8 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   // First run scan to check for blocking issues
   // Only scan the target stage - don't let prod issues block a staging deploy
   // Clear stage flags from options so they don't override the stages array
-  // (e.g., --secrets sets options.secrets=true which scan interprets as "scan secrets stage only")
   const scanOptions = { ...options, silent: true, stages: [stage] as Stage[] };
   delete scanOptions.dev;
-  delete scanOptions.secrets;
   delete scanOptions.staging;
   delete scanOptions.prod;
   delete scanOptions.deploySecrets;
@@ -189,7 +187,6 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     // Group by stage for clearer output
     const problemsByStage: Record<string, typeof criticalProblems> = {
       dev: [],
-      secrets: [],
       staging: [],
       prod: [],
     };
@@ -261,7 +258,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     console.log('  Environment: ' + environment);
     console.log('  Stage:       ' + stage);
 
-    if (stage !== 'dev' && stage !== 'secrets') {
+    if (stage !== 'dev') {
       const environments = extractEnvironments(config);
       const envConfig = environments[environment];
       if (envConfig) {

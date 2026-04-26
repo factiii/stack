@@ -300,14 +300,14 @@ function displayProblems(
 ): void {
   if (options.silent) return;
 
-  const stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
+  const stages: Stage[] = ['dev', 'staging', 'prod'];
   let totalProblems = 0;
   const unreachableStages: { stage: Stage; reason: string }[] = [];
 
   // Count total problems (only for locally-scanned stages)
   for (const stage of stages) {
     if (reachability[stage]) {
-      const stageProblems = problems[stage] ?? [];
+      const stageProblems = problems[stage as keyof ScanProblems] ?? [];
       const reach = reachability[stage];
       if (reach?.reachable && reach.via === 'local') {
         totalProblems += stageProblems.length;
@@ -323,7 +323,7 @@ function displayProblems(
     const reach = reachability[stage];
     if (!reach) continue; // Stage wasn't checked
 
-    const problemCount = problems[stage]?.length ?? 0;
+    const problemCount = problems[stage as keyof ScanProblems]?.length ?? 0;
     const status = getStageStatus(stage, reach, problemCount);
 
     // Format: [STAGE]     icon Status (detail)
@@ -388,7 +388,7 @@ function displayProblems(
       const reach = reachability[stage];
       if (!reach) continue;
 
-      const stageProblems = problems[stage] ?? [];
+      const stageProblems = problems[stage as keyof ScanProblems] ?? [];
 
       // Skip stages not scanned locally
       if (!reach.reachable || reach.via !== 'local') {
@@ -480,7 +480,7 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
     console.log('  This will scan your codebase and create stack.yml');
     console.log('  with EXAMPLE_ values for you to fill in.');
     console.log('');
-    return { dev: [], secrets: [], staging: [], prod: [] };
+    return { dev: [], staging: [], prod: [] };
   }
 
   const config = loadConfig(rootDir);
@@ -508,7 +508,7 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
   }
 
   // Determine which stages to scan
-  let stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
+  let stages: Stage[] = ['dev', 'staging', 'prod'];
   let targetStage: 'staging' | 'prod' | undefined;
 
   // Explicit stages array takes priority (used by fix.ts multi-pass loop)
@@ -518,23 +518,21 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
     targetStage = options.targetStage;
   }
   else if (options.dev) stages = ['dev'];
-  else if (options.secrets) stages = ['secrets'];
   else if (options.staging) {
-    stages = ['dev', 'secrets', 'staging'];
+    stages = ['dev', 'staging'];
     targetStage = 'staging'; // Only scan staging secrets
   }
   else if (options.prod) {
-    stages = ['dev', 'secrets', 'prod'];
+    stages = ['dev', 'prod'];
     targetStage = 'prod'; // Only scan prod secrets
   }
 
-  // Dev-only gate: when dev_only is true (default), restrict to dev+secrets only
-  // Secrets stage is always allowed (needed to set up tokens/keys before unlocking staging/prod)
+  // Dev-only gate: when dev_only is true (default), restrict to dev only
   // CRITICAL: Keep targetStage so secrets fixes only run for the requested stage
   // Skip dev_only gate when running on the server (SSH'd in or CI)
   const onServer = process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true';
   if (isDevOnly(config) && !onServer) {
-    if (stages.some(s => s !== 'dev' && s !== 'secrets')) {
+    if (stages.some(s => s !== 'dev')) {
       // User explicitly passed --staging or --prod — auto-unlock
       const localPath = path.join(rootDir, 'stack.local.yml');
       if (fs.existsSync(localPath)) {
@@ -564,8 +562,8 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
   const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
-    // dev and secrets always run locally — they never route via SSH
-    if (stage === 'dev' || stage === 'secrets') {
+    // dev always runs locally — it never routes via SSH
+    if (stage === 'dev') {
       reachability[stage] = { reachable: true, via: 'local' };
       localStages.push(stage);
       continue;
@@ -609,7 +607,6 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
   // Run scan() for each fix, collect problems found
   const problems: ScanProblems = {
     dev: [],
-    secrets: [],
     staging: [],
     prod: [],
   };
@@ -670,7 +667,10 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
       }
 
       if (hasProblem) {
-        problems[fix.stage].push(fix);
+        const stageKey = fix.stage as keyof ScanProblems;
+        if (stageKey in problems) {
+          problems[stageKey].push(fix);
+        }
       }
     } catch (e) {
       // Scan failed - treat as problem

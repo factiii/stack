@@ -22,7 +22,7 @@ import * as path from 'path';
 import { scan } from './scan.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import { loadConfig, isDevOnly } from '../utils/config-helpers.js';
-import type { FactiiiConfig, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
+import type { FactiiiConfig, Fix, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
 
 interface PluginClass {
   id: string;
@@ -138,14 +138,14 @@ async function runLocalFixes(
       const config = loadConfig(rootDir);
 
       // Strip stage booleans — only pass stages array so scan doesn't override it
-      const { dev: _d, secrets: _sec, staging: _stg, prod: _p, stages: _s, ...cleanOptions } = options;
+      const { dev: _d, staging: _stg, prod: _p, stages: _s, ...cleanOptions } = options;
       const problems = await scan({
         ...cleanOptions,
         silent: true,
         stages: [stage],
       });
 
-      const stageProblems = problems[stage] ?? [];
+      const stageProblems = (problems[stage as keyof typeof problems] ?? []) as Fix[];
       // Filter out already-processed fixes
       const newProblems = stageProblems.filter(p => !processedIds.has(p.id));
       if (newProblems.length === 0) break;
@@ -252,28 +252,26 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   console.log('Running auto-fixes...\n');
 
   // Determine which stages to fix
-  let stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
+  let stages: Stage[] = ['dev', 'staging', 'prod'];
   let targetStage: 'staging' | 'prod' | undefined;
 
   if (options.dev) stages = ['dev'];
-  else if (options.secrets) stages = ['secrets'];
   else if (options.staging) {
-    stages = ['dev', 'secrets', 'staging'];
+    stages = ['dev', 'staging'];
     targetStage = 'staging'; // Only fix staging secrets
   }
   else if (options.prod) {
-    stages = ['dev', 'secrets', 'prod'];
+    stages = ['dev', 'prod'];
     targetStage = 'prod'; // Only fix prod secrets
   }
   else if (options.stages) stages = options.stages;
 
-  // Dev-only gate: when dev_only is true (default), restrict to dev+secrets only
-  // Secrets stage is always allowed (needed to set up tokens/keys before unlocking staging/prod)
+  // Dev-only gate: when dev_only is true (default), restrict to dev only
   // CRITICAL: Keep targetStage so secrets fixes only run for the requested stage
   // Skip dev_only gate when running on the server (SSH'd in or CI)
   const onServer = process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true';
   if (isDevOnly(config) && !onServer) {
-    if (stages.some(s => s !== 'dev' && s !== 'secrets')) {
+    if (stages.some(s => s !== 'dev')) {
       // User explicitly passed --staging or --prod — auto-unlock
       const localPath = path.join(rootDir, 'stack.local.yml');
       if (fs.existsSync(localPath)) {
@@ -299,8 +297,8 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
-    // dev and secrets always run locally — they never route via SSH
-    if (stage === 'dev' || stage === 'secrets') {
+    // dev always runs locally — it never routes via SSH
+    if (stage === 'dev') {
       reachability[stage] = { reachable: true, via: 'local' };
       localStages.push(stage);
       continue;
@@ -361,7 +359,7 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   console.log('  SUMMARY');
   console.log('═'.repeat(60));
 
-  const allStages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
+  const allStages: Stage[] = ['dev', 'staging', 'prod'];
   let hasManualFixes = false;
 
   for (const stage of allStages) {
