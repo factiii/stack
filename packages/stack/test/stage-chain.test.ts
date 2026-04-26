@@ -1,7 +1,7 @@
 /**
  * Tests for the stage chain runner.
  *
- * Verifies the three guarantees of the dev → secrets → staging → prod model:
+ * Verifies the three guarantees of the dev → staging → prod model:
  *   1. Stages run in order. Within a stage, the DAG runner handles ordering.
  *   2. Cross-stage gate: a failed critical fix in stage N marks every fix
  *      in stage N+1..end `skipped` with a shared reason.
@@ -49,7 +49,7 @@ describe('injectStageTunnelEdges', () => {
     expect(injected[0].requires).toBeUndefined();
   });
 
-  test('is a no-op for dev and secrets stages', () => {
+  test('is a no-op for dev stage', () => {
     const fixes: Fix[] = [
       mkFix({ id: 'dev-fix', stage: 'dev', scan: async () => false }),
     ];
@@ -78,18 +78,16 @@ describe('runStageChain', () => {
     expect(TUNNEL_FIX_ID.staging).toBe('ssh-tunnel-staging');
     expect(TUNNEL_FIX_ID.prod).toBe('ssh-tunnel-prod');
     expect(TUNNEL_FIX_ID.dev).toBeUndefined();
-    expect(TUNNEL_FIX_ID.secrets).toBeUndefined();
   });
 
   test('runs stages in order and reports ok when everything scans clean', async () => {
     const order: Stage[] = [];
     const fixes: Fix[] = [
       mkFix({ id: 'd1', stage: 'dev', scan: async () => { order.push('dev'); return false; } }),
-      mkFix({ id: 's1', stage: 'secrets', scan: async () => { order.push('secrets'); return false; } }),
       mkFix({ id: 'st1', stage: 'staging', scan: async () => { order.push('staging'); return false; } }),
     ];
     const res = await runStageChain(fixes, { config: baseConfig, rootDir: '/tmp' });
-    expect(order).toEqual(['dev', 'secrets', 'staging']);
+    expect(order).toEqual(['dev', 'staging']);
     expect(res.chainBroken).toBe(false);
     expect(res.firstFailedStage).toBeNull();
   });
@@ -97,7 +95,6 @@ describe('runStageChain', () => {
   test('a failed dev fix marks every later-stage fix skipped with a shared reason', async () => {
     const fixes: Fix[] = [
       mkFix({ id: 'd-bad', stage: 'dev', severity: 'critical', scan: async () => { throw new Error('boom'); } }),
-      mkFix({ id: 's1', stage: 'secrets', scan: async () => false }),
       mkFix({ id: 'st1', stage: 'staging', scan: async () => false }),
       mkFix({ id: 'p1', stage: 'prod', scan: async () => false }),
     ];
@@ -105,7 +102,6 @@ describe('runStageChain', () => {
     expect(res.chainBroken).toBe(true);
     expect(res.firstFailedStage).toBe('dev');
     expect(res.byStage.get('dev')!.outcomes.get('d-bad')!.status).toBe('failed');
-    expect(res.byStage.get('secrets')!.outcomes.get('s1')!.status).toBe('skipped');
     expect(res.byStage.get('staging')!.outcomes.get('st1')!.status).toBe('skipped');
     expect(res.byStage.get('staging')!.outcomes.get('st1')!.reason).toContain('dev');
     expect(res.byStage.get('prod')!.outcomes.get('p1')!.status).toBe('skipped');

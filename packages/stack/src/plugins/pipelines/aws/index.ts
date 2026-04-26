@@ -200,27 +200,6 @@ class AWSPipeline {
         // Dev is always reachable locally (for AWS CLI checks)
         return { reachable: true, via: 'local' };
 
-      case 'secrets':
-        // Secrets stage: check if AWS credentials are available
-        // Check Ansible Vault first (same pattern as factiii pipeline)
-        if (config.ansible?.vault_path) {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const os = require('os');
-          const vaultPasswordFile = config.ansible.vault_password_file?.replace(/^~/, os.homedir());
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const fsCheck = require('fs');
-          const hasPasswordFile = vaultPasswordFile && fsCheck.existsSync(vaultPasswordFile);
-          const hasPasswordEnv = !!process.env.ANSIBLE_VAULT_PASSWORD || !!process.env.ANSIBLE_VAULT_PASSWORD_FILE;
-          if (hasPasswordFile || hasPasswordEnv) {
-            return { reachable: true, via: 'local' };
-          }
-        }
-        // Fallback: check env vars directly
-        if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-          return { reachable: true, via: 'api' };
-        }
-        return { reachable: false, reason: 'Missing AWS credentials. Configure Ansible Vault or set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY env vars.' };
-
       case 'staging':
       case 'prod': {
         // Dev-direct: AWS scanfixes hit AWS APIs from the dev machine; any

@@ -3,7 +3,6 @@
  *
  * Dev-direct model:
  * - dev: always local
- * - secrets: needs vault password
  * - staging/prod: `local` when a real domain (non-EXAMPLE) or AWS config exists;
  *   the CLI runs on dev, reaches the server through the per-stage SSH tunnel
  *   (opened by the `ssh-tunnel-<stage>` scanfix lazily). No `via: 'ssh'` or
@@ -87,35 +86,6 @@ describe('canReach - dev stage', () => {
     if (result.reachable) {
       expect(result.via).toBe('local');
     }
-  });
-});
-
-describe('canReach - secrets stage', () => {
-  test('unreachable when no vault config', () => {
-    const configNoVault = { name: 'test' } as FactiiiConfig;
-    const result = FactiiiPipeline.canReach('secrets', configNoVault);
-    expect(result.reachable).toBe(false);
-  });
-
-  test('reachable when vault password file exists', () => {
-    const vaultPassPath = path.join(os.homedir(), '.vault_pass').replace(/\\/g, '/');
-    mockFile(vaultPassPath);
-    const result = FactiiiPipeline.canReach('secrets', baseConfig);
-    expect(result.reachable).toBe(true);
-    if (result.reachable) {
-      expect(result.via).toBe('local');
-    }
-  });
-
-  test('reachable when ANSIBLE_VAULT_PASSWORD env is set', () => {
-    process.env.ANSIBLE_VAULT_PASSWORD = 'test-password';
-    const result = FactiiiPipeline.canReach('secrets', baseConfig);
-    expect(result.reachable).toBe(true);
-  });
-
-  test('unreachable when no vault password available', () => {
-    const result = FactiiiPipeline.canReach('secrets', baseConfig);
-    expect(result.reachable).toBe(false);
   });
 });
 

@@ -7,7 +7,7 @@
 
 import * as fs from 'fs';
 import yaml from 'js-yaml';
-import type { FactiiiConfig, EnvironmentConfig } from '../types/index.js';
+import type { FactiiiConfig, EnvironmentConfig, Stage } from '../types/index.js';
 import { getStackConfigPath, getStackAutoPath, getStackLocalPath } from '../constants/config-files.js';
 
 // ============================================================
@@ -42,9 +42,10 @@ export const RESERVED_CONFIG_KEYS = [
 ] as const;
 
 /**
- * Stage type definition
+ * Stage type — re-exported from types/plugin for convenience.
+ * Canonical definition lives in src/types/plugin.ts.
  */
-export type Stage = 'dev' | 'secrets' | 'staging' | 'prod';
+export type { Stage };
 
 /**
  * Extract environment configs from config object
@@ -86,23 +87,21 @@ export function hasEnvironments(config: FactiiiConfig): boolean {
  *
  * Rules:
  * - 'dev' → 'dev'
- * - 'secrets' → 'secrets'
  * - starts with 'staging' or 'stage-' → 'staging'
  * - starts with 'prod' or equals 'production' → 'prod'
  *
  * @param envName - Environment name (e.g., 'staging2', 'prod')
- * @returns Stage name ('dev' | 'secrets' | 'staging' | 'prod')
+ * @returns Stage name ('dev' | 'staging' | 'prod')
  * @throws Error if environment name doesn't match any pattern
  */
 export function getStageFromEnvironment(envName: string): Stage {
   if (envName === 'dev') return 'dev';
-  if (envName === 'secrets') return 'secrets';
   if (envName.startsWith('staging') || envName.startsWith('stage-')) return 'staging';
   if (envName.startsWith('prod') || envName === 'production') return 'prod';
 
   throw new Error(
     `Cannot determine stage for environment: ${envName}. ` +
-    `Environment names must start with 'staging', 'prod', or be 'dev'/'secrets'.`
+    `Environment names must start with 'staging', 'prod', or be 'dev'.`
   );
 }
 

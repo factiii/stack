@@ -181,31 +181,6 @@ class FactiiiPipeline {
         // Dev is always reachable locally
         return { reachable: true, via: 'local' };
 
-      case 'secrets':
-        // Need Ansible Vault configuration
-        if (!config.ansible?.vault_path) {
-          return {
-            reachable: false,
-            reason: 'ansible.vault_path not configured in stack.yml',
-          };
-        }
-
-        // Check if vault password is available (file or env)
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const os = require('os');
-        const vaultPasswordFile = config.ansible.vault_password_file?.replace(/^~/, os.homedir());
-        const hasPasswordFile = vaultPasswordFile && fs.existsSync(vaultPasswordFile);
-        const hasPasswordEnv = !!process.env.ANSIBLE_VAULT_PASSWORD || !!process.env.ANSIBLE_VAULT_PASSWORD_FILE;
-
-        if (!hasPasswordFile && !hasPasswordEnv) {
-          return {
-            reachable: false,
-            reason: 'Vault password required. Set ansible.vault_password_file in stack.yml, or ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_PASSWORD_FILE env.',
-          };
-        }
-
-        return { reachable: true, via: 'local' };
-
       case 'staging':
       case 'prod': {
         // Dev-direct model: every command runs on the dev machine. Staging/prod
@@ -695,9 +670,9 @@ class FactiiiPipeline {
     },
     {
       name: 'change-vault-password',
-      description: 'Change the Ansible Vault encryption password (runs locally)',
+      description: 'Change the Ansible Vault encryption password (runs locally, use --dev)',
       category: 'ops',
-      stages: ['secrets'],
+      stages: ['dev'],
       prodSafety: 'safe',
       execute: async (_stage, _options, config, rootDir): Promise<CommandResult> => {
         return await FactiiiPipeline.changeVaultPassword(config, rootDir);

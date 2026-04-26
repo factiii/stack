@@ -10,7 +10,7 @@ import type { DeployOptions } from './cli.js';
 /**
  * Deployment stages
  */
-export type Stage = 'dev' | 'secrets' | 'staging' | 'prod';
+export type Stage = 'dev' | 'staging' | 'prod';
 
 /**
  * Server OS types

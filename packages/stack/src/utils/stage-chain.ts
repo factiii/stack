@@ -2,7 +2,7 @@
  * Stage Chain Runner
  *
  * Sits on top of the DAG runner and executes the four-stage chain:
- *   dev → secrets → staging → prod
+ *   dev → staging → prod
  *
  * Contract (from the architectural discussion):
  *   - Each stage is its own DAG. Within a stage, `Fix.requires` orders fixes
@@ -28,7 +28,7 @@ import type { Fix, FactiiiConfig, Stage } from '../types/index.js';
 import { runFixDAG, type DAGResult, type FixOutcome, type FixStatus } from './dag-runner.js';
 
 /** Default stage order. Callers can narrow it but not reorder. */
-export const STAGE_ORDER: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
+export const STAGE_ORDER: Stage[] = ['dev', 'staging', 'prod'];
 
 /** The SSH tunnel fix id for each remote stage. */
 export const TUNNEL_FIX_ID: Partial<Record<Stage, string>> = {
@@ -41,7 +41,7 @@ export interface StageChainOptions {
   rootDir: string;
   /** When false (default), scan only. True flips on fix application. */
   applyFixes?: boolean;
-  /** Narrow the chain (e.g. ['dev', 'secrets', 'staging']). Must stay in STAGE_ORDER order. */
+  /** Narrow the chain (e.g. ['dev', 'staging']). Must stay in STAGE_ORDER order. */
   stages?: Stage[];
   /** Called as each fix settles, inside its stage. */
   onOutcome?: (outcome: FixOutcome, fix: Fix, stage: Stage) => void;
