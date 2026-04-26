@@ -144,7 +144,23 @@ Returns trimmed stdout. Throws on non-zero exit. Scanfix authors do not call `tu
 
 **fix** — Safe changes only. Creates/updates config files, installs CLI tools, creates workflow files. MUST NOT touch deployment artifacts (docker-compose.yml, nginx configs, containers, SSL certs). If a deployment artifact is broken, fix should say: "Run `npx stack deploy --{stage}` to regenerate"
 
-**deploy** — Modifies deployment artifacts. Runs scan first, blocks on critical issues. Handles: docker build, compose up/down, nginx reload, SSL setup.
+**deploy** — Modifies deployment artifacts. Runs the upstream-stage fix chain first (see Deploy Prereq Policy below), then touches deployment artifacts: docker build, compose up/down, nginx reload, SSL setup.
+
+### Deploy Prereq Policy
+
+`npx stack deploy --<stage>` runs the upstream-stage fix chain before touching any deployment artifact:
+
+- `deploy --staging` runs `runStageChain(['dev'], applyFixes: true)` first.
+- `deploy --prod` runs `runStageChain(['dev', 'staging'], applyFixes: true)` first. The `staging` step opens an SSH tunnel to the staging server and applies any pending staging fixes end-to-end before prod artifacts are touched.
+
+If a prereq stage breaks — a fix fails, a critical issue goes unfixed, or the SSH tunnel cannot open — deploy aborts with `Prereq stage broken (<stage>). Fix and retry.` before `deployStage` is called.
+
+Two operational consequences:
+
+1. **Deploy is no longer read-only before the deploy step.** The prereq pass mutates dev-machine state idempotently (`.env.example` regeneration, vault-key extraction, SSH-key-to-disk, etc.) — the same mutations `npx stack fix` would apply.
+2. **Deploying to prod requires staging to be reachable.** If the staging server is down or the SSH key is missing, `deploy --prod` aborts without touching prod.
+
+Escape hatch: run `npx stack fix --staging` to resolve staging state manually, then retry `deploy --prod`.
 
 ### Host-Machine Fixes (Opt-In)
 
