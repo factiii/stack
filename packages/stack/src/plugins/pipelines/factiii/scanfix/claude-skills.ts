@@ -198,12 +198,12 @@ The list of buckets *is* the test scope. A repo with only \`packages/stack\` and
 
 const PROD_CHECK_SKILL_CONTENT = `---
 name: prod-check
-description: Pre-production verification for any factiii-pipeline repo. Runs quality gates (lint, types, tests, build), diffs the current branch against origin/production for schema/migration/env/secret/API changes, runs a security audit, and commits the resulting fixes. TRIGGER when the user asks to check a branch against production, prepare a production push, run pre-merge checks, or audit dependencies before release.
+description: Pre-production verification for any factiii-pipeline repo. Runs a security audit, quality gates (lint, types, tests, build), diffs the current branch against origin/production for schema/migration/env/secret/API changes, and commits the resulting fixes. TRIGGER when the user asks to check a branch against production, prepare a production push, run pre-merge checks, or audit dependencies before release.
 ---
 
 # prod-check
 
-Pre-production verification workflow for **factiii-pipeline repos**. Runs in four phases: **fix everything locally**, **diff against production**, **security audit**, then **commit**. Report at the end groups findings as **BLOCKING** vs **INFORMATIONAL**.
+Pre-production verification workflow for **factiii-pipeline repos**. Runs in four phases: **sync & audit**, **fix locally**, **diff against production**, then **commit**. Report at the end groups findings as **BLOCKING** vs **INFORMATIONAL**.
 
 The whole point: nothing should reach \`origin/production\` that hasn't passed local quality gates and been reviewed for schema, secret, and API-breaking changes.
 
@@ -229,24 +229,49 @@ If a repo has only a server, run only server steps. If it has no Prisma, skip sc
 
 ---
 
-## Phase 1 — Local quality gates (fix before continuing)
+## Phase 1 — Sync & security audit
+
+Audit runs **before** tests and build so that quality gates execute against the final dependency tree. The quick \`pnpm audit\` is cheap; pay for it before paying for tests.
+
+1. **Sync** — \`git fetch origin production\` and confirm the working tree is clean (\`git status\`). Stash or commit anything dirty before continuing; uncommitted state contaminates the diff in Phase 3.
+2. **Quick audit gate** — \`pnpm audit\` against the current lockfile. **Always run** — even when \`pnpm-lock.yaml\` is unchanged. New CVEs get disclosed against packages already pinned in the lockfile, so a clean diff doesn't mean a clean audit. If clean and (where present) \`.specs/audit.md\` is current, Phase 1 is done — move to Phase 2.
+3. **Full triage** — only if the quick audit surfaced findings. Run the process below **now** (not after tests/build), so Phase 2 executes against the corrected deps and you don't have to re-test.
+
+If the repo has a \`.specs/audit.md\`, it owns the override **reference table** (what's pinned and *why*). This skill owns the **process** for updating it. If the repo has no audit doc, just report findings — don't create the file unless the user asks.
+
+### Audit triage process
+
+1. Remove ALL overrides from \`package.json\` (security + dedup).
+2. \`pnpm install --no-frozen-lockfile\`.
+3. If \`apps/mobile/\` exists: \`cd apps/mobile && npx expo-doctor\` — check Expo SDK compatibility first.
+4. Re-add dedup overrides if still needed, \`pnpm install\`.
+5. \`pnpm audit\` — note what's still vulnerable.
+6. For each vuln: \`pnpm why <pkg>\` — if upstream fixed it, no override needed.
+7. Add security overrides only for transitive deps where the fix is a semver-compatible bump.
+8. \`pnpm install && pnpm audit\` — verify.
+9. If \`.specs/audit.md\` exists, **update it** with the new override row(s), source chain, and the *reason* (CVE, behavior, or compatibility issue). A row without a reason is worse than no row.
+
+**Don't override** if: major version jump required, dev-only with no prod exposure, or it's a direct dep (just upgrade it).
+
+---
+
+## Phase 2 — Local quality gates (fix before continuing)
 
 Run in this order against the scripts that exist. Each step must be green before moving on. If a step fails, fix it (or report blockers and stop) — do not skip.
 
-1. **Sync** — \`git fetch origin production\` and confirm the working tree is clean (\`git status\`). Stash or commit anything dirty before continuing; uncommitted state contaminates the diff in Phase 2.
-2. **Auto-fix lint noise** — \`pnpm lint:fix\` if the script exists. This cleans import order, unused imports, prettier, prefer-const so the type/test output isn't drowned in cosmetic churn. Always run the fixer first; ignore auto-fixable categories as *findings*.
-3. **Type check** — \`pnpm check-types\`. Fix every error. No \`@ts-ignore\`, no \`any\` (use \`unknown\`). Type errors are blocking.
-4. **Lint (real rules)** — \`pnpm lint\`. Focus on what matters: promise handling, hooks rules, real type issues. Auto-fixable categories are noise — don't chase them.
-5. **Tests** — for each bucket detected in Phase 0 that has a \`test\` script: if it also has \`seed:test\`, run that first, then \`test\`. Skipping the seed step produces misleading failures in repos that have one.
-6. **Build everything that exists** — \`pnpm build\` from the root. All present apps/packages must build. A green local dev does not imply a green build.
+1. **Auto-fix lint noise** — \`pnpm lint:fix\` if the script exists. This cleans import order, unused imports, prettier, prefer-const so the type/test output isn't drowned in cosmetic churn. Always run the fixer first; ignore auto-fixable categories as *findings*.
+2. **Type check** — \`pnpm check-types\`. Fix every error. No \`@ts-ignore\`, no \`any\` (use \`unknown\`). Type errors are blocking.
+3. **Lint (real rules)** — \`pnpm lint\`. Focus on what matters: promise handling, hooks rules, real type issues. Auto-fixable categories are noise — don't chase them.
+4. **Tests** — for each bucket detected in Phase 0 that has a \`test\` script: if it also has \`seed:test\`, run that first, then \`test\`. Skipping the seed step produces misleading failures in repos that have one.
+5. **Build everything that exists** — \`pnpm build\` from the root. All present apps/packages must build. A green local dev does not imply a green build.
 
 If any step surfaces failures you can fix safely, fix them. If failures need user judgment (e.g. a failing test reflects intended behavior change), stop and report before continuing.
 
 ---
 
-## Phase 2 — Diff against production
+## Phase 3 — Diff against production
 
-Only run after Phase 1 is fully green. Use \`origin/production\` as the base (refresh with \`git fetch origin production\` if Phase 1 took a while). For every path-based check below, only run it if the path exists in this repo.
+Only run after Phase 2 is fully green. Use \`origin/production\` as the base (refresh with \`git fetch origin production\` if Phases 1–2 took a while). For every path-based check below, only run it if the path exists in this repo.
 
 1. **Overall diffstat** — \`git diff --stat origin/production...HEAD\` for orientation.
 2. **Schema & migrations** — only if \`apps/server/prisma/schema.prisma\` exists. \`git diff origin/production...HEAD -- apps/server/prisma/schema.prisma 'apps/server/prisma/migrations/**'\`.
@@ -270,37 +295,13 @@ Only run after Phase 1 is fully green. Use \`origin/production\` as the base (re
 
 ---
 
-## Phase 3 — Security audit pass
-
-**Always run** — even when \`pnpm-lock.yaml\` is unchanged. New CVEs get disclosed against packages already pinned in the lockfile, so a clean diff doesn't mean a clean audit.
-
-Start with a quick \`pnpm audit\` against the current lockfile. If it's clean and (where present) \`.specs/audit.md\` is current, you're done with Phase 3 in one command. If there are new findings, run the full process below to triage them.
-
-If the repo has a \`.specs/audit.md\`, it owns the override **reference table** (what's pinned and *why*). This skill owns the **process** for updating it. If the repo has no audit doc, just report findings — don't create the file unless the user asks.
-
-### Audit process
-
-1. Remove ALL overrides from \`package.json\` (security + dedup).
-2. \`pnpm install --no-frozen-lockfile\`.
-3. If \`apps/mobile/\` exists: \`cd apps/mobile && npx expo-doctor\` — check Expo SDK compatibility first.
-4. Re-add dedup overrides if still needed, \`pnpm install\`.
-5. \`pnpm audit\` — note what's still vulnerable.
-6. For each vuln: \`pnpm why <pkg>\` — if upstream fixed it, no override needed.
-7. Add security overrides only for transitive deps where the fix is a semver-compatible bump.
-8. \`pnpm install && pnpm audit\` — verify.
-9. If \`.specs/audit.md\` exists, **update it** with the new override row(s), source chain, and the *reason* (CVE, behavior, or compatibility issue). A row without a reason is worse than no row.
-
-**Don't override** if: major version jump required, dev-only with no prod exposure, or it's a direct dep (just upgrade it).
-
----
-
 ## Phase 4 — Commit prod-check fixes
 
 This phase **intentionally violates** the repo's "never commit without user approval" rule in CLAUDE.md. It is the one sanctioned exception: prod-check is explicitly invoked by the user as a pre-production gate, and the commit captures only the deterministic fixes the gate produced (lint:fix output, type-error fixes, audit override updates). Always tell the user the commit happened and what's in it.
 
 Skip this phase entirely if:
 
-- Phase 1 had unresolved failures (the user must triage first), OR
+- Phase 1 or Phase 2 had unresolved failures (the user must triage first), OR
 - \`git status\` is clean (nothing was changed), OR
 - The diff includes changes you didn't make in this session — in that case, **stop and ask** rather than sweeping unrelated work into a prod-check commit.
 
@@ -337,7 +338,7 @@ AUTO-COMMIT:
 - <sha or "none — nothing to commit"> — <summary>
 \`\`\`
 
-If Phase 1 had failures the user must triage, surface those at the top before any Phase 2 findings and skip Phase 4.
+If Phase 1 or Phase 2 had failures the user must triage, surface those at the top before any Phase 3 findings and skip Phase 4.
 
 ---
 
