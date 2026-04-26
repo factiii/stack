@@ -1,17 +1,15 @@
 /**
  * Tests for the stage chain runner.
  *
- * Verifies the three guarantees of the dev → staging → prod model:
+ * Verifies the guarantees of the dev → staging → prod model:
  *   1. Stages run in order. Within a stage, the DAG runner handles ordering.
  *   2. Cross-stage gate: a failed critical fix in stage N marks every fix
  *      in stage N+1..end `skipped` with a shared reason.
- *   3. Auto-injected tunnel edge: every non-tunnel fix in a stage gains
- *      `requires: ['ssh-tunnel-<stage>']` transparently.
+ *   3. Tunnel lifecycle: runStageChain owns open/close; failure skip-results
+ *      the whole stage without needing per-fix DAG edges.
  */
 import {
   runStageChain,
-  injectStageTunnelEdges,
-  TUNNEL_FIX_ID,
 } from '../src/utils/stage-chain.js';
 import type { Fix, FactiiiConfig, Stage } from '../src/types/index.js';
 
@@ -29,60 +27,7 @@ const baseConfig: FactiiiConfig = {
   staging: { domain: 'staging.example.com' } as import('../src/types/index.js').EnvironmentConfig,
 };
 
-describe('injectStageTunnelEdges', () => {
-  test('adds ssh-tunnel-staging as a prereq for every non-tunnel staging fix', () => {
-    const fixes: Fix[] = [
-      mkFix({ id: 'ssh-tunnel-staging', stage: 'staging', scan: async () => false }),
-      mkFix({ id: 'docker-installed', stage: 'staging', scan: async () => false }),
-      mkFix({ id: 'compose-uploaded', stage: 'staging', scan: async () => false, requires: ['docker-installed'] }),
-    ];
-    const injected = injectStageTunnelEdges(fixes, 'staging');
-    expect(injected.find((f) => f.id === 'ssh-tunnel-staging')!.requires).toBeUndefined();
-    expect(injected.find((f) => f.id === 'docker-installed')!.requires).toEqual(['ssh-tunnel-staging']);
-    const composeRequires = injected.find((f) => f.id === 'compose-uploaded')!.requires;
-    expect(composeRequires).toContain('docker-installed');
-    expect(composeRequires).toContain('ssh-tunnel-staging');
-  });
-
-  test('skips injection when the tunnel fix is not in the set', () => {
-    const fixes: Fix[] = [
-      mkFix({ id: 'docker-installed', stage: 'staging', scan: async () => false }),
-    ];
-    const injected = injectStageTunnelEdges(fixes, 'staging');
-    expect(injected[0].requires).toBeUndefined();
-  });
-
-  test('is a no-op for dev stage', () => {
-    const fixes: Fix[] = [
-      mkFix({ id: 'dev-fix', stage: 'dev', scan: async () => false }),
-    ];
-    const injected = injectStageTunnelEdges(fixes, 'dev');
-    expect(injected).toBe(fixes);
-  });
-
-  test('does not duplicate the edge when already present', () => {
-    const fixes: Fix[] = [
-      mkFix({ id: 'ssh-tunnel-prod', stage: 'prod', scan: async () => false }),
-      mkFix({
-        id: 'already-declared',
-        stage: 'prod',
-        scan: async () => false,
-        requires: ['ssh-tunnel-prod'],
-      }),
-    ];
-    const injected = injectStageTunnelEdges(fixes, 'prod');
-    const out = injected.find((f) => f.id === 'already-declared')!.requires!;
-    expect(out.filter((r) => r === 'ssh-tunnel-prod')).toHaveLength(1);
-  });
-});
-
 describe('runStageChain', () => {
-  test('TUNNEL_FIX_ID matches the scanfix registration convention', () => {
-    expect(TUNNEL_FIX_ID.staging).toBe('ssh-tunnel-staging');
-    expect(TUNNEL_FIX_ID.prod).toBe('ssh-tunnel-prod');
-    expect(TUNNEL_FIX_ID.dev).toBeUndefined();
-  });
-
   test('runs stages in order and reports ok when everything scans clean', async () => {
     const order: Stage[] = [];
     const fixes: Fix[] = [
@@ -147,9 +92,8 @@ describe('runStageChain', () => {
   });
 
   test('runner-opened tunnel failure skip-results the whole stage (no per-fix DAG edges needed)', async () => {
-    // With the new architecture, runStageChain owns the tunnel lifecycle.
-    // When openTunnel throws, every fix in the stage is synthesised as
-    // skipped — no injectStageTunnelEdges call is required.
+    // runStageChain owns the tunnel lifecycle. When openTunnel throws, every
+    // fix in the stage is synthesised as skipped and the chain breaks.
     const fixes: Fix[] = [
       mkFix({ id: 'docker-on-staging', stage: 'staging', scan: async () => false }),
       mkFix({ id: 'compose-on-staging', stage: 'staging', scan: async () => false }),

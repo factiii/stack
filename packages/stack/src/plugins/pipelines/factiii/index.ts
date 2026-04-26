@@ -74,7 +74,6 @@ import { portConventionFixes } from './scanfix/port-convention.js';
 import { startShFixes } from './scanfix/start-sh.js';
 import { dbSeedFixes } from './scanfix/db-seed.js';
 import { sshVerifyFixes } from './scanfix/ssh-verify.js';
-import { sshTunnelFixes } from './scanfix/ssh-tunnel.js';
 import { claudeSkillFixes } from './scanfix/claude-skills.js';
 import { stackVersionPinFixes } from './scanfix/stack-version-pin.js';
 
@@ -185,8 +184,8 @@ class FactiiiPipeline {
       case 'prod': {
         // Dev-direct model: every command runs on the dev machine. Staging/prod
         // fixes that need server state reach through a per-stage SSH tunnel
-        // (see utils/ssh-tunnel.ts + the ssh-tunnel-<stage> scanfix). We no
-        // longer return via: 'ssh' — there's no remote stack CLI to invoke.
+        // (see utils/ssh-tunnel.ts; tunnel lifecycle is owned by runStageChain).
+        // We no longer return via: 'ssh' — there's no remote stack CLI to invoke.
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
         const stageEnvs = getEnvironmentsForStage(config, stage);
@@ -209,9 +208,8 @@ class FactiiiPipeline {
 
         // Reachable when the domain is set (tunnel can be opened) or AWS
         // config lets provisioning run from the dev machine. The SSH key is
-        // fetched lazily by the ssh-tunnel-<stage> scanfix — its absence no
-        // longer short-circuits reachability, it just surfaces as that
-        // scanfix failing with a manual-fix hint.
+        // checked by runStageChain when opening the tunnel — its absence
+        // surfaces as a tunnel-open failure that skip-results the whole stage.
         if (hasAws || !allExample) {
           return { reachable: true, via: 'local' };
         }
@@ -245,7 +243,6 @@ class FactiiiPipeline {
     ...workflowFixes,
     ...secretsFixes,
     ...sshVerifyFixes,
-    ...sshTunnelFixes,
     ...envFileFixes,
     ...portConventionFixes,
     ...startShFixes,

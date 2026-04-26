@@ -10,13 +10,11 @@
  *   - Cross-stage gating is sequential-and-critical: if any fix in stage N
  *     ends up `failed` or `manual-critical`, stages N+1..end run with every
  *     fix auto-marked `skipped` and a shared reason "prior stage failed".
- *   - Every staging fix (except the tunnel itself) implicitly `requires`
- *     `ssh-tunnel-staging`. Same rule for prod with `ssh-tunnel-prod`. That
- *     auto-injection happens here so individual scanfixes never hand-write
- *     the edge — drop a new staging/prod fix into the fixes[] array and the
- *     runner gates it on the tunnel for you.
  *   - canReach() routing is NOT consulted. Everything executes on the dev
  *     machine; staging/prod scanfixes reach the server through the tunnel.
+ *   - The tunnel lifecycle (open/close) is owned by runStageChain, not by
+ *     individual scanfixes. When openTunnel throws, the whole stage is
+ *     synthesised as `skipped` and the chain breaks.
  *
  * scan.ts / fix.ts / deploy.ts don't call this yet — individual scanfixes
  * are migrating to `requires` first. The stage chain becomes the default
@@ -36,12 +34,6 @@ import { findSshKeyForStage } from './ssh-helper.js';
 
 /** Default stage order. Callers can narrow it but not reorder. */
 export const STAGE_ORDER: Stage[] = ['dev', 'staging', 'prod'];
-
-/** The SSH tunnel fix id for each remote stage. */
-export const TUNNEL_FIX_ID: Partial<Record<Stage, string>> = {
-  staging: 'ssh-tunnel-staging',
-  prod: 'ssh-tunnel-prod',
-};
 
 /** Stages that require an SSH tunnel be open during their DAG run. */
 const REMOTE_STAGES: ReadonlySet<Stage> = new Set<Stage>(['staging', 'prod']);
@@ -74,25 +66,6 @@ export interface StageChainResult {
   chainBroken: boolean;
   /** The stage that first broke the chain, if any. */
   firstFailedStage: Stage | null;
-}
-
-/**
- * Auto-inject the stage's SSH tunnel as a prereq on every non-tunnel fix
- * in that stage. Pure — does not mutate the input fixes.
- */
-export function injectStageTunnelEdges(fixes: Fix[], stage: Stage): Fix[] {
-  const tunnelId = TUNNEL_FIX_ID[stage];
-  if (!tunnelId) return fixes;
-  // Only inject when the tunnel scanfix actually exists in the set; otherwise
-  // we'd silently wedge every staging fix on a missing prereq id.
-  if (!fixes.some((f) => f.id === tunnelId)) return fixes;
-
-  return fixes.map((f) => {
-    if (f.id === tunnelId) return f;
-    const existing = f.requires ?? [];
-    if (existing.includes(tunnelId)) return f;
-    return { ...f, requires: [...existing, tunnelId] };
-  });
 }
 
 function stageIsBroken(result: DAGResult, fixes: Fix[]): boolean {
