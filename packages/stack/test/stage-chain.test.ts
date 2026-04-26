@@ -24,7 +24,10 @@ function mkFix(partial: Partial<Fix> & Pick<Fix, 'id' | 'stage' | 'scan'>): Fix 
   } as Fix;
 }
 
-const baseConfig: FactiiiConfig = { name: 'test' };
+const baseConfig: FactiiiConfig = {
+  name: 'test',
+  staging: { domain: 'staging.example.com' } as import('../src/types/index.js').EnvironmentConfig,
+};
 
 describe('injectStageTunnelEdges', () => {
   test('adds ssh-tunnel-staging as a prereq for every non-tunnel staging fix', () => {
@@ -86,7 +89,14 @@ describe('runStageChain', () => {
       mkFix({ id: 'd1', stage: 'dev', scan: async () => { order.push('dev'); return false; } }),
       mkFix({ id: 'st1', stage: 'staging', scan: async () => { order.push('staging'); return false; } }),
     ];
-    const res = await runStageChain(fixes, { config: baseConfig, rootDir: '/tmp' });
+    const res = await runStageChain(fixes, {
+      config: baseConfig,
+      rootDir: '/tmp',
+      tunnel: {
+        openTunnel: ((_stage, _env, _key) => ({ socket: '/tmp/s', host: 'h', user: 'u', keyPath: null, stage: _stage })) as typeof import('../src/utils/ssh-tunnel.js').openTunnel,
+        closeTunnel: (() => {}) as typeof import('../src/utils/ssh-tunnel.js').closeTunnel,
+      },
+    });
     expect(order).toEqual(['dev', 'staging']);
     expect(res.chainBroken).toBe(false);
     expect(res.firstFailedStage).toBeNull();
@@ -124,28 +134,39 @@ describe('runStageChain', () => {
       mkFix({ id: 'd-warn', stage: 'dev', severity: 'warning', scan: async () => true, fix: null }),
       mkFix({ id: 'st1', stage: 'staging', scan: async () => false }),
     ];
-    const res = await runStageChain(fixes, { config: baseConfig, rootDir: '/tmp' });
+    const res = await runStageChain(fixes, {
+      config: baseConfig,
+      rootDir: '/tmp',
+      tunnel: {
+        openTunnel: ((_stage, _env, _key) => ({ socket: '/tmp/s', host: 'h', user: 'u', keyPath: null, stage: _stage })) as typeof import('../src/utils/ssh-tunnel.js').openTunnel,
+        closeTunnel: (() => {}) as typeof import('../src/utils/ssh-tunnel.js').closeTunnel,
+      },
+    });
     expect(res.chainBroken).toBe(false);
     expect(res.byStage.get('staging')!.outcomes.get('st1')!.status).toBe('ok');
   });
 
-  test('auto-injects the tunnel edge so staging fixes skip when the tunnel scan fails', async () => {
+  test('runner-opened tunnel failure skip-results the whole stage (no per-fix DAG edges needed)', async () => {
+    // With the new architecture, runStageChain owns the tunnel lifecycle.
+    // When openTunnel throws, every fix in the stage is synthesised as
+    // skipped — no injectStageTunnelEdges call is required.
     const fixes: Fix[] = [
-      mkFix({
-        id: 'ssh-tunnel-staging',
-        stage: 'staging',
-        severity: 'critical',
-        scan: async () => { throw new Error('cant open tunnel'); },
-      }),
       mkFix({ id: 'docker-on-staging', stage: 'staging', scan: async () => false }),
       mkFix({ id: 'compose-on-staging', stage: 'staging', scan: async () => false }),
     ];
-    const res = await runStageChain(fixes, { config: baseConfig, rootDir: '/tmp' });
+    const res = await runStageChain(fixes, {
+      config: baseConfig,
+      rootDir: '/tmp',
+      tunnel: {
+        openTunnel: (() => { throw new Error('cant open tunnel'); }) as typeof import('../src/utils/ssh-tunnel.js').openTunnel,
+        closeTunnel: (() => {}) as typeof import('../src/utils/ssh-tunnel.js').closeTunnel,
+      },
+    });
     const stagingOutcomes = res.byStage.get('staging')!.outcomes;
-    expect(stagingOutcomes.get('ssh-tunnel-staging')!.status).toBe('failed');
     expect(stagingOutcomes.get('docker-on-staging')!.status).toBe('skipped');
-    expect(stagingOutcomes.get('docker-on-staging')!.reason).toContain('ssh-tunnel-staging');
+    expect(stagingOutcomes.get('docker-on-staging')!.reason).toMatch(/tunnel open failed/);
     expect(stagingOutcomes.get('compose-on-staging')!.status).toBe('skipped');
+    expect(res.chainBroken).toBe(true);
   });
 
   test('narrowed stages option skips unlisted stages entirely', async () => {
@@ -161,5 +182,99 @@ describe('runStageChain', () => {
     });
     expect(calls).toEqual(['dev']);
     expect(res.byStage.has('prod')).toBe(false);
+  });
+});
+
+describe('runStageChain — tunnel lifecycle', () => {
+  test('opens tunnel on entry to staging and closes on exit', async () => {
+    const events: string[] = [];
+    const fakeHandle = { socket: '/tmp/s', host: 'h', user: 'u', keyPath: null, stage: 'staging' };
+
+    const fixes: Fix[] = [
+      mkFix({
+        id: 'staging-only-fix',
+        stage: 'staging',
+        scan: async () => {
+          events.push('scan');
+          return false;
+        },
+      }),
+    ];
+
+    await runStageChain(fixes, {
+      config: baseConfig,
+      rootDir: '/tmp',
+      stages: ['staging'],
+      tunnel: {
+        openTunnel: ((stage: Stage) => {
+          events.push('open:' + stage);
+          return fakeHandle as unknown as ReturnType<typeof import('../src/utils/ssh-tunnel.js').openTunnel>;
+        }) as typeof import('../src/utils/ssh-tunnel.js').openTunnel,
+        closeTunnel: ((handle) => {
+          events.push('close:' + handle.stage);
+        }) as typeof import('../src/utils/ssh-tunnel.js').closeTunnel,
+      },
+    });
+
+    expect(events).toEqual(['open:staging', 'scan', 'close:staging']);
+  });
+
+  test('skip-results the whole stage when openTunnel throws', async () => {
+    const fakeFix = mkFix({
+      id: 'doomed',
+      stage: 'staging',
+      scan: async () => false,
+    });
+
+    const result = await runStageChain([fakeFix], {
+      config: baseConfig,
+      rootDir: '/tmp',
+      stages: ['staging'],
+      tunnel: {
+        openTunnel: (() => { throw new Error('refused: bad key'); }) as typeof import('../src/utils/ssh-tunnel.js').openTunnel,
+        closeTunnel: (() => {}) as typeof import('../src/utils/ssh-tunnel.js').closeTunnel,
+      },
+    });
+
+    const stagingResult = result.byStage.get('staging')!;
+    const outcome = stagingResult.outcomes.get('doomed')!;
+    expect(outcome.status).toBe('skipped');
+    expect(outcome.reason).toMatch(/tunnel open failed/);
+    expect(result.firstFailedStage).toBe('staging');
+  });
+
+  test('does not open tunnel when staging has zero fixes', async () => {
+    const events: string[] = [];
+
+    await runStageChain([
+      mkFix({ id: 'dev-only', stage: 'dev', scan: async () => false }),
+    ], {
+      config: baseConfig,
+      rootDir: '/tmp',
+      stages: ['dev', 'staging'],
+      tunnel: {
+        openTunnel: ((stage: Stage) => {
+          events.push('open:' + stage);
+          return { stage } as unknown as ReturnType<typeof import('../src/utils/ssh-tunnel.js').openTunnel>;
+        }) as typeof import('../src/utils/ssh-tunnel.js').openTunnel,
+        closeTunnel: (() => {}) as typeof import('../src/utils/ssh-tunnel.js').closeTunnel,
+      },
+    });
+
+    expect(events).toEqual([]);
+  });
+
+  test('production callers omit `tunnel` and get the real implementation', async () => {
+    // We can't actually open a real SSH tunnel in unit tests, so this test
+    // just confirms the option is optional. Pass only dev fixes so the real
+    // openTunnel is never invoked.
+    const result = await runStageChain([
+      mkFix({ id: 'dev-only', stage: 'dev', scan: async () => false }),
+    ], {
+      config: baseConfig,
+      rootDir: '/tmp',
+      stages: ['dev'],
+    });
+    expect(result.byStage.get('dev')?.outcomes.get('dev-only')?.status).toBe('ok');
   });
 });
