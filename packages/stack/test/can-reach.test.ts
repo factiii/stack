@@ -43,7 +43,8 @@ jest.mock('child_process', () => ({
 }));
 
 import FactiiiPipeline from '../src/plugins/pipelines/factiii/index';
-import type { FactiiiConfig } from '../src/types/index';
+import AWSPipeline from '../src/plugins/pipelines/aws/index';
+import type { FactiiiConfig, Stage } from '../src/types/index';
 
 function mockSshKey(keyName: string): void {
   const keyPath = path.join(os.homedir(), '.ssh', keyName).replace(/\\/g, '/');
@@ -140,4 +141,37 @@ describe('canReach - staging/prod stages', () => {
     expect(result.reachable).toBe(true);
     if (result.reachable) expect(result.via).toBe('local');
   });
+});
+
+describe('canReach — no remote via paths', () => {
+  const stages: Stage[] = ['dev', 'staging', 'prod'];
+
+  // Minimal config covering both pipelines' branches.
+  const cfg: FactiiiConfig = {
+    name: 'test',
+    ansible: { vault_path: 'vault.yml', vault_password_file: '~/.vault_pass' },
+    staging: { domain: 'staging.test.com' },
+    prod: { domain: 'prod.test.com' },
+    aws: { region: 'us-east-1' },
+  } as unknown as FactiiiConfig;
+
+  for (const stage of stages) {
+    test('FactiiiPipeline.canReach(' + stage + ') returns local or unreachable', () => {
+      const r = FactiiiPipeline.canReach(stage, cfg);
+      if (r.reachable) {
+        expect(r.via).toBe('local');
+      } else {
+        expect(typeof r.reason).toBe('string');
+      }
+    });
+
+    test('AWSPipeline.canReach(' + stage + ') returns local or unreachable', () => {
+      const r = AWSPipeline.canReach(stage, cfg);
+      if (r.reachable) {
+        expect(r.via).toBe('local');
+      } else {
+        expect(typeof r.reason).toBe('string');
+      }
+    });
+  }
 });
