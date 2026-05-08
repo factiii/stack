@@ -11,11 +11,13 @@ import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsConfig,
   getProjectName,
+  getResourceNames,
   isAwsConfigured,
   findVpc,
   findSecurityGroup,
   tagSpec,
   getEC2Client,
+  confirmAwsAction,
   CreateSecurityGroupCommand,
   AuthorizeSecurityGroupIngressCommand,
   DescribeSecurityGroupsCommand,
@@ -31,22 +33,32 @@ export const securityGroupFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) return false;
-      return !(await findSecurityGroup('factiii-' + projectName + '-ec2', vpcId, region));
+      return !(await findSecurityGroup(getResourceNames(config).ec2SecurityGroup, vpcId, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) {
         console.log('   VPC must be created first');
         return false;
       }
 
+      const groupName = getResourceNames(config).ec2SecurityGroup;
+      const ok = await confirmAwsAction(
+        'Create EC2 security group "' + groupName + '" in VPC ' + vpcId + ' (' + region + ')\n' +
+        '  - Inbound: SSH(22), HTTP(80), HTTPS(443) from 0.0.0.0/0\n' +
+        '  - Outbound: default (all)'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no EC2 security group created');
+        return false;
+      }
+
       try {
         const ec2 = getEC2Client(region);
-        const groupName = 'factiii-' + projectName + '-ec2';
 
         // Create security group
         const sgResult = await ec2.send(new CreateSecurityGroupCommand({
@@ -103,28 +115,38 @@ export const securityGroupFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) return false;
-      return !(await findSecurityGroup('factiii-' + projectName + '-rds', vpcId, region));
+      return !(await findSecurityGroup(getResourceNames(config).rdsSecurityGroup, vpcId, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) {
         console.log('   VPC must be created first');
         return false;
       }
 
-      const ec2SgId = await findSecurityGroup('factiii-' + projectName + '-ec2', vpcId, region);
+      const ec2SgId = await findSecurityGroup(getResourceNames(config).ec2SecurityGroup, vpcId, region);
       if (!ec2SgId) {
         console.log('   EC2 security group must be created first');
         return false;
       }
 
+      const groupName = getResourceNames(config).rdsSecurityGroup;
+      const ok = await confirmAwsAction(
+        'Create RDS security group "' + groupName + '" in VPC ' + vpcId + ' (' + region + ')\n' +
+        '  - Inbound: PostgreSQL(5432) from EC2 SG ' + ec2SgId + ' only\n' +
+        '  - Outbound: default (all)'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no RDS security group created');
+        return false;
+      }
+
       try {
         const ec2 = getEC2Client(region);
-        const groupName = 'factiii-' + projectName + '-rds';
 
         // Create RDS security group
         const sgResult = await ec2.send(new CreateSecurityGroupCommand({
@@ -165,10 +187,10 @@ export const securityGroupFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) return false;
 
-      const rdsSgId = await findSecurityGroup('factiii-' + projectName + '-rds', vpcId, region);
+      const rdsSgId = await findSecurityGroup(getResourceNames(config).rdsSecurityGroup, vpcId, region);
       if (!rdsSgId) return false;
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -222,10 +244,10 @@ export const securityGroupFixes: Fix[] = [
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) return false;
 
-      const rdsSgId = await findSecurityGroup('factiii-' + projectName + '-rds', vpcId, region);
+      const rdsSgId = await findSecurityGroup(getResourceNames(config).rdsSecurityGroup, vpcId, region);
       if (!rdsSgId) {
         console.log('   RDS security group must be created first');
         return false;
@@ -269,6 +291,15 @@ export const securityGroupFixes: Fix[] = [
             console.log('   Could not resolve staging domain: ' + stagingEnv.domain);
             return false;
           }
+        }
+
+        const ok = await confirmAwsAction(
+          'Add inbound rule to RDS SG ' + rdsSgId + '\n' +
+          '  - PostgreSQL(5432) from ' + stagingIp + '/32 (' + stagingEnv.domain + ')'
+        );
+        if (!ok) {
+          console.log('   [--] Skipped — RDS SG unchanged');
+          return false;
         }
 
         await ec2.send(new AuthorizeSecurityGroupIngressCommand({

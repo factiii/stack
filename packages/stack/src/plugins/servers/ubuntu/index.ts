@@ -44,6 +44,15 @@ import {
 // Import SSH helper
 import { sshExec } from '../../../utils/ssh-helper.js';
 
+// Reuse staging clone/install/deploy logic from the Mac plugin.
+// The Mac helpers already include `brew x || sudo apt-get install x` fallbacks,
+// so the SSH-driven path works against an Ubuntu host without modification.
+// (The on-server branch only fires when GITHUB_ACTIONS=true / FACTIII_ON_SERVER=true.)
+import {
+  deployStaging as macDeployStaging,
+  ensureServerReady as macStagingEnsureServerReady,
+} from '../mac/staging.js';
+
 class UbuntuPlugin {
   // ============================================================
   // STATIC METADATA
@@ -123,10 +132,9 @@ class UbuntuPlugin {
     ...getPnpmFixes('staging').map(fix => ({ ...fix, os: 'ubuntu' as ServerOS })),
     { ...createCertbotFix('staging', 'staging'), os: 'ubuntu' as ServerOS },
 
-    // Prod stage - shared fixes (with OS filter)
+    // Prod stage - docker is the only required runtime; node + git are
+    // intentionally excluded (prod runs pre-built ECR images, no source).
     ...getDockerFixes('prod').map(fix => ({ ...fix, os: 'ubuntu' as ServerOS })),
-    ...getNodeFixes('prod').map(fix => ({ ...fix, os: 'ubuntu' as ServerOS })),
-    ...getGitFixes('prod').map(fix => ({ ...fix, os: 'ubuntu' as ServerOS })),
     { ...createCertbotFix('prod', 'prod'), os: 'ubuntu' as ServerOS },
   ];
 
@@ -199,23 +207,31 @@ class UbuntuPlugin {
   }
 
   /**
-   * Ensure server is ready for deployment
+   * Ensure server is ready for deployment.
+   * Staging-type envs delegate to the Mac plugin's helpers (which install
+   * Node/git/pnpm, clone the repo, checkout, and pnpm install). For prod,
+   * AWS pipeline + factiii pipeline take over.
    */
   async ensureServerReady(
     config: FactiiiConfig,
     environment: string,
     options: EnsureServerReadyOptions = {}
   ): Promise<DeployResult> {
-    // Ubuntu handles all environments that use it
-    return { success: true, message: 'Ubuntu server ready' };
+    if (environment.startsWith('staging') || environment.startsWith('stage-')) {
+      return macStagingEnsureServerReady(config, environment, options);
+    }
+    return { success: true, message: 'Ubuntu server ready (no prep needed)' };
   }
 
   /**
-   * Deploy to an environment
+   * Deploy to an environment.
+   * Staging delegates to Mac's deployStaging (regenerate compose, run migrations,
+   * docker compose up). Prod is handled upstream by the AWS pipeline path.
    */
   async deploy(config: FactiiiConfig, environment: string): Promise<DeployResult> {
-    // Deployment is handled by the pipeline plugin
-    // Server plugin just provides OS-specific commands
+    if (environment.startsWith('staging') || environment.startsWith('stage-')) {
+      return macDeployStaging(config, environment);
+    }
     return { success: true, message: `Deployment for ${environment} handled by pipeline` };
   }
 

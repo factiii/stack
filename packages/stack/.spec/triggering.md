@@ -19,22 +19,21 @@ The pipeline plugin's `canReach(stage)` decides routing (`STANDARDS.md` Plugin C
 |-------|------|-------|-----|--------|-----|
 | Dev | Yes | Yes | Yes | Yes | Source of truth, runs all scans/fixes |
 | Staging | Yes | Yes | Yes | Yes | Builds from source (`requiresFullRepo=true`) |
-| Prod (target) | No | No | No | Yes | Pulls pre-built images from ECR |
-| Prod (today) | Yes | Yes | No | Yes | `generate-all.ts` runs server-side |
+| Prod | No | No | No | Yes | Pulls pre-built images from ECR |
 
-**Today vs. target:** prod still needs Node + stack to merge configs server-side. Target state moves config merging to dev (build merged `docker-compose.yml` on dev, scp to prod) so prod's only requirement is Docker.
+Dev assembles the prod `docker-compose.yml` and `nginx.conf` locally (`generateProdCompose` / `generateProdNginx`) and `scp`s them to `~/.factiii/<repo>/` via the per-stage SSH tunnel. Migrations are run with `docker exec` against the already-pulled image — no `npx stack` on prod.
 
-## Sync Verification (Required Scanfix)
+## Sync Verification (Staging Only)
 
-Because dev triggers everything, dev's stack version is what matters. Staging/prod can lag — but only if drift is *visible*. Every remote-executing scanfix must be paired with a sync check:
+Staging still has stack installed locally (it's the build host), so staging can drift from dev. Pair every staging-side execution with a sync check:
 
 ```typescript
-// staging-stack-in-sync (and prod-stack-in-sync)
+// staging-stack-in-sync
 scan: SSH, run `npx stack --version`, compare with local
 fix:  SSH and `npm install -g @factiii/stack@<dev-version>`
 ```
 
-Without this, "dev triggers everything" silently breaks the moment versions diverge.
+Prod has no stack to drift; no equivalent check is needed there.
 
 ## Why Staging Keeps Git
 
@@ -49,14 +48,11 @@ Option 1 wins: git is small, on-host commit visibility is genuinely useful when 
 
 Prod flow (`flow.md`):
 
-1. SSH receives `compose up -d`
-2. Docker pulls image from ECR
-3. Container starts
+1. Dev generates `docker-compose.yml` + `nginx.conf` locally and `scp`s them to `~/.factiii/<repo>/`
+2. SSH receives `docker login`, `compose pull`, `compose up -d`
+3. Docker pulls image from ECR; container starts
 
-No source, no build, no merge step (in target state). Migration path:
-
-- Move `generate-all.ts` config merging to dev — produce final `docker-compose.yml` locally, scp it
-- Replace any prod-side stack scanfixes with dev-side scanfixes that SSH and inspect
+No source, no build, no merge step on prod. Any prod-side check (e.g. `aws/scanfix/docker.ts`, `aws/scanfix/db-replication.ts`) runs from dev via the per-stage SSH tunnel and `serverExec('prod', cmd)`.
 
 ## Rules
 

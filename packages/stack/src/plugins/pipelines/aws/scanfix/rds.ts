@@ -11,6 +11,7 @@ import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsConfig,
   getProjectName,
+  getResourceNames,
   isAwsConfigured,
   findVpc,
   findPrivateSubnets,
@@ -18,6 +19,7 @@ import {
   findDbSubnetGroup,
   findRdsInstance,
   getRDSClient,
+  confirmAwsAction,
   CreateDBSubnetGroupCommand,
   CreateDBInstanceCommand,
 } from '../utils/aws-helpers.js';
@@ -46,22 +48,31 @@ export const rdsFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const privateSubnets = await findPrivateSubnets(projectName, region);
+      const privateSubnets = await findPrivateSubnets(projectName, region, config);
       if (privateSubnets.length < 2) return false;
       return !(await findDbSubnetGroup('factiii-' + projectName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const privateSubnets = await findPrivateSubnets(projectName, region);
+      const privateSubnets = await findPrivateSubnets(projectName, region, config);
       if (privateSubnets.length < 2) {
         console.log('   Need at least 2 private subnets first');
         return false;
       }
 
+      const groupName = 'factiii-' + projectName;
+      const ok = await confirmAwsAction(
+        'Create RDS DB subnet group "' + groupName + '" in ' + region + '\n' +
+        '  - Subnets: ' + privateSubnets.join(', ')
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — DB subnet group not created');
+        return false;
+      }
+
       try {
         const rds = getRDSClient(region);
-        const groupName = 'factiii-' + projectName;
 
         await rds.send(new CreateDBSubnetGroupCommand({
           DBSubnetGroupName: groupName,
@@ -87,13 +98,13 @@ export const rdsFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const dbId = 'factiii-' + projectName + '-db';
+      const dbId = getResourceNames(config).rdsInstanceId;
       return !(await findRdsInstance(dbId, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) {
         console.log('   VPC must be created first');
         return false;
@@ -105,15 +116,28 @@ export const rdsFixes: Fix[] = [
         return false;
       }
 
-      const rdsSgId = await findSecurityGroup('factiii-' + projectName + '-rds', vpcId, region);
+      const rdsSgId = await findSecurityGroup(getResourceNames(config).rdsSecurityGroup, vpcId, region);
       if (!rdsSgId) {
         console.log('   RDS security group must be created first');
         return false;
       }
 
+      const dbId = getResourceNames(config).rdsInstanceId;
+      const ok = await confirmAwsAction(
+        'Create RDS PostgreSQL 15 instance "' + dbId + '" in ' + region + '\n' +
+        '  - Class: db.t3.micro (free-tier eligible 12 months, then ~$15/mo)\n' +
+        '  - Storage: 20GB gp2\n' +
+        '  - Backup retention: 1 day\n' +
+        '  - Publicly accessible: NO (private subnet)\n' +
+        '  ⚠️  Master password will be auto-generated — printed once, save it!'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no RDS instance created');
+        return false;
+      }
+
       try {
         const rds = getRDSClient(region);
-        const dbId = 'factiii-' + projectName + '-db';
         const dbName = projectName.replace(/[^a-zA-Z0-9]/g, '');
         const masterUser = 'factiii';
         const masterPassword = generateRdsPassword();
@@ -167,7 +191,7 @@ export const rdsFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const dbId = 'factiii-' + projectName + '-db';
+      const dbId = getResourceNames(config).rdsInstanceId;
       const instance = await findRdsInstance(dbId, region);
       if (!instance) return false;
       return instance.status !== 'available';
@@ -184,7 +208,7 @@ export const rdsFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const dbId = 'factiii-' + projectName + '-db';
+      const dbId = getResourceNames(config).rdsInstanceId;
       const instance = await findRdsInstance(dbId, region);
       if (!instance || instance.status !== 'available' || !instance.endpoint) return false;
 
