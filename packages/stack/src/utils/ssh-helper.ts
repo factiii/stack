@@ -154,7 +154,7 @@ export function getEnvConfigForStage(
  * Look up {STAGE}_SSH_PASSWORD from Ansible Vault.
  * Returns null if vault not configured or password not stored.
  */
-function getSshPasswordFromVault(stage: string, config: FactiiiConfig, rootDir?: string): string | null {
+async function getSshPasswordFromVault(stage: string, config: FactiiiConfig, rootDir?: string): Promise<string | null> {
   if (!config.ansible?.vault_path) return null;
 
   try {
@@ -169,9 +169,9 @@ function getSshPasswordFromVault(stage: string, config: FactiiiConfig, rootDir?:
     // Decrypt vault using pure Node.js (no CLI)
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { decryptSync: (data: string) => string } };
-    const { getVaultPasswordString } = require('./ansible-vault-secrets.js') as { getVaultPasswordString: (config: { vault_path: string; vault_password_file?: string; rootDir?: string }) => string };
+    const { getVaultPasswordString } = await import('./ansible-vault-secrets.js');
 
-    const password = getVaultPasswordString({
+    const password = await getVaultPasswordString({
       vault_path: config.ansible.vault_path,
       vault_password_file: config.ansible.vault_password_file,
       rootDir: rootDir ?? process.cwd(),
@@ -656,7 +656,7 @@ export async function sshExec(
     let password: string | null = null;
 
     if (config && stage) {
-      password = getSshPasswordFromVault(stage, config, rootDir);
+      password = await getSshPasswordFromVault(stage, config, rootDir);
 
       // No stored password — prompt user, validate, and store
       if (!password) {

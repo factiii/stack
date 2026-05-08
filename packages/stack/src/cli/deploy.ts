@@ -175,6 +175,9 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   const seenFixKeys = new Set<string>();
   for (const plugin of prereqPlugins) {
     for (const fix of (plugin as { fixes?: Fix[] }).fixes ?? []) {
+      // Skip fixes targeted at a different deploy stage (e.g. don't run
+      // `missing-prod-ssh` during a staging deploy). Mirrors scan.ts/fix.ts.
+      if (fix.targetStage && fix.targetStage !== stage) continue;
       const key = fix.id + ':' + fix.stage;
       if (seenFixKeys.has(key)) continue;
       seenFixKeys.add(key);

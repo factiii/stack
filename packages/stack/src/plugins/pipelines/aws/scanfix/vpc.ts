@@ -17,6 +17,7 @@ import {
   findIgw,
   tagSpec,
   getEC2Client,
+  confirmAwsAction,
   CreateVpcCommand,
   ModifyVpcAttributeCommand,
   DescribeAvailabilityZonesCommand,
@@ -39,11 +40,21 @@ export const vpcFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      return !(await findVpc(projectName, region));
+      return !(await findVpc(projectName, region, config));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
+
+      const ok = await confirmAwsAction(
+        'Create VPC for project "' + projectName + '" in ' + region + '\n' +
+        '  - CIDR: 10.0.0.0/16\n' +
+        '  - DNS hostnames + support: enabled'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no VPC created');
+        return false;
+      }
 
       try {
         const ec2 = getEC2Client(region);
@@ -86,15 +97,25 @@ export const vpcFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      if (!(await findVpc(projectName, region))) return false;
-      return !(await findSubnet(projectName, region, 'public'));
+      if (!(await findVpc(projectName, region, config))) return false;
+      return !(await findSubnet(projectName, region, 'public', config));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) {
         console.log('   VPC must be created first');
+        return false;
+      }
+
+      const ok = await confirmAwsAction(
+        'Create public subnet in VPC ' + vpcId + ' (' + region + ')\n' +
+        '  - CIDR: 10.0.1.0/24\n' +
+        '  - Auto-assign public IP: enabled'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no public subnet created');
         return false;
       }
 
@@ -142,16 +163,26 @@ export const vpcFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      if (!(await findVpc(projectName, region))) return false;
-      const privateSubnets = await findPrivateSubnets(projectName, region);
+      if (!(await findVpc(projectName, region, config))) return false;
+      const privateSubnets = await findPrivateSubnets(projectName, region, config);
       return privateSubnets.length < 2;
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) {
         console.log('   VPC must be created first');
+        return false;
+      }
+
+      const ok = await confirmAwsAction(
+        'Create 2 private subnets in VPC ' + vpcId + ' (' + region + ')\n' +
+        '  - CIDRs: 10.0.2.0/24 (AZ-a), 10.0.3.0/24 (AZ-b)\n' +
+        '  - Required for RDS Multi-AZ subnet group'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no private subnets created');
         return false;
       }
 
@@ -203,16 +234,27 @@ export const vpcFixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) return false;
       return !(await findIgw(vpcId, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) {
         console.log('   VPC must be created first');
+        return false;
+      }
+
+      const ok = await confirmAwsAction(
+        'Create Internet Gateway + route table for VPC ' + vpcId + ' (' + region + ')\n' +
+        '  - IGW attached to VPC\n' +
+        '  - Route table: 0.0.0.0/0 → IGW\n' +
+        '  - Associated with public subnet'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no Internet Gateway created');
         return false;
       }
 
@@ -248,7 +290,7 @@ export const vpcFixes: Fix[] = [
         }));
 
         // Associate route table with public subnet
-        const publicSubnetId = await findSubnet(projectName, region, 'public');
+        const publicSubnetId = await findSubnet(projectName, region, 'public', config);
         if (publicSubnetId) {
           await ec2.send(new AssociateRouteTableCommand({
             RouteTableId: rtId,

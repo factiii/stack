@@ -95,7 +95,7 @@ export const vaultFixes: Fix[] = [
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { decryptSync: (data: string) => string } };
 
-        const password = getVaultPasswordString({
+        const password = await getVaultPasswordString({
           vault_path: vaultPath,
           vault_password_file: config.ansible.vault_password_file,
           rootDir,

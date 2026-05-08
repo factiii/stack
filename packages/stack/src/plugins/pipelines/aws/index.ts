@@ -67,7 +67,7 @@ import freeTierConfig from './configs/free-tier.js';
 import type { AWSConfigDef } from './configs/types.js';
 
 // Import SSH helpers
-import { sshExec, findSshKeyForStage, getEnvConfigForStage } from '../../../utils/ssh-helper.js';
+import { sshExec } from '../../../utils/ssh-helper.js';
 
 type AWSConfigType = 'ec2' | 'free-tier' | 'standard' | 'enterprise';
 
@@ -281,64 +281,6 @@ class AWSPipeline {
   }
 
   /**
-   * Bootstrap a fresh EC2 instance with Node.js and factiii
-   * Called before scanStage/fixStage when SSH'ing to a new server
-   */
-  private async bootstrapServer(stage: Stage): Promise<boolean> {
-    const envConfig = getEnvConfigForStage(stage, this._config);
-    if (!envConfig) {
-      console.log('   [!] No environment config for ' + stage);
-      return false;
-    }
-
-    const repoName = this._config.name || 'app';
-
-    // Check if Node.js is installed
-    try {
-      await sshExec(envConfig, 'which node', stage);
-    } catch {
-      console.log('   Installing Node.js 20 on server...');
-      try {
-        await sshExec(envConfig, 'curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs', stage);
-        console.log('   [OK] Node.js installed');
-      } catch (e) {
-        console.log('   [!] Failed to install Node.js: ' + (e instanceof Error ? e.message : String(e)));
-        return false;
-      }
-    }
-
-    // Always update factiii to latest version on server
-    console.log('   Updating @factiii/stack to latest on server...');
-    try {
-      await sshExec(envConfig, 'sudo npm install -g @factiii/stack@latest', stage);
-      console.log('   [OK] @factiii/stack updated');
-    } catch (e) {
-      console.log('   [!] Failed to install factiii: ' + (e instanceof Error ? e.message : String(e)));
-      return false;
-    }
-
-    // Ensure project directory exists and always update stack.yml
-    try {
-      await sshExec(envConfig, 'mkdir -p ~/.factiii/' + repoName, stage);
-
-      // Always write stack.yml to ensure it's up to date
-      const minimalConfig = 'name: ' + repoName + '\\n'
-        + 'prod:\\n'
-        + '  server: ubuntu\\n'
-        + '  pipeline: aws\\n'
-        + '  domain: ' + (envConfig.domain || 'localhost') + '\\n'
-        + '  ssh_user: ' + (envConfig.ssh_user || 'ubuntu') + '\\n';
-      await sshExec(envConfig, 'printf "' + minimalConfig + '" > ~/.factiii/' + repoName + '/stack.yml', stage);
-      console.log('   [OK] Server project config updated');
-    } catch (e) {
-      console.log('   [!] Failed to setup project directory: ' + (e instanceof Error ? e.message : String(e)));
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
    * Scan a stage - handles routing based on canReach()
    *
    * Returns { handled: true } if pipeline ran scan remotely.
@@ -381,9 +323,10 @@ class AWSPipeline {
   }
 
   /**
-   * Ensure server is ready for deployment
-   * Installs Node.js, git, clones repo, checks out commit
-   * Note: Production doesn't install dependencies (pulls pre-built images)
+   * Ensure server is ready for deployment.
+   *
+   * Prod servers run pre-built ECR images, so this only writes per-stage
+   * state (env file + AWS credentials). No node, git, or source on prod.
    */
   async ensureServerReady(
     config: FactiiiConfig,

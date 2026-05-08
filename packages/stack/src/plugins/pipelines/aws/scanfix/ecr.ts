@@ -9,10 +9,11 @@
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsConfig,
-  getProjectName,
+  getResourceNames,
   isAwsConfigured,
   findEcrRepo,
   getECRClient,
+  confirmAwsAction,
   CreateRepositoryCommand,
   PutLifecyclePolicyCommand,
   GetAuthorizationTokenCommand,
@@ -27,23 +28,33 @@ export const ecrFixes: Fix[] = [
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
-      const projectName = getProjectName(config);
-      return !(await findEcrRepo(projectName, region));
+      const repoName = getResourceNames(config).ecrRepository;
+      return !(await findEcrRepo(repoName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
-      const projectName = getProjectName(config);
+      const repoName = getResourceNames(config).ecrRepository;
+
+      const ok = await confirmAwsAction(
+        'Create ECR repository "' + repoName + '" in ' + region + '\n' +
+        '  - Image scanning on push: enabled\n' +
+        '  - Lifecycle policy: keep latest 10 images'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no ECR repository created');
+        return false;
+      }
 
       try {
         const ecr = getECRClient(region);
 
         // Create ECR repository
         const result = await ecr.send(new CreateRepositoryCommand({
-          repositoryName: projectName,
+          repositoryName: repoName,
           imageScanningConfiguration: { scanOnPush: true },
         }));
         const repoUri = result.repository?.repositoryUri;
-        console.log('   Created ECR repository: ' + projectName);
+        console.log('   Created ECR repository: ' + repoName);
         if (repoUri) {
           console.log('   Repository URI: ' + repoUri);
         }
@@ -63,7 +74,7 @@ export const ecrFixes: Fix[] = [
         });
 
         await ecr.send(new PutLifecyclePolicyCommand({
-          repositoryName: projectName,
+          repositoryName: repoName,
           lifecyclePolicyText: lifecyclePolicy,
         }));
         console.log('   Set lifecycle policy: keep 10 most recent images');
@@ -84,8 +95,8 @@ export const ecrFixes: Fix[] = [
     scan: async (config: FactiiiConfig): Promise<boolean> => {
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
-      const projectName = getProjectName(config);
-      if (!(await findEcrRepo(projectName, region))) return false;
+      const repoName = getResourceNames(config).ecrRepository;
+      if (!(await findEcrRepo(repoName, region))) return false;
 
       // Test ECR authorization token
       try {
