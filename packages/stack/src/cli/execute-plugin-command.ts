@@ -136,6 +136,17 @@ export async function executePluginCommand(
   const rootDir = process.cwd();
   const config = loadConfig(rootDir);
 
+  const { loadAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+  if (isAwsConfigured(config)) {
+    try {
+      await loadAwsCredentials(config, rootDir);
+    } catch (e) {
+      // Surface clean message; the scanfix system handles the "missing creds" case
+      // by emitting an actionable manualFix. Don't crash here — let the scan continue.
+      console.log('   [!] ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
   // Determine stage from flags
   let stage: Stage | null = null;
   if (options.dev) stage = 'dev';

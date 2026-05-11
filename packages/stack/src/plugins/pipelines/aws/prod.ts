@@ -360,9 +360,8 @@ export async function deployProd(
         const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
         const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
         if (accessKeyId && secretKey) {
-          const { writeAwsCredentials, clearClientCache } = await import('./utils/aws-helpers.js');
-          writeAwsCredentials(accessKeyId, secretKey, region);
-          clearClientCache();
+          const { setLoadedCredentials } = await import('./utils/aws-helpers.js');
+          setLoadedCredentials({ accessKeyId, secretAccessKey: secretKey, region });
           accountId = await getAwsAccountId(region);
           if (accountId) {
             console.log('   [OK] Restored AWS credentials from vault');

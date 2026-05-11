@@ -706,8 +706,8 @@ export const secretsFixes: Fix[] = [
               return false;
             }
 
-            const { writeAwsCredentials } = await import('../../aws/utils/aws-helpers.js');
-            writeAwsCredentials(inputAccessKeyId, inputSecretKey, region);
+            const { setLoadedCredentials } = await import('../../aws/utils/aws-helpers.js');
+            setLoadedCredentials({ accessKeyId: inputAccessKeyId, secretAccessKey: inputSecretKey, region });
 
             accountId = await getAwsAccountId(region);
             if (!accountId) {

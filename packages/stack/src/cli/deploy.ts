@@ -112,6 +112,17 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   const rootDir = options.rootDir ?? process.cwd();
   const config = loadConfig(rootDir);
 
+  const { loadAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+  if (isAwsConfigured(config)) {
+    try {
+      await loadAwsCredentials(config, rootDir);
+    } catch (e) {
+      // Surface clean message; the scanfix system handles the "missing creds" case
+      // by emitting an actionable manualFix. Don't crash here — let the scan continue.
+      console.log('   [!] ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
   console.log('FACTIII DEPLOY\n');
 
   // ============================================================

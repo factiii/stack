@@ -107,8 +107,8 @@ async function syncAwsCredsFromVault(config: FactiiiConfig, region: string, root
     });
     const secretKey = await store.getSecret('AWS_SECRET_ACCESS_KEY');
     if (secretKey) {
-      const { writeAwsCredentials } = await import('../aws/utils/aws-helpers.js');
-      writeAwsCredentials(configKeyId, secretKey, region);
+      const { setLoadedCredentials } = await import('../aws/utils/aws-helpers.js');
+      setLoadedCredentials({ accessKeyId: configKeyId, secretAccessKey: secretKey, region });
       console.log('   [OK] Synced AWS credentials from vault');
     }
   } catch { /* vault sync is best-effort */ }
