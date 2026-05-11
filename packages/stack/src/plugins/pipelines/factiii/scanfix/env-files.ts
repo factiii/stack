@@ -297,7 +297,7 @@ export const envFileFixes: Fix[] = [
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
-          vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         const has = await vault.hasEnvironmentSecrets('staging');
@@ -323,7 +323,7 @@ export const envFileFixes: Fix[] = [
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
-          vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         const result = await vault.setEnvironmentSecrets('staging', envVars);
@@ -362,7 +362,7 @@ export const envFileFixes: Fix[] = [
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
-          vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         const has = await vault.hasEnvironmentSecrets('prod');
@@ -388,7 +388,7 @@ export const envFileFixes: Fix[] = [
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
-          vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         const result = await vault.setEnvironmentSecrets('prod', envVars);
@@ -444,7 +444,7 @@ export const envFileFixes: Fix[] = [
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
-          vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         const vaultSecrets = await vault.getEnvironmentSecrets('staging');
@@ -475,7 +475,7 @@ export const envFileFixes: Fix[] = [
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
-          vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         const vaultSecrets = await vault.getEnvironmentSecrets('staging');
@@ -545,7 +545,7 @@ export const envFileFixes: Fix[] = [
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
-          vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         const vaultSecrets = await vault.getEnvironmentSecrets('prod');
@@ -576,7 +576,7 @@ export const envFileFixes: Fix[] = [
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
-          vault_password_file: config.ansible.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         const vaultSecrets = await vault.getEnvironmentSecrets('prod');

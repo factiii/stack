@@ -388,8 +388,12 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
         const choice = await promptSingleLine('   Choose (1, 2, or 3): ');
 
         if (choice === '1') {
-          const passFile = (config.ansible?.vault_password_file ?? '~/.vault_pass')
-            .replace(/^~/, os.homedir());
+          if (!config.ansible?.vault_password_file) {
+            console.log('   ansible.vault_password_file not configured in stack.yml — cannot update password');
+            setCredentialsSyncFailed();
+            return true;
+          }
+          const passFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
           const vaultPath = config.ansible?.vault_path ?? '';
           const fullVaultPath = path.isAbsolute(vaultPath)
             ? vaultPath
@@ -444,10 +448,15 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
           }
           try {
             fs.unlinkSync(fullVaultPath);
+            if (!config.ansible?.vault_password_file) {
+              console.log('   ansible.vault_password_file not configured in stack.yml — cannot recreate vault');
+              setCredentialsSyncFailed();
+              return true;
+            }
             const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
             const vault = new AnsibleVaultSecrets({
               vault_path: vaultPath,
-              vault_password_file: config.ansible?.vault_password_file ?? '~/.vault_pass',
+              vault_password_file: config.ansible.vault_password_file,
               rootDir,
             });
             await vault.setSecret('_initialized', 'true');

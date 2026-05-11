@@ -53,11 +53,12 @@ export const vaultFixes: Fix[] = [
       return !fs.existsSync(path.join(rootDir, vaultPath));
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      if (!config.ansible?.vault_password_file) return false; // scan already gated on this
       try {
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible?.vault_path ?? getDefaultVaultPath(config),
-          vault_password_file: config.ansible?.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         await vault.setSecret('_initialized', 'true');
@@ -135,8 +136,11 @@ export const vaultFixes: Fix[] = [
 
       if (choice === '2') {
         // User wants to update password file
-        const passFile = (config.ansible?.vault_password_file ?? '~/.vault_pass')
-          .replace(/^~/, os.homedir());
+        if (!config.ansible?.vault_password_file) {
+          console.log('   ansible.vault_password_file not configured in stack.yml');
+          return false;
+        }
+        const passFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
         console.log('');
         const newPass = await promptSingleLine('   Enter the original vault password: ', { hidden: true });
         if (!newPass) {
@@ -178,10 +182,14 @@ export const vaultFixes: Fix[] = [
           // Delete old vault and create fresh one
           fs.unlinkSync(fullVaultPath);
 
+          if (!config.ansible?.vault_password_file) {
+            console.log('   ansible.vault_password_file not configured in stack.yml');
+            return false;
+          }
           const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
           const vault = new AnsibleVaultSecrets({
             vault_path: vaultPath,
-            vault_password_file: config.ansible?.vault_password_file ?? '~/.vault_pass',
+            vault_password_file: config.ansible.vault_password_file,
             rootDir,
           });
           await vault.setSecret('_initialized', 'true');

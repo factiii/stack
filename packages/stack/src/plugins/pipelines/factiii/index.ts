@@ -60,6 +60,9 @@ import type {
 import { loadRelevantPlugins } from '../../index.js';
 import { findSshKeyForStage } from '../../../utils/ssh-helper.js';
 
+// Import migration scanfixes
+import { vaultPasswordFileLocationFix } from './scanfix/migrations/vault-password-file-location.js';
+
 // Import scanfix arrays
 import { preflightFixes } from './scanfix/preflight.js';
 import { bootstrapFixes } from './scanfix/bootstrap.js';
@@ -229,6 +232,7 @@ class FactiiiPipeline {
   // ============================================================
 
   static readonly fixes: Fix[] = [
+    vaultPasswordFileLocationFix, // FIRST — moves vault password file before anything else uses it
     ...preflightFixes,
     ...bootstrapFixes,
     ...configFixes,

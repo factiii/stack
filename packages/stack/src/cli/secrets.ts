@@ -48,7 +48,7 @@ function getVaultStore(config: FactiiiConfig, rootDir: string): AnsibleVaultSecr
       'ansible.vault_path not configured in config. Add:\n' +
       '  ansible:\n' +
       '    vault_path: group_vars/all/vault-YOUR_REPO_NAME.yml\n' +
-      '    vault_password_file: ~/.vault_pass  # optional'
+      '    vault_password_file: .vault_pass  # optional'
     );
   }
 

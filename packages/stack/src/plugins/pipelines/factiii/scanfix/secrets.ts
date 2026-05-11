@@ -561,8 +561,11 @@ export const secretsFixes: Fix[] = [
       return !fs.existsSync(passwordFile);
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
-      const passwordFile = (config.ansible?.vault_password_file ?? '~/.vault_pass')
-        .replace(/^~/, os.homedir());
+      if (!config.ansible?.vault_password_file) {
+        console.log('   ansible.vault_password_file not configured in stack.yml');
+        return false;
+      }
+      const passwordFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
 
       console.log('');
       console.log('   Creating Ansible Vault password file: ' + passwordFile);

@@ -336,7 +336,7 @@ function displayProblems(
         console.log('    Fix: Add ansible config to stack.yml:');
         console.log('           ansible:');
         console.log('             vault_path: group_vars/all/vault-YOUR_REPO_NAME.yml');
-        console.log('             vault_password_file: ~/.vault_pass');
+        console.log('             vault_password_file: .vault_pass');
       } else if (reasonLower.includes('vault password') || reasonLower.includes('vault_pass')) {
         console.log('    Fix: Create vault password file:');
         console.log('           echo "your-password" > ~/.vault_pass && chmod 600 ~/.vault_pass');
