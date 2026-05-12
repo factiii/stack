@@ -62,7 +62,8 @@ export const sshKeysLocationFix: Fix = {
     return legacyPaths(projectName).some(p => fs.existsSync(p.suffixed) || fs.existsSync(p.unsuffixed));
   },
   fix: async function (config: FactiiiConfig, _rootDir: string): Promise<boolean> {
-    const projectName = getStackProjectName(config);
+    let projectName: string;
+    try { projectName = getStackProjectName(config); } catch { return false; }
     const dir = targetSshDir(projectName);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 

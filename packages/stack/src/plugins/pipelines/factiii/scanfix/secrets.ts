@@ -596,8 +596,8 @@ export const secretsFixes: Fix[] = [
     },
     manualFix:
       'Create the vault password file:\n' +
-      '      macOS/Linux: echo "your-vault-password" > ~/.vault_pass && chmod 600 ~/.vault_pass\n' +
-      '      Windows:     echo your-vault-password > %USERPROFILE%\\.vault_pass',
+      '      macOS/Linux: echo "your-vault-password" > <repo>/.vault_pass && chmod 600 <repo>/.vault_pass\n' +
+      '      Windows:     echo your-vault-password > <repo>\\.vault_pass',
   },
   {
     id: 'missing-staging-ssh',
@@ -1237,26 +1237,22 @@ export const secretsFixes: Fix[] = [
       if (!store) return false;
 
       try {
-        // Try reading from ~/.aws/credentials first
-        const awsCredsPath = path.join(os.homedir(), '.aws', 'credentials');
-        if (fs.existsSync(awsCredsPath)) {
-          const content = fs.readFileSync(awsCredsPath, 'utf8');
-          const match = content.match(/aws_secret_access_key\s*=\s*(.+)/);
-          if (match && match[1]) {
-            const secretKey = match[1].trim();
-            if (secretKey && secretKey.length === 40) {
-              console.log('   Found AWS_SECRET_ACCESS_KEY in ~/.aws/credentials');
-              const result = await store.setSecret('AWS_SECRET_ACCESS_KEY', secretKey);
-              if (result.success) {
-                console.log('   Stored in Ansible Vault');
-                return true;
-              }
-            }
+        // Try reading from in-memory credentials cache first
+        let secretFromMemory: string | null = null;
+        try {
+          const { getLoadedCredentials } = await import('../../aws/utils/aws-helpers.js');
+          secretFromMemory = getLoadedCredentials().secretAccessKey;
+        } catch { /* not loaded */ }
+
+        if (secretFromMemory) {
+          const result = await store.setSecret('AWS_SECRET_ACCESS_KEY', secretFromMemory);
+          if (result.success) {
+            console.log('   Stored AWS_SECRET_ACCESS_KEY in Ansible Vault');
+            return true;
           }
         }
 
         // Fall back to interactive prompt
-        console.log('   AWS_SECRET_ACCESS_KEY not found in ~/.aws/credentials');
         const value = await promptForSecret('AWS_SECRET_ACCESS_KEY', config);
         const result = await store.setSecret('AWS_SECRET_ACCESS_KEY', value);
         return result.success;

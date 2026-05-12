@@ -663,7 +663,7 @@ export async function sshExec(
     }
 
     throw new Error(
-      'No SSH key found. Add a deploy key to ~/.ssh/ or store password: npx stack fix --secrets'
+      'No SSH key found. Add a deploy key to ~/.ssh/factiii/<project>/ or store password: npx stack fix --secrets'
     );
   }
 

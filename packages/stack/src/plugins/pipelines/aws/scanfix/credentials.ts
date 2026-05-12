@@ -376,7 +376,7 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
         console.log('   ============================================================');
         console.log('   VAULT PASSWORD INCORRECT');
         console.log('   ============================================================');
-        console.log('   Cannot read AWS credentials — vault password in ~/.vault_pass');
+        console.log('   Cannot read AWS credentials — vault password in ' + (config.ansible?.vault_password_file ?? '.vault_pass'));
         console.log('   does not match the password used to encrypt the vault.');
         console.log('');
         console.log('   Options:');
@@ -679,40 +679,31 @@ export const credentialsFixes: Fix[] = [
         return false;
       }
 
+      let creds: { accessKeyId: string; secretAccessKey: string } | null = null;
       try {
-        // Read from ~/.aws/credentials (set by aws configure or vault sync)
-        const awsCredsPath = path.join(os.homedir(), '.aws', 'credentials');
-        if (!fs.existsSync(awsCredsPath)) {
-          console.log('   ~/.aws/credentials not found — run "npx stack fix --dev" first');
-          return false;
-        }
+        const loaded = getLoadedCredentials();
+        creds = { accessKeyId: loaded.accessKeyId, secretAccessKey: loaded.secretAccessKey };
+      } catch { /* not loaded */ }
 
-        const content = fs.readFileSync(awsCredsPath, 'utf8');
-        const keyIdMatch = content.match(/aws_access_key_id\s*=\s*(.+)/);
-        const secretMatch = content.match(/aws_secret_access_key\s*=\s*(.+)/);
+      if (!creds) {
+        console.log('   AWS credentials not loaded. Run `npx stack fix --dev` to bootstrap first.');
+        return false;
+      }
 
-        if (!keyIdMatch || !keyIdMatch[1] || !secretMatch || !secretMatch[1]) {
-          console.log('   Could not read credentials from ~/.aws/credentials');
-          return false;
-        }
-
-        const accessKeyId = keyIdMatch[1].trim();
-        const secretKey = secretMatch[1].trim();
-
+      try {
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
         });
 
-        const r1 = await vault.setSecret('AWS_ACCESS_KEY_ID', accessKeyId);
-        const r2 = await vault.setSecret('AWS_SECRET_ACCESS_KEY', secretKey);
+        const r1 = await vault.setSecret('AWS_ACCESS_KEY_ID', creds.accessKeyId);
+        const r2 = await vault.setSecret('AWS_SECRET_ACCESS_KEY', creds.secretAccessKey);
 
         if (r1.success && r2.success) {
           console.log('   [OK] Stored AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY in Ansible Vault');
           return true;
         }
-
         console.log('   Failed to store in vault');
         return false;
       } catch (e) {
@@ -720,17 +711,7 @@ export const credentialsFixes: Fix[] = [
         return false;
       }
     },
-    manualFix: [
-      'Configure AWS credentials via one of:',
-      '',
-      '  Option A: Environment variables',
-      '    export AWS_ACCESS_KEY_ID=AKIA...',
-      '    export AWS_SECRET_ACCESS_KEY=...',
-      '',
-      '  Option B: Store in Ansible Vault',
-      '    npx stack deploy --secrets set AWS_ACCESS_KEY_ID',
-      '    npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY',
-    ].join('\n'),
+    manualFix: 'Bootstrap with `npx stack fix --dev`, or store directly in vault:\n  npx stack deploy --secrets set AWS_ACCESS_KEY_ID\n  npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY',
   },
   {
     id: 'aws-credentials-invalid',
@@ -740,22 +721,14 @@ export const credentialsFixes: Fix[] = [
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       const awsConfig = getAwsConfig(config);
       const accountId = await getAwsAccountId(awsConfig.region);
-      if (!accountId) {
-        // Only flag if we have credentials configured (env vars or aws configure)
-        if (process.env.AWS_ACCESS_KEY_ID) return true;
-        try {
-          // Check ~/.aws/credentials directly (no AWS CLI needed)
-          const credPath = path.join(os.homedir(), '.aws', 'credentials');
-          if (fs.existsSync(credPath)) {
-            const content = fs.readFileSync(credPath, 'utf8');
-            return /aws_access_key_id\s*=\s*\S+/.test(content);
-          }
-          return false;
-        } catch {
-          return false;
-        }
+      if (accountId) return false; // credentials work
+      // Fire only if credentials are loaded but failing
+      try {
+        getLoadedCredentials();
+        return true;
+      } catch {
+        return false;
       }
-      return false;
     },
     fix: null,
     manualFix: 'Check AWS credentials: aws sts get-caller-identity\nIf expired, regenerate in AWS Console: IAM > Users > Security credentials',

@@ -6,7 +6,6 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
@@ -84,15 +83,11 @@ export async function getECRRegistry(config: FactiiiConfig, rootDir?: string): P
  */
 async function syncAwsCredsFromVault(config: FactiiiConfig, region: string, rootDir?: string): Promise<void> {
   try {
-    const os = await import('os');
-    const credPath = path.join(os.homedir(), '.aws', 'credentials');
-    // Check if credentials file already has valid content
-    if (fs.existsSync(credPath)) {
-      const content = fs.readFileSync(credPath, 'utf8');
-      if (content.includes('aws_access_key_id') && content.includes('aws_secret_access_key')) {
-        return; // Already configured
-      }
-    }
+    const { getLoadedCredentials } = await import('../aws/utils/aws-helpers.js');
+    try {
+      getLoadedCredentials();
+      return; // credentials already loaded in memory
+    } catch { /* not loaded — fall through to vault read */ }
 
     // Try to read from vault
     if (!config.ansible?.vault_path) return;

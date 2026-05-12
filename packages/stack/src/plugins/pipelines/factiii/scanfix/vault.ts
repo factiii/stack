@@ -125,11 +125,11 @@ export const vaultFixes: Fix[] = [
 
       console.log('');
       console.log('   ⚠️  Vault password mismatch detected!');
-      console.log('   The vault file was encrypted with a different password than ~/.vault_pass');
+      console.log('   The vault file was encrypted with a different password than ' + (config.ansible?.vault_password_file ?? '.vault_pass'));
       console.log('');
       console.log('   Options:');
       console.log('   1. Recreate vault with current password (existing secrets will be lost)');
-      console.log('   2. Update ~/.vault_pass with the original password');
+      console.log('   2. Update ' + (config.ansible?.vault_password_file ?? '.vault_pass') + ' with the original password');
       console.log('');
 
       const choice = await promptSingleLine('   Choose (1 or 2): ');
@@ -207,6 +207,6 @@ export const vaultFixes: Fix[] = [
     manualFix:
       'Vault was created with a different password.\n' +
       '      Option 1: Delete the vault file and re-run: npx stack fix --secrets\n' +
-      '      Option 2: Copy the original ~/.vault_pass from the machine that created the vault',
+      '      Option 2: Copy the original <repo>/.vault_pass from the machine that created the vault',
   },
 ];

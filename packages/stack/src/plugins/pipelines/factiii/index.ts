@@ -1174,28 +1174,16 @@ class FactiiiPipeline {
           };
         }
 
-        // Resolve AWS credentials from vault via the credentials file
-        // The aws scanfix/credentials.ts writes ~/.aws/credentials from vault
-        // We rely on that being synced — check if credentials exist
-        const awsCredPath = (process.env.HOME ?? '') + '/.aws/credentials';
-        let hasCredentials = false;
+        // Check that AWS credentials are loaded in memory
+        const { getLoadedCredentials, getAwsConfig } = await import('../aws/utils/aws-helpers.js');
         try {
-          const content = fs.readFileSync(awsCredPath, 'utf8');
-          hasCredentials = /aws_access_key_id\s*=\s*\S+/.test(content);
+          getLoadedCredentials();
         } catch {
-          // no credentials file
-        }
-
-        if (!hasCredentials) {
-          // Try to sync credentials from vault
-          console.log('AWS credentials not found locally. Run scan to sync from vault:');
-          console.log('  npx stack scan --' + stage);
-          console.log('');
-          return { success: false, error: 'AWS credentials not available. Run npx stack scan --' + stage + ' first to sync from vault.' };
+          console.log('AWS credentials not loaded. Run `npx stack fix --dev` first.');
+          return { success: false, error: 'AWS credentials not loaded. Run `npx stack fix --dev` first.' };
         }
 
         // Get region from config
-        const { getAwsConfig } = await import('../aws/utils/aws-helpers.js');
         const awsConfig = getAwsConfig(config);
         const region = awsConfig.region;
 
