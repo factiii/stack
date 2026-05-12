@@ -18,6 +18,8 @@ import type { EnvironmentConfig, FactiiiConfig, Stage } from '../types/index.js'
 import { extractEnvironments, getStageFromEnvironment } from './config-helpers.js';
 import { promptSingleLine } from './secret-prompts.js';
 import { AnsibleVaultSecrets } from './ansible-vault-secrets.js';
+import { getStackSshDir, getStackSshKeyPath } from './ssh-paths.js';
+import { getStackProjectName } from './project-identifier.js';
 
 /**
  * Write an SSH key to a file with correct permissions (cross-platform).
@@ -36,91 +38,44 @@ export function writeSecureKeyFile(keyPath: string, keyContent: string): void {
 }
 
 /**
- * Map of stage names to their environment-specific SSH key filenames.
- * These keys are extracted from Ansible Vault by `npx stack deploy --secrets write-ssh-keys`.
+ * Find the SSH key path for a given stage under ~/.ssh/factiii/<project>/.
+ * Returns null if the key doesn't exist or isn't a valid private key.
  */
-const STAGE_KEY_MAP: Record<string, string[]> = {
-  staging: ['staging_deploy_key'],
-  prod: ['prod_deploy_key'],   // Only repo-specific deploy key; vault/pem handled separately
-  mac: ['mac_deploy_key'],
-};
-
-/**
- * Scan ~/.ssh/ for any .pem files (AWS EC2 key pairs).
- * Returns the first .pem file found that contains a private key.
- */
-function findPemKey(sshDir: string): string | null {
-  try {
-    const files = fs.readdirSync(sshDir);
-    for (const file of files) {
-      if (!file.endsWith('.pem')) continue;
-      const keyPath = path.join(sshDir, file);
-      try {
-        const content = fs.readFileSync(keyPath, 'utf8');
-        if (content.includes('PRIVATE KEY')) return keyPath;
-      } catch { /* skip unreadable */ }
-    }
-  } catch { /* no .ssh dir */ }
-  return null;
-}
-
-/**
- * Get the SSH key filename(s) for a stage, with optional repo-specific variant.
- * Returns repo-specific name first (e.g. `staging_deploy_key_factiii`),
- * then generic name (`staging_deploy_key`) for backward compatibility.
- *
- * @param stage - The deployment stage (staging, prod, mac)
- * @param repoName - Optional repo name for multi-repo key isolation
- * @returns Array of key names to try, most specific first
- */
-export function getKeyNamesForStage(stage: string, repoName?: string): string[] {
-  const genericKeys = STAGE_KEY_MAP[stage] ?? [];
-  if (!repoName || repoName.toUpperCase().startsWith('EXAMPLE')) {
-    return genericKeys;
-  }
-
-  // Repo-specific keys first, then generic fallback
-  const repoKeys = genericKeys.map(k => k + '_' + repoName);
-  return [...repoKeys, ...genericKeys];
-}
-
-/**
- * Find the SSH key path for a given stage.
- * Checks repo-specific keys first (e.g. staging_deploy_key_factiii),
- * then falls back to generic keys (staging_deploy_key).
- *
- * @param stage - The deployment stage (staging, prod, mac)
- * @param repoName - Optional repo name for multi-repo key isolation
- * @returns Absolute path to SSH key, or null if none found
- */
-export function findSshKeyForStage(stage: string, repoName?: string): string | null {
-  const sshDir = path.join(os.homedir(), '.ssh');
-
-  const keyNames = getKeyNamesForStage(stage, repoName);
-  for (const keyName of keyNames) {
-    const keyPath = path.join(sshDir, keyName);
-    if (fs.existsSync(keyPath)) {
-      // Validate key file has actual private key content
-      try {
-        const content = fs.readFileSync(keyPath, 'utf8');
-        if (!content.includes('PRIVATE KEY')) {
-          console.log('   [!] ' + keyPath + ' exists but is not a valid private key — skipping');
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      return keyPath;
-    }
-  }
-
-  // For prod: also scan for .pem files (AWS EC2 key pairs)
+export function findSshKeyForStage(stage: string, projectName: string): string | null {
   if (stage === 'prod') {
-    const pemKey = findPemKey(sshDir);
-    if (pemKey) return pemKey;
+    // Prod can use either {stage}_deploy_key or a .pem (EC2 key pair).
+    // The .pem path comes from config — caller passes it via findProdPemKey instead.
+    // findSshKeyForStage just checks the deploy_key path.
   }
+  const keyPath = getStackSshKeyPath(projectName, stage);
+  if (!fs.existsSync(keyPath)) return null;
+  try {
+    const content = fs.readFileSync(keyPath, 'utf8');
+    if (!content.includes('PRIVATE KEY')) return null;
+    return keyPath;
+  } catch {
+    return null;
+  }
+}
 
-  return null;
+/**
+ * For prod, an explicit .pem path may be configured in stack.yml (aws.prod_ssh_key_path).
+ * Returns the path if it exists and is a valid private key, else null.
+ */
+export function findProdPemKey(config: FactiiiConfig): string | null {
+  const projectName = getStackProjectName(config);
+  const configured = config.aws?.prod_ssh_key_path;
+  const pemPath = configured
+    ? configured.replace(/^~/, os.homedir())
+    : path.join(getStackSshDir(projectName), 'prod.pem');
+  if (!fs.existsSync(pemPath)) return null;
+  try {
+    const content = fs.readFileSync(pemPath, 'utf8');
+    if (!content.includes('PRIVATE KEY')) return null;
+    return pemPath;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -232,9 +187,11 @@ async function autoSetupSshKey(
   config?: FactiiiConfig,
   rootDir?: string
 ): Promise<string | null> {
-  const keyName = stage + '_deploy_key';
-  const keyPath = path.join(os.homedir(), '.ssh', keyName);
+  if (!config) return null;
+  const projectName = getStackProjectName(config);
+  const keyPath = getStackSshKeyPath(projectName, stage);
   const pubKeyPath = keyPath + '.pub';
+  fs.mkdirSync(getStackSshDir(projectName), { recursive: true, mode: 0o700 });
 
   console.log('');
   console.log('   ── Auto SSH Key Setup ──');
@@ -426,9 +383,11 @@ async function promptAndValidatePassword(
       console.log('   Setting up SSH key auth instead...');
       console.log('');
 
-      const keyName = stage + '_deploy_key';
-      const keyPath = path.join(os.homedir(), '.ssh', keyName);
+      if (!config) return null;
+      const projectName = getStackProjectName(config);
+      const keyPath = getStackSshKeyPath(projectName, stage);
       const pubKeyPath = keyPath + '.pub';
+      fs.mkdirSync(getStackSshDir(projectName), { recursive: true, mode: 0o700 });
 
       // Step 1: Generate key (delete and regenerate if key pair is mismatched)
       let needsGeneration = !fs.existsSync(keyPath);
@@ -624,24 +583,18 @@ export async function sshExec(
 
   // Use stage-specific key if stage is provided (repo-aware)
   let keyPath: string | null = null;
-  const sshRepoName = config?.name;
-  if (stage) {
-    keyPath = findSshKeyForStage(stage, sshRepoName);
+  const sshProjectName = config?.name;
+  if (stage && sshProjectName) {
+    keyPath = findSshKeyForStage(stage, sshProjectName);
   }
 
-  // Fallback: try all known deploy keys (repo-specific first, then generic)
-  if (!keyPath) {
+  // Fallback: try all known deploy keys across all stages for this project
+  if (!keyPath && sshProjectName) {
     const fallbackStages = ['staging', 'prod', 'mac'];
-    const keyPaths: string[] = [];
-    for (const s of fallbackStages) {
-      for (const k of getKeyNamesForStage(s, sshRepoName)) {
-        keyPaths.push(path.join(os.homedir(), '.ssh', k));
-      }
-    }
-    // Deduplicate
     const seen = new Set<string>();
 
-    for (const kp of keyPaths) {
+    for (const s of fallbackStages) {
+      const kp = getStackSshKeyPath(sshProjectName, s);
       if (seen.has(kp)) continue;
       seen.add(kp);
       if (fs.existsSync(kp)) {

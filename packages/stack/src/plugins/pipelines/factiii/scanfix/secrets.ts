@@ -12,6 +12,8 @@ import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js'
 import { promptForSecret, promptSingleLine, confirm } from '../../../../utils/secret-prompts.js';
 import { extractEnvironments, hasEnvironments } from '../../../../utils/config-helpers.js';
 import { findSshKeyForStage, writeSecureKeyFile } from '../../../../utils/ssh-helper.js';
+import { getStackSshKeyPath, getStackSshDir } from '../../../../utils/ssh-paths.js';
+import { getStackProjectName } from '../../../../utils/project-identifier.js';
 
 function getAnsibleStore(config: FactiiiConfig, rootDir: string): AnsibleVaultSecrets | null {
   if (!config.ansible?.vault_path) return null;
@@ -23,27 +25,20 @@ function getAnsibleStore(config: FactiiiConfig, rootDir: string): AnsibleVaultSe
 }
 
 /**
- * Write an SSH key to disk: generic name + repo-specific name.
- * e.g. staging_deploy_key AND staging_deploy_key_factiii
+ * Write an SSH key to disk at the per-project isolated path.
+ * e.g. ~/.ssh/factiii/<projectName>/<stage>_deploy_key
  */
 export function writeSshKeyToDisk(stage: string, value: string, config: FactiiiConfig): string {
-  const sshDir = path.join(os.homedir(), '.ssh');
-  if (!fs.existsSync(sshDir)) {
-    fs.mkdirSync(sshDir, { mode: 0o700 });
+  const projectName = getStackProjectName(config);
+  const targetDir = getStackSshDir(projectName);
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
   }
 
-  const genericName = stage + '_deploy_key';
-  const genericPath = path.join(sshDir, genericName);
-  writeSecureKeyFile(genericPath, value.trimEnd() + '\n');
+  const keyPath = getStackSshKeyPath(projectName, stage);
+  writeSecureKeyFile(keyPath, value.trimEnd() + '\n');
 
-  // Also write repo-specific key for multi-repo isolation
-  const repoName = config.name;
-  if (repoName && !repoName.toUpperCase().startsWith('EXAMPLE')) {
-    const repoPath = path.join(sshDir, genericName + '_' + repoName);
-    writeSecureKeyFile(repoPath, value.trimEnd() + '\n');
-  }
-
-  return genericPath;
+  return keyPath;
 }
 
 /**
@@ -356,8 +351,12 @@ async function autoGenerateAndDeploySshKey(
     return await manualSshKeyEntry(stage, config, store);
   }
 
-  const keyName = stage + '_deploy_key';
-  const keyPath = path.join(os.homedir(), '.ssh', keyName);
+  const projectName = getStackProjectName(config);
+  const sshTargetDir = getStackSshDir(projectName);
+  if (!fs.existsSync(sshTargetDir)) {
+    fs.mkdirSync(sshTargetDir, { recursive: true, mode: 0o700 });
+  }
+  const keyPath = getStackSshKeyPath(projectName, stage);
   const pubKeyPath = keyPath + '.pub';
 
   console.log('');
@@ -841,7 +840,12 @@ export const secretsFixes: Fix[] = [
               console.log('');
               // Still create a local key for future use — will be authorized after EC2 is provisioned
               console.log('      Creating SSH key for future use...');
-              const localKeyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+              const localKeyProjName = getStackProjectName(config);
+              const localKeyDir = getStackSshDir(localKeyProjName);
+              if (!fs.existsSync(localKeyDir)) {
+                fs.mkdirSync(localKeyDir, { recursive: true, mode: 0o700 });
+              }
+              const localKeyPath = getStackSshKeyPath(localKeyProjName, 'prod');
               if (!fs.existsSync(localKeyPath)) {
                 try {
                   execSync('ssh-keygen -t ed25519 -f "' + localKeyPath + '" -N "" -C "prod-deploy"', { stdio: 'pipe' });
@@ -880,7 +884,12 @@ export const secretsFixes: Fix[] = [
             const sshUser = extractEnvironments(config).prod?.ssh_user ?? 'ubuntu';
 
             // Generate local SSH key if needed
-            const localKeyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+            const instanceKeyProjName = getStackProjectName(config);
+            const instanceKeyDir = getStackSshDir(instanceKeyProjName);
+            if (!fs.existsSync(instanceKeyDir)) {
+              fs.mkdirSync(instanceKeyDir, { recursive: true, mode: 0o700 });
+            }
+            const localKeyPath = getStackSshKeyPath(instanceKeyProjName, 'prod');
             const localPubPath = localKeyPath + '.pub';
             if (!fs.existsSync(localKeyPath)) {
               console.log('      [1/4] Generating SSH key...');
@@ -1048,8 +1057,12 @@ export const secretsFixes: Fix[] = [
       if (!environments.staging) return false;
 
       // Only flag if there's NO SSH key — password is the fallback
-      const keyPath = path.join(os.homedir(), '.ssh', 'staging_deploy_key');
-      if (fs.existsSync(keyPath)) return false;
+      try {
+        const stagingKeyPath = getStackSshKeyPath(getStackProjectName(config), 'staging');
+        if (fs.existsSync(stagingKeyPath)) return false;
+      } catch {
+        // project name not set — skip key-exists check
+      }
 
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
@@ -1068,10 +1081,14 @@ export const secretsFixes: Fix[] = [
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       // Re-check: SSH key may have been created by a prior fix in this same run
-      const keyPath = path.join(os.homedir(), '.ssh', 'staging_deploy_key');
-      if (fs.existsSync(keyPath)) {
-        console.log('      SSH key now exists — password not needed');
-        return true;
+      try {
+        const stagingKeyPath = getStackSshKeyPath(getStackProjectName(config), 'staging');
+        if (fs.existsSync(stagingKeyPath)) {
+          console.log('      SSH key now exists — password not needed');
+          return true;
+        }
+      } catch {
+        // project name not set — skip key-exists check
       }
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
@@ -1121,8 +1138,12 @@ export const secretsFixes: Fix[] = [
       if (!environments.prod) return false;
 
       // Only flag if there's NO SSH key — password is the fallback
-      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
-      if (fs.existsSync(keyPath)) return false;
+      try {
+        const prodKeyPath = getStackSshKeyPath(getStackProjectName(config), 'prod');
+        if (fs.existsSync(prodKeyPath)) return false;
+      } catch {
+        // project name not set — skip key-exists check
+      }
 
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
@@ -1141,10 +1162,14 @@ export const secretsFixes: Fix[] = [
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       // Re-check: SSH key may have been created by a prior fix in this same run
-      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
-      if (fs.existsSync(keyPath)) {
-        console.log('      SSH key now exists — password not needed');
-        return true;
+      try {
+        const prodKeyPath = getStackSshKeyPath(getStackProjectName(config), 'prod');
+        if (fs.existsSync(prodKeyPath)) {
+          console.log('      SSH key now exists — password not needed');
+          return true;
+        }
+      } catch {
+        // project name not set — skip key-exists check
       }
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;

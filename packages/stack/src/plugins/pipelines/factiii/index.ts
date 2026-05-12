@@ -62,6 +62,7 @@ import { findSshKeyForStage } from '../../../utils/ssh-helper.js';
 
 // Import migration scanfixes
 import { vaultPasswordFileLocationFix } from './scanfix/migrations/vault-password-file-location.js';
+import { sshKeysLocationFix } from './scanfix/migrations/ssh-keys-location.js';
 
 // Import scanfix arrays
 import { preflightFixes } from './scanfix/preflight.js';
@@ -233,6 +234,7 @@ class FactiiiPipeline {
 
   static readonly fixes: Fix[] = [
     vaultPasswordFileLocationFix, // FIRST — moves vault password file before anything else uses it
+    sshKeysLocationFix,           // SECOND — moves SSH deploy keys into per-project directory
     ...preflightFixes,
     ...bootstrapFixes,
     ...configFixes,

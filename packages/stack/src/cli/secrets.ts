@@ -353,44 +353,25 @@ export async function secrets(
     }
 
     case 'write-ssh-keys': {
+      const { getStackProjectName } = await import('../utils/project-identifier.js');
+      const { getStackSshDir, getStackSshKeyPath } = await import('../utils/ssh-paths.js');
+      const projectName = getStackProjectName(config);
+      const targetDir = getStackSshDir(projectName);
+      fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+
       const stagingKey = await store.getSecret('STAGING_SSH');
       const prodKey = await store.getSecret('PROD_SSH');
-      const keyRepoName = config.name;
-      const hasRepoName = keyRepoName && !keyRepoName.toUpperCase().startsWith('EXAMPLE');
-
-      const sshDir = path.join(os.homedir(), '.ssh');
-      if (!fs.existsSync(sshDir)) {
-        fs.mkdirSync(sshDir, { mode: 0o700 });
-      }
 
       if (stagingKey) {
-        // Write generic key (backward compat)
-        const genericPath = path.join(sshDir, 'staging_deploy_key');
-        fs.writeFileSync(genericPath, stagingKey, { mode: 0o600 });
-        console.log(`[OK] Wrote STAGING_SSH to ${genericPath}`);
-
-        // Write repo-specific key
-        if (hasRepoName) {
-          const repoPath = path.join(sshDir, 'staging_deploy_key_' + keyRepoName);
-          fs.writeFileSync(repoPath, stagingKey, { mode: 0o600 });
-          console.log(`[OK] Wrote STAGING_SSH to ${repoPath}`);
-        }
+        const keyPath = getStackSshKeyPath(projectName, 'staging');
+        fs.writeFileSync(keyPath, stagingKey.endsWith('\n') ? stagingKey : stagingKey + '\n', { mode: 0o600 });
+        console.log('[OK] Wrote STAGING_SSH to ' + keyPath);
       }
-
       if (prodKey) {
-        // Write generic key (backward compat)
-        const genericPath = path.join(sshDir, 'prod_deploy_key');
-        fs.writeFileSync(genericPath, prodKey, { mode: 0o600 });
-        console.log(`[OK] Wrote PROD_SSH to ${genericPath}`);
-
-        // Write repo-specific key
-        if (hasRepoName) {
-          const repoPath = path.join(sshDir, 'prod_deploy_key_' + keyRepoName);
-          fs.writeFileSync(repoPath, prodKey, { mode: 0o600 });
-          console.log(`[OK] Wrote PROD_SSH to ${repoPath}`);
-        }
+        const keyPath = getStackSshKeyPath(projectName, 'prod');
+        fs.writeFileSync(keyPath, prodKey.endsWith('\n') ? prodKey : prodKey + '\n', { mode: 0o600 });
+        console.log('[OK] Wrote PROD_SSH to ' + keyPath);
       }
-
       if (!stagingKey && !prodKey) {
         console.log('[!] No SSH keys found in vault');
       }

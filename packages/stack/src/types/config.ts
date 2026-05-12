@@ -62,6 +62,12 @@ export interface AwsBlockConfig {
   ec2_security_group?: string;
   /** Override RDS security group name. Default: `factiii-{project}-rds`. */
   rds_security_group?: string;
+  /**
+   * Path to the prod EC2 key pair (.pem file). Defaults to
+   * `~/.ssh/factiii/<project>/prod.pem`. Used as the SSH identity for prod
+   * stage when no `prod_deploy_key` is present.
+   */
+  prod_ssh_key_path?: string;
 
   // ──────────────────────────────────────────────────────────
   // Network overrides — adopt an existing VPC instead of letting stack
