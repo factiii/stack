@@ -17,7 +17,6 @@ export class MultiAccountProcedureFactory {
     return {
       switchSession: this.switchSession(),
       removeSession: this.removeSession(),
-      clearBundle: this.clearBundle(),
     };
   }
 
@@ -133,15 +132,22 @@ export class MultiAccountProcedureFactory {
           });
         }
 
-        const removed = await this.config.database.session.findById(targetSessionId);
-        await this.config.database.session.revoke(targetSessionId);
+        const target = await this.config.database.session.findById(targetSessionId);
+        const wasLive = !!target && !target.revokedAt;
 
-        if (this.config.hooks?.onSessionRevoked && removed) {
-          await this.config.hooks.onSessionRevoked(
-            removed.id,
-            removed.socketId,
-            'Removed from bundle'
-          );
+        if (wasLive) {
+          await this.config.database.session.revoke(targetSessionId);
+          if (this.config.hooks?.onSessionRevoked) {
+            try {
+              await this.config.hooks.onSessionRevoked(
+                target!.id,
+                target!.socketId,
+                'Removed from bundle'
+              );
+            } catch {
+              // Don't let a flaky hook abort the removal.
+            }
+          }
         }
 
         const remaining = sessions.filter((id) => id !== targetSessionId);
@@ -152,22 +158,31 @@ export class MultiAccountProcedureFactory {
             this.config.cookieSettings,
             this.config.storageKeys
           );
+          if (wasLive) {
+            await this.config.database.user.update(target!.userId, { isActive: false });
+            if (this.config.hooks?.afterLogout) {
+              try {
+                await this.config.hooks.afterLogout(
+                  target!.userId,
+                  target!.id,
+                  target!.socketId,
+                  [],
+                );
+              } catch {
+                // Don't let a flaky hook abort the removal.
+              }
+            }
+          }
           return { success: true, loggedOut: true, newActive: null };
         }
 
-        const newActive = targetSessionId === active ? remaining[0] : active;
+        // Promote most-recently-added remaining session (consistency with authGuard fallback).
+        const newActive = targetSessionId === active ? remaining[remaining.length - 1] : active;
+        const newActiveSession = await this.config.database.session.findById(newActive);
 
-        let activeUserId = ctx.userId as number;
-        let activeUpdatedAt = new Date();
-        let activeVerifiedHumanAt: Date | null = null;
-        if (newActive !== active) {
-          const promoted = await this.config.database.session.findById(newActive);
-          if (promoted) {
-            activeUserId = promoted.userId;
-            activeUpdatedAt = promoted.user.updatedAt;
-            activeVerifiedHumanAt = promoted.user.verifiedHumanAt;
-          }
-        }
+        const activeUserId = newActiveSession?.userId ?? (ctx.userId as number);
+        const activeUpdatedAt = newActiveSession?.user.updatedAt ?? new Date();
+        const activeVerifiedHumanAt = newActiveSession?.user.verifiedHumanAt ?? null;
 
         const newJwt = createAuthToken(
           {
@@ -193,20 +208,5 @@ export class MultiAccountProcedureFactory {
 
         return { success: true, loggedOut: false, newActive };
       });
-  }
-
-  /** Revoke every session in the bundle. "Log out of all accounts on this device." */
-  private clearBundle() {
-    return this.authProcedure.mutation(async ({ ctx }) => {
-      const { sessions } = this.requireBundle(ctx);
-
-      for (const id of sessions) {
-        await this.config.database.session.revoke(id);
-      }
-
-      clearAuthCookies(ctx.res, this.config.cookieSettings, this.config.storageKeys);
-
-      return { success: true, revokedCount: sessions.length };
-    });
   }
 }

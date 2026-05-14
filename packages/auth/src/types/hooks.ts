@@ -88,10 +88,13 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
    */
   onSessionRevoked?: (sessionId: number, socketId: string | null, reason: string) => Promise<void>;
 
-  /**
-   * Called after user logs out
-   */
-  afterLogout?: (userId: number, sessionId: number, socketId: string | null) => Promise<void>;
+  /** Called after user logs out. `otherSessions` lists bystander bundle sessions also revoked (empty for single-account). */
+  afterLogout?: (
+    userId: number,
+    sessionId: number,
+    socketId: string | null,
+    otherSessions?: Array<{ userId: number; sessionId: number; socketId: string | null }>,
+  ) => Promise<void>;
 
   /**
    * Called on token refresh

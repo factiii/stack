@@ -252,17 +252,47 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
 
   private logout() {
     return this.procedure.mutation(async ({ ctx }) => {
-      const { userId, sessionId } = ctx;
+      const { sessionId, bundleSessionIds } = ctx;
 
       if (sessionId) {
-        await this.config.database.session.revoke(sessionId);
+        const idsToRevoke =
+          bundleSessionIds && bundleSessionIds.length > 0 ? bundleSessionIds : [sessionId];
+        const revoked: Array<{ id: number; userId: number; socketId: string | null }> = [];
 
-        if (userId) {
-          await this.config.database.user.update(userId, { isActive: false });
+        for (const id of idsToRevoke) {
+          const session = await this.config.database.session.findById(id);
+          if (!session || session.revokedAt) continue;
+
+          await this.config.database.session.revoke(id);
+          revoked.push({ id: session.id, userId: session.userId, socketId: session.socketId });
+
+          if (this.config.hooks?.onSessionRevoked) {
+            try {
+              await this.config.hooks.onSessionRevoked(
+                session.id,
+                session.socketId,
+                'User logged out',
+              );
+            } catch {
+              // Don't let a flaky hook abort the rest of the logout.
+            }
+          }
         }
 
-        if (this.config.hooks?.afterLogout) {
-          await this.config.hooks.afterLogout(userId, sessionId, ctx.socketId);
+        for (const uid of new Set(revoked.map((s) => s.userId))) {
+          await this.config.database.user.update(uid, { isActive: false });
+        }
+
+        const active = revoked.find((s) => s.id === sessionId);
+        if (active && this.config.hooks?.afterLogout) {
+          const others = revoked
+            .filter((s) => s.id !== sessionId)
+            .map((s) => ({ userId: s.userId, sessionId: s.id, socketId: s.socketId }));
+          try {
+            await this.config.hooks.afterLogout(active.userId, active.id, active.socketId, others);
+          } catch {
+            // Don't let a flaky hook abort the rest of the logout.
+          }
         }
       }
 
