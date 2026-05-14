@@ -16,6 +16,7 @@ export interface TrpcContext {
   userId: number | null;
   sessionId: number | null;
   socketId: string | null;
+  bundleSessionIds?: number[];
   headers: CreateHTTPContextOptions['req']['headers'];
   res: CreateHTTPContextOptions['res']; // Allows us to stream responses
   ip?: string;

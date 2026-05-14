@@ -10,6 +10,7 @@ export interface JwtPayload {
   id: number; // Session ID
   userId: number;
   verifiedHumanAt: Date | null;
+  sessions: number[];
   exp?: number;
   iat?: number;
 }

@@ -1,4 +1,4 @@
-import { eq, and, or, isNull, gte, ne, sql } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, ne, sql, inArray } from 'drizzle-orm';
 import type { AnyPgTable, PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 
 import type {
@@ -313,6 +313,29 @@ export function createDrizzleAdapter(
           .update(sessions)
           .set({ revokedAt: new Date() })
           .where(eq(sessions.id, id));
+      },
+
+      async findManyByIds(ids: number[]): Promise<SessionWithUser[]> {
+        if (ids.length === 0) return [];
+        const rows = await db
+          .select({
+            id: sessions.id,
+            userId: sessions.userId,
+            socketId: sessions.socketId,
+            browserName: sessions.browserName,
+            issuedAt: sessions.issuedAt,
+            lastUsed: sessions.lastUsed,
+            revokedAt: sessions.revokedAt,
+            user: {
+              status: users.status,
+              verifiedHumanAt: users.verifiedHumanAt,
+              updatedAt: users.updatedAt,
+            },
+          })
+          .from(sessions)
+          .innerJoin(users, eq(sessions.userId, users.id))
+          .where(inArray(sessions.id, ids));
+        return rows as unknown as SessionWithUser[];
       },
 
       async findActiveByUserId(

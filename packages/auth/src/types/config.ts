@@ -162,4 +162,7 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
     /** Default expiry in ms (default: 7 days) */
     defaultExpiryMs?: number;
   };
+
+  /** Max sessions per device. Default 1 (single-account). >1 enables multi-account. */
+  maxAccounts?: number;
 }
