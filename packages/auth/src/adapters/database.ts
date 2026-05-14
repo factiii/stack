@@ -129,6 +129,9 @@ export interface DatabaseAdapter {
     findActiveByUserId(userId: number, excludeSessionId?: number): Promise<Pick<AuthSession, 'id' | 'socketId' | 'userId'>[]>;
     /** Revoke all active sessions for a user, optionally excluding one. */
     revokeAllByUserId(userId: number, excludeSessionId?: number): Promise<void>;
+
+    /** Batch lookup by ids. Used for multi-account bundle validation and fallback promotion. */
+    findManyByIds(ids: number[]): Promise<SessionWithUser[]>;
   };
 
   otp: {

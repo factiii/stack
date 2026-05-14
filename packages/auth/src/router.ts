@@ -6,6 +6,7 @@ import { BaseProcedureFactory } from './procedures/base';
 import { BiometricProcedureFactory } from './procedures/biometric';
 import { EmailVerificationProcedureFactory } from './procedures/emailVerification';
 import { MagicLinkProcedureFactory } from './procedures/magicLink';
+import { MultiAccountProcedureFactory } from './procedures/multiAccount';
 import { OAuthLoginProcedureFactory } from './procedures/oauth';
 import {
   DeviceTwoFaProcedureFactory,
@@ -71,6 +72,10 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
       this.config,
       this.procedure
     ).createMagicLinkProcedures();
+    const multiAccountRoutes = new MultiAccountProcedureFactory(
+      this.config,
+      this.authProcedure
+    ).createMultiAccountProcedures();
 
     return {
       base: baseRoutes.createBaseProcedures(this.schemas),
@@ -78,6 +83,7 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
       biometric: biometricRoutes.createBiometricProcedures(),
       emailVerification: emailVerificationRoutes.createEmailVerificationProcedures(),
       magicLink: magicLinkRoutes,
+      multiAccount: multiAccountRoutes,
     };
   }
 }
@@ -118,6 +124,7 @@ function buildStandardAuthRouter<TExtensions extends SchemaExtensions = {}>(
     ...shared.biometric,
     ...shared.emailVerification,
     ...shared.magicLink,
+    ...shared.multiAccount,
   });
 
   const router = scaffold.t.router({ auth: authRouter });
@@ -155,6 +162,7 @@ function buildDeviceAuthRouter<TExtensions extends SchemaExtensions = {}>(
     ...shared.biometric,
     ...shared.emailVerification,
     ...shared.magicLink,
+    ...shared.multiAccount,
   });
 
   const router = scaffold.t.router({ auth: authRouter });

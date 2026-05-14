@@ -6,6 +6,7 @@ import { detectBrowser } from '../utilities/browser';
 import { isTwoFaEnabled, verifyTwoFaChallenge } from './twoFa/verifyChallenge';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
+import { issueAuthCookies, isUserInBundle } from '../utilities/issueCookies';
 import { createAuthToken } from '../utilities/jwt';
 import { comparePassword, hashPassword } from '../utilities/password';
 import type { SchemaExtensions } from '../types/hooks';
@@ -122,24 +123,12 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         await this.config.hooks.onSessionCreated(session.id, typedInput);
       }
 
-      const authToken = createAuthToken(
-        { id: session.id, userId: session.userId, verifiedHumanAt: null },
-        {
-          secret: this.config.secrets.jwt,
-          expiresIn: this.config.tokenSettings.jwtExpiry,
-        }
-      );
-
-      const clientPayload = await this.buildClientPayload(user.id, new Date());
-
-      setAuthCookies(
-        ctx.res,
-        authToken,
-        clientPayload,
-        this.config.secrets.jwt,
-        this.config.cookieSettings,
-        this.config.storageKeys,
-      );
+      await issueAuthCookies(this.config, {
+        ctx,
+        session,
+        updatedAt: new Date(),
+        verifiedHumanAt: null,
+      });
 
       return {
         success: true,
@@ -221,6 +210,13 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         }
       }
 
+      if (await isUserInBundle(this.config, ctx.headers.cookie, user.id)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'You are already signed in as this account on this device.',
+        });
+      }
+
       const extraSessionData = this.config.hooks?.getSessionData
         ? await this.config.hooks.getSessionData(typedInput)
         : {};
@@ -240,24 +236,12 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         await this.config.hooks.onSessionCreated(session.id, typedInput);
       }
 
-      const authToken = createAuthToken(
-        { id: session.id, userId: session.userId, verifiedHumanAt: user.verifiedHumanAt },
-        {
-          secret: this.config.secrets.jwt,
-          expiresIn: this.config.tokenSettings.jwtExpiry,
-        }
-      );
-
-      const clientPayload = await this.buildClientPayload(user.id, user.updatedAt);
-
-      setAuthCookies(
-        ctx.res,
-        authToken,
-        clientPayload,
-        this.config.secrets.jwt,
-        this.config.cookieSettings,
-        this.config.storageKeys,
-      );
+      await issueAuthCookies(this.config, {
+        ctx,
+        session,
+        updatedAt: user.updatedAt,
+        verifiedHumanAt: user.verifiedHumanAt,
+      });
 
       return {
         success: true,
@@ -296,16 +280,17 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         this.config.hooks.onRefresh(session.userId).catch(() => {});
       }
 
-      const authToken = createAuthToken(
-        { id: session.id, userId: session.userId, verifiedHumanAt: session.user.verifiedHumanAt },
-        {
-          secret: this.config.secrets.jwt,
-          expiresIn: this.config.tokenSettings.jwtExpiry,
-        }
-      );
-
       const clientPayload = await this.buildClientPayload(session.userId, session.user.updatedAt);
-
+      const sessions = ctx.bundleSessionIds ?? [session.id];
+      const authToken = createAuthToken(
+        {
+          id: session.id,
+          userId: session.userId,
+          verifiedHumanAt: session.user.verifiedHumanAt,
+          sessions,
+        },
+        { secret: this.config.secrets.jwt, expiresIn: this.config.tokenSettings.jwtExpiry }
+      );
       setAuthCookies(
         ctx.res,
         authToken,

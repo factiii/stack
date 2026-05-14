@@ -46,6 +46,7 @@ const EXPECTED_METHODS: Record<string, string[]> = {
     'update',
     'updateLastUsed',
     'revoke',
+    'findManyByIds',
     'findActiveByUserId',
     'revokeAllByUserId',
   ],
