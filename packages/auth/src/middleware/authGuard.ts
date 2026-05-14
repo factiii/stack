@@ -96,7 +96,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
         if (config.hooks?.onSessionRevoked) {
           const session = await database.session.findById(sessionId);
           if (session) {
-            await config.hooks.onSessionRevoked(session.userId, session.socketId, description);
+            await config.hooks.onSessionRevoked(session.id, session.socketId, description);
           }
         }
       } catch {
