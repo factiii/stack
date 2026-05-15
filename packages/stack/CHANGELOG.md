@@ -1,5 +1,26 @@
 # @factiii/stack
 
+## 0.11.1
+
+### Patch Changes
+
+- Updated dependencies [0adcf70]
+  - @factiii/auth@0.11.1
+
+## 0.11.0
+
+### Patch Changes
+
+- Updated dependencies [19a73ff]
+  - @factiii/auth@0.11.0
+
+## 0.10.0
+
+### Patch Changes
+
+- Updated dependencies [316d265]
+  - @factiii/auth@0.10.0
+
 ## 0.9.0
 
 ### Minor Changes

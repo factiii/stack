@@ -5,7 +5,11 @@ import { type AuthConfig } from '../types/config';
 import { type TrpcBuilder, type TrpcContext } from '../types/trpc';
 import type { DatabaseAdapter } from '../adapters/database';
 import { createPrismaAdapter } from '../adapters/prismaAdapter';
-import { defaultCookieSettings, defaultStorageKeys, defaultTokenSettings } from '../utilities/config';
+import {
+  defaultCookieSettings,
+  defaultStorageKeys,
+  defaultTokenSettings,
+} from '../utilities/config';
 import {
   clearAuthCookies,
   parseAuthCookie,
@@ -14,13 +18,19 @@ import {
   setAuthCookies,
   setClientCookie,
 } from '../utilities/cookies';
-import { createAuthToken } from '../utilities/jwt';
-import { isTokenExpiredError, isTokenInvalidError, verifyAuthToken } from '../utilities/jwt';
+import {
+  createAuthToken,
+  isTokenExpiredError,
+  isTokenInvalidError,
+  verifyAuthToken,
+} from '../utilities/jwt';
+import { truncateBundle } from '../utilities/bundle';
 
 export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
   const storageKeys = config.storageKeys ?? defaultStorageKeys;
   const cookieSettings = { ...defaultCookieSettings, ...config.cookieSettings };
   const tokenSettings = { ...defaultTokenSettings, ...config.tokenSettings };
+  const maxAccounts = config.maxAccounts ?? 1;
   const SLIDE_THRESHOLD_SECONDS = 24 * 60 * 60; // 24 hours
 
   const database: DatabaseAdapter =
@@ -86,7 +96,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
         if (config.hooks?.onSessionRevoked) {
           const session = await database.session.findById(sessionId);
           if (session) {
-            await config.hooks.onSessionRevoked(session.userId, session.socketId, description);
+            await config.hooks.onSessionRevoked(session.id, session.socketId, description);
           }
         }
       } catch {
@@ -107,52 +117,81 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
       });
     }
 
-    // If auth token is present, validate it
     if (authToken) {
       try {
-        const decodedToken = verifyAuthToken(authToken, {
+        const payload = verifyAuthToken(authToken, {
           secret: config.secrets.jwt,
           ignoreExpiration: meta?.ignoreExpiration ?? false,
         });
+        const { kept: requestedIds, dropped: droppedIds } = truncateBundle(
+          payload.sessions,
+          payload.id,
+          maxAccounts,
+        );
+        for (const id of droppedIds) {
+          await database.session.revoke(id).catch(() => {});
+        }
+        const session = await database.session.findById(payload.id);
 
-        // Find session in database
-        const session = await database.session.findById(decodedToken.id);
+        // Active session is gone — try promoting another from the bundle before failing.
+        if (!session || session.revokedAt) {
+          const remainingIds = requestedIds.filter((id) => id !== payload.id);
+          const validRows = remainingIds.length
+            ? (await database.session.findManyByIds(remainingIds)).filter((s) => !s.revokedAt)
+            : [];
+
+          if (validRows.length > 0) {
+            const validIds = new Set(validRows.map((s) => s.id));
+            const newActiveId = [...remainingIds].reverse().find((id) => validIds.has(id));
+            const newActive = validRows.find((r) => r.id === newActiveId)!;
+            const prunedIds = remainingIds.filter((id) => validIds.has(id));
+            const newJwt = createAuthToken(
+              {
+                id: newActive.id,
+                userId: newActive.userId,
+                verifiedHumanAt: newActive.user.verifiedHumanAt,
+                sessions: prunedIds,
+              },
+              { secret: config.secrets.jwt, expiresIn: tokenSettings.jwtExpiry }
+            );
+            const clientPayload: ClientCookiePayload = {
+              userId: newActive.userId,
+              updatedAt: newActive.user.updatedAt.toISOString(),
+              ...(config.getClientCookiePayload
+                ? await config.getClientCookiePayload(newActive.userId)
+                : {}),
+            };
+            setAuthCookies(ctx.res, newJwt, clientPayload, config.secrets.jwt, cookieSettings, storageKeys);
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'ACTIVE_SESSION_SWITCHED' });
+          }
+
+          await revokeSession(ctx, payload.id, !session ? 'Session not found' : 'Session revoked', undefined, path);
+          throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Unauthorized' });
+        }
 
         if (
-          !session ||
-          session.userId !== decodedToken.userId ||
-          (decodedToken.iat && decodedToken.iat < Math.floor(session.issuedAt.getTime() / 1000))
+          session.userId !== payload.userId ||
+          (payload.iat && payload.iat < Math.floor(session.issuedAt.getTime() / 1000))
         ) {
           await revokeSession(
             ctx,
-            decodedToken.id,
-            !session
-              ? 'Session revoked: Session not found'
-              : session.userId !== decodedToken.userId
-                ? 'Session revoked: Token userId mismatch'
-                : 'Session revoked: Token predates session',
+            session.id,
+            session.userId !== payload.userId
+              ? 'Session revoked: Token userId mismatch'
+              : 'Session revoked: Token predates session',
             undefined,
             path
           );
-          throw new TRPCError({
-            message: 'Unauthorized',
-            code: 'UNAUTHORIZED',
-          });
+          throw new TRPCError({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
         }
 
-        // Check user status
         if (session.user.status === 'BANNED') {
           await revokeSession(ctx, session.id, 'Session revoked: User banned', undefined, path);
-          throw new TRPCError({
-            message: 'Unauthorized',
-            code: 'UNAUTHORIZED',
-          });
+          throw new TRPCError({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
         }
 
-        // Check biometric verification if enabled
         if (config.features?.biometric && config.hooks?.getBiometricTimeout) {
           const timeoutMs = await config.hooks.getBiometricTimeout();
-
           if (
             timeoutMs !== null &&
             !['auth.refresh', 'auth.verifyBiometric', 'auth.logout'].includes(path)
@@ -163,11 +202,8 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
                 code: 'FORBIDDEN',
               });
             }
-
-            const now = new Date();
             const verificationExpiry = new Date(session.user.verifiedHumanAt.getTime() + timeoutMs);
-
-            if (now > verificationExpiry) {
+            if (new Date() > verificationExpiry) {
               throw new TRPCError({
                 message: 'Biometric verification expired. Please verify again.',
                 code: 'FORBIDDEN',
@@ -176,80 +212,50 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
           }
         }
 
-        // Check if session is revoked
-        if (session.revokedAt) {
-          await revokeSession(
-            ctx,
-            session.id,
-            'Session revoked: Session already revoked',
-            undefined,
-            path
-          );
-          throw new TRPCError({
-            message: 'Unauthorized',
-            code: 'UNAUTHORIZED',
-          });
-        }
-
-        // Check admin authorization if required
         if (meta?.adminRequired) {
           const admin = await database.admin.findByUserId(session.userId);
-
           if (!admin || admin.ip !== ctx.ip) {
-            await revokeSession(
-              ctx,
-              session.id,
-              'Session revoked: Admin not found or IP mismatch',
-              undefined,
-              path
-            );
-            throw new TRPCError({
-              message: 'Unauthorized',
-              code: 'UNAUTHORIZED',
-            });
+            await revokeSession(ctx, session.id, 'Session revoked: Admin not found or IP mismatch', undefined, path);
+            throw new TRPCError({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
           }
         }
 
-        // Silently re-issue token if older than 24 hours to slide expiry forward
-        if (decodedToken.iat) {
-          const tokenAge = Math.floor(Date.now() / 1000) - decodedToken.iat;
-          if (tokenAge > SLIDE_THRESHOLD_SECONDS) {
-            const freshToken = createAuthToken(
-              { id: session.id, userId: session.userId, verifiedHumanAt: session.user.verifiedHumanAt },
-              { secret: config.secrets.jwt, expiresIn: tokenSettings.jwtExpiry },
-            );
+        const slideNeeded =
+          droppedIds.length > 0 ||
+          (typeof payload.iat === 'number' &&
+            Math.floor(Date.now() / 1000) - payload.iat > SLIDE_THRESHOLD_SECONDS);
 
-            const clientPayload: ClientCookiePayload = {
+        if (slideNeeded) {
+          const newJwt = createAuthToken(
+            {
+              id: session.id,
               userId: session.userId,
-              updatedAt: session.user.updatedAt.toISOString(),
-              ...(config.getClientCookiePayload
-                ? await config.getClientCookiePayload(session.userId)
-                : {}),
-            };
-
-            setAuthCookies(ctx.res, freshToken, clientPayload, config.secrets.jwt, cookieSettings, storageKeys);
-          }
-        }
-
-        // Check if client cookie is stale (updatedAt mismatch or missing)
-        if (storageKeys.clientToken) {
+              verifiedHumanAt: session.user.verifiedHumanAt,
+              sessions: requestedIds,
+            },
+            { secret: config.secrets.jwt, expiresIn: tokenSettings.jwtExpiry }
+          );
+          const clientPayload: ClientCookiePayload = {
+            userId: session.userId,
+            updatedAt: session.user.updatedAt.toISOString(),
+            ...(config.getClientCookiePayload
+              ? await config.getClientCookiePayload(session.userId)
+              : {}),
+          };
+          setAuthCookies(ctx.res, newJwt, clientPayload, config.secrets.jwt, cookieSettings, storageKeys);
+        } else if (storageKeys.clientToken) {
           const rawClientCookie = parseClientCookie(ctx.headers.cookie, storageKeys);
           let needsRefresh = !rawClientCookie;
-
           if (rawClientCookie && !needsRefresh) {
             const parsed = parseClientCookiePayload(rawClientCookie, config.secrets.jwt);
             if (!parsed || !parsed.updatedAt) {
               needsRefresh = true;
-            } else {
-              // Compare updatedAt timestamps — if they differ, re-issue
-              const cookieUpdatedAt = parsed.updatedAt;
-              const dbUpdatedAt = session.user.updatedAt.toISOString();
-              if (cookieUpdatedAt !== dbUpdatedAt) {
-                needsRefresh = true;
-              }
+            } else if (parsed.updatedAt !== session.user.updatedAt.toISOString()) {
+              needsRefresh = true;
+            } else if (parsed.userId !== session.userId) {
+              needsRefresh = true;
             }
           }
-
           if (needsRefresh) {
             const clientPayload: ClientCookiePayload = {
               userId: session.userId,
@@ -262,27 +268,24 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
           }
         }
 
-        // Session is valid, proceed with authenticated context
         return next({
           ctx: {
             ...ctx,
             userId: session.userId,
             socketId: session.socketId,
             sessionId: session.id,
+            bundleSessionIds: requestedIds,
           },
         });
       } catch (err: unknown) {
-        if (err instanceof TRPCError && err.code === 'FORBIDDEN') {
-          throw err;
-        }
+        if (err instanceof TRPCError && err.code === 'FORBIDDEN') throw err;
+        if (err instanceof TRPCError && err.code === 'UNAUTHORIZED') throw err;
 
-        // If auth is not required, continue with unauthenticated context
         if (!meta?.authRequired) {
           return next({ ctx: { ...ctx, userId: 0 } });
         }
 
         const errorStack = err instanceof Error ? err.stack : undefined;
-
         if (isTokenExpiredError(err) || isTokenInvalidError(err)) {
           await revokeSession(
             ctx,
@@ -291,33 +294,23 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
               ? 'Session revoked: Token invalid'
               : 'Session revoked: Token expired',
             errorStack,
-            path
+            path,
           );
           throw new TRPCError({
             message: isTokenInvalidError(err) ? 'Token invalid' : 'Token expired',
             code: 'UNAUTHORIZED',
           });
         }
-
-        if (err instanceof TRPCError && err.code === 'UNAUTHORIZED') {
-          await revokeSession(ctx, null, 'Session revoked: Unauthorized', errorStack, path);
-          throw new TRPCError({
-            message: 'Unauthorized',
-            code: 'UNAUTHORIZED',
-          });
-        }
-
         throw err;
       }
-    } else {
-      // No auth token present
-      if (!meta?.authRequired) {
-        return next({ ctx: { ...ctx, userId: 0 } });
-      }
-
-      await revokeSession(ctx, null, 'Session revoked: No token sent', undefined, path);
-      throw new TRPCError({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
     }
+
+    // No auth token
+    if (!meta?.authRequired) {
+      return next({ ctx: { ...ctx, userId: 0 } });
+    }
+    await revokeSession(ctx, null, 'Session revoked: No token sent', undefined, path);
+    throw new TRPCError({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
   });
 
   return authGuard;

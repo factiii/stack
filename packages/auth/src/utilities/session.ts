@@ -1,8 +1,7 @@
 import type { CreateHTTPContextOptions } from '@trpc/server/adapters/standalone';
 
-import type { ClientCookiePayload } from '../types';
 import type { ResolvedAuthConfig } from './config';
-import { setAuthCookies } from './cookies';
+import { issueAuthCookies } from './issueCookies';
 import { createAuthToken } from './jwt';
 
 /**
@@ -56,7 +55,6 @@ export async function createSessionWithToken(
   });
 
   const user = await config.database.user.findById(userId);
-
   const accessToken = createAuthToken(
     {
       id: session.id,
@@ -90,24 +88,17 @@ export async function createSessionWithTokenAndCookie(
 ): Promise<SessionWithTokenResult> {
   const result = await createSessionWithToken(config, params);
 
-  // Build client cookie payload from the user record
   const user = await config.database.user.findById(params.userId);
-  const clientPayload: ClientCookiePayload = {
-    userId: params.userId,
-    updatedAt: (user?.updatedAt ?? new Date()).toISOString(),
-    ...(config.getClientCookiePayload
-      ? await config.getClientCookiePayload(params.userId)
-      : {}),
-  };
 
-  setAuthCookies(
-    res,
-    result.accessToken,
-    clientPayload,
-    config.secrets.jwt,
-    config.cookieSettings,
-    config.storageKeys,
-  );
+  const cookieHeader =
+    (res.req as { headers?: { cookie?: string } } | undefined)?.headers?.cookie;
+
+  await issueAuthCookies(config, {
+    ctx: { headers: { cookie: cookieHeader }, res },
+    session: { id: result.sessionId, userId: params.userId },
+    updatedAt: user?.updatedAt ?? new Date(),
+    verifiedHumanAt: user?.verifiedHumanAt ?? null,
+  });
 
   return result;
 }

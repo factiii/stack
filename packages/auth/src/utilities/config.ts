@@ -72,12 +72,14 @@ export type ResolvedAuthConfig = Required<
     | 'getClientCookiePayload'
     | 'magicLink'
     | 'deviceAuth'
+    | 'maxAccounts'
   >
 > &
   AuthConfig & {
     database: DatabaseAdapter;
     deviceAuth?: DeviceAuthAdapter;
     magicLink?: ResolvedMagicLinkConfig;
+    maxAccounts: number;
   };
 
 /**
@@ -125,6 +127,7 @@ export function createAuthConfig(config: AuthConfig): ResolvedAuthConfig {
           defaultExpiryMs: config.magicLink.defaultExpiryMs ?? 7 * 24 * 60 * 60 * 1000,
         }
       : undefined,
+    maxAccounts: config.maxAccounts ?? 1,
   };
 }
 

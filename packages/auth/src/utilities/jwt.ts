@@ -19,33 +19,36 @@ export interface VerifyTokenOptions {
 }
 
 /**
- * Create a JWT auth token
+ * Create a JWT auth token. `sessions` defaults to `[id]` if omitted.
  * @param payload - Token payload containing session and user info
  * @param options - Token creation options
  * @returns Signed JWT token
  */
 export function createAuthToken(
-  payload: Omit<JwtPayload, 'exp' | 'iat'>,
+  payload: Omit<JwtPayload, 'exp' | 'iat' | 'sessions'> & { sessions?: number[] },
   options: CreateTokenOptions
 ): string {
-  return jwt.sign(payload, options.secret, {
-    algorithm: 'HS256',
-    expiresIn: options.expiresIn,
-  });
+  return jwt.sign(
+    { ...payload, sessions: payload.sessions ?? [payload.id] },
+    options.secret,
+    { algorithm: 'HS256', expiresIn: options.expiresIn }
+  );
 }
 
 /**
- * Verify and decode a JWT auth token
+ * Verify and decode a JWT auth token. Legacy tokens without a `sessions` array
+ * are normalized to a bundle of one (`sessions = [id]`).
  * @param token - JWT token to verify
  * @param options - Verification options
  * @returns Decoded token payload
  * @throws Error if token is invalid or expired
  */
 export function verifyAuthToken(token: string, options: VerifyTokenOptions): JwtPayload {
-  return jwt.verify(token, options.secret, {
+  const decoded = jwt.verify(token, options.secret, {
     algorithms: ['HS256'],
     ignoreExpiration: options.ignoreExpiration ?? false,
   }) as JwtPayload;
+  return { ...decoded, sessions: decoded.sessions ?? [decoded.id] };
 }
 
 /**
@@ -55,7 +58,9 @@ export function verifyAuthToken(token: string, options: VerifyTokenOptions): Jwt
  */
 export function decodeToken(token: string): JwtPayload | null {
   try {
-    return jwt.decode(token) as JwtPayload | null;
+    const decoded = jwt.decode(token) as JwtPayload | null;
+    if (!decoded) return null;
+    return { ...decoded, sessions: decoded.sessions ?? [decoded.id] };
   } catch {
     return null;
   }

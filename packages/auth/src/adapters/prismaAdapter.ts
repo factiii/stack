@@ -250,6 +250,25 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
           data: { revokedAt: new Date() },
         });
       },
+
+      async findManyByIds(ids: number[]): Promise<SessionWithUser[]> {
+        if (ids.length === 0) return [];
+        const rows = await db.session.findMany({
+          where: { id: { in: ids } },
+          select: {
+            id: true,
+            userId: true,
+            socketId: true,
+            browserName: true,
+            issuedAt: true,
+            lastUsed: true,
+            revokedAt: true,
+            user: { select: { status: true, verifiedHumanAt: true, updatedAt: true } },
+          },
+        });
+        return rows as SessionWithUser[];
+      },
+
     },
 
     otp: {

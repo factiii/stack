@@ -18,6 +18,7 @@ export {
   isTokenInvalidError,
   verifyAuthToken,
 } from './jwt';
+export { issueAuthCookies, isUserInBundle } from './issueCookies';
 export type { OAuthKeys, OAuthProvider, OAuthResult } from './oauth';
 export { createOAuthVerifier, OAuthVerificationError } from './oauth';
 export { comparePassword, hashPassword, validatePasswordStrength } from './password';

@@ -1,11 +1,10 @@
 import { TRPCError } from '@trpc/server';
 
-import { type ClientCookiePayload } from '../types';
 import type { SchemaExtensions } from '../types/hooks';
 import { type BaseProcedure } from '../types/trpc';
-import { createAuthToken, detectBrowser } from '../utilities';
+import { detectBrowser } from '../utilities';
 import type { ResolvedAuthConfig } from '../utilities/config';
-import { setAuthCookies } from '../utilities/cookies';
+import { issueAuthCookies, isUserInBundle } from '../utilities/issueCookies';
 import { createOAuthVerifier, type OAuthProvider, type OAuthResult } from '../utilities/oauth';
 import { type CreatedSchemas, type OAuthSchemaInput } from '../validators';
 
@@ -110,6 +109,13 @@ export class OAuthLoginProcedureFactory<TExtensions extends SchemaExtensions = {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Your account has been banned.' });
       }
 
+      if (await isUserInBundle(this.config, ctx.headers.cookie, user.id)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'You are already signed in as this account on this device.',
+        });
+      }
+
       const extraSessionData = this.config.hooks?.getSessionData
         ? await this.config.hooks.getSessionData(typedInput)
         : {};
@@ -129,30 +135,12 @@ export class OAuthLoginProcedureFactory<TExtensions extends SchemaExtensions = {
         await this.config.hooks.onSessionCreated(session.id, typedInput);
       }
 
-      const authToken = createAuthToken(
-        { id: session.id, userId: session.userId, verifiedHumanAt: user.verifiedHumanAt ?? null },
-        {
-          secret: this.config.secrets.jwt,
-          expiresIn: this.config.tokenSettings.jwtExpiry,
-        }
-      );
-
-      const clientPayload: ClientCookiePayload = {
-        userId: user.id,
-        updatedAt: user.updatedAt.toISOString(),
-        ...(this.config.getClientCookiePayload
-          ? await this.config.getClientCookiePayload(user.id)
-          : {}),
-      };
-
-      setAuthCookies(
-        ctx.res,
-        authToken,
-        clientPayload,
-        this.config.secrets.jwt,
-        this.config.cookieSettings,
-        this.config.storageKeys,
-      );
+      await issueAuthCookies(this.config, {
+        ctx,
+        session,
+        updatedAt: user.updatedAt,
+        verifiedHumanAt: user.verifiedHumanAt ?? null,
+      });
 
       return {
         success: true,

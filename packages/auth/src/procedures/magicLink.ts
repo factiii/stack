@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { type BaseProcedure } from '../types/trpc';
 import type { ResolvedAuthConfig } from '../utilities/config';
+import { isUserInBundle } from '../utilities/issueCookies';
 import { createSessionWithTokenAndCookie } from '../utilities/session';
 
 /** Factory for magic link authentication procedures. */
@@ -50,6 +51,13 @@ export class MagicLinkProcedureFactory {
           throw new TRPCError({
             code: 'BAD_REQUEST',
             message: 'This link has expired or is invalid',
+          });
+        }
+
+        if (await isUserInBundle(this.config, ctx.headers.cookie, magicLink.userId)) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'You are already signed in as this account on this device.',
           });
         }
 

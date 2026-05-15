@@ -1,5 +1,61 @@
 # @factiii/auth
 
+## 0.11.1
+
+### Patch Changes
+
+- 0adcf70: Fix `authGuard.revokeSession` passing `userId` to `onSessionRevoked` where the hook expects `sessionId`.
+
+  The hook signature is `(sessionId, socketId, reason)` but the auth guard's revocation path was calling it with `session.userId` as the first argument. Consumers' `onSessionRevoked` handlers in this code path were receiving a userId where they expected a sessionId. Now passes `session.id` correctly.
+
+## 0.11.0
+
+### Minor Changes
+
+- 19a73ff: Multi-account hook fires and logout consolidation.
+  - **Removed `auth.multiAccount.clearBundle`.** Use `auth.logout` instead — it now does the right thing for both single- and multi-account devices.
+  - **`auth.logout` revokes the whole bundle** when `ctx.bundleSessionIds` is present (previously revoked only the active session, leaving other bundle session rows alive in DB after cookies were cleared).
+  - **`auth.logout` now fires `onSessionRevoked`** per revoked session (was firing only `afterLogout`), matching every other revocation path.
+  - **`afterLogout` fires once for the active user**, not per session. The hook signature gained an optional 4th param — `otherSessions: Array<{ userId, sessionId, socketId }>` — listing bystander accounts in the bundle that were also revoked. Existing 3-arg handlers keep working unchanged.
+  - **`auth.logout` updates `user.isActive: false` for every unique userId in the bundle**, not just the active user.
+  - **`removeSession` fires `afterLogout` and flips `user.isActive: false`** when removing the last session in the bundle (matching `logout`'s precedent).
+  - **`removeSession` promotes the most-recently-added remaining session** when removing the active one (was promoting the oldest). Consistent with the authGuard fallback.
+  - **`removeSession` always re-fetches the new active session**, so the client cookie's `updatedAt` matches the DB on the first response (was forcing a redundant refresh on the next request when removing a non-active session).
+  - **Hook errors no longer abort the loop.** `onSessionRevoked` and `afterLogout` calls in both `logout` and `removeSession` are wrapped — a flaky listener can't leave the bundle half-revoked.
+  - **Already-revoked sessions are skipped** in `logout` and `removeSession`, so a session that was killed via another path (e.g. `revokeAllByUserId` from another device) won't get re-revoked or fire its hooks twice.
+
+## 0.10.0
+
+### Minor Changes
+
+- 316d265: Add multi-account support to `@factiii/auth`.
+
+  A device can now hold a bundle of signed-in sessions and switch between them without re-authenticating. Behavior is unchanged by default; set `AuthConfig.maxAccounts > 1` to opt in.
+
+  **New config**
+  - `AuthConfig.maxAccounts?: number` — max sessions per device. Defaults to `1` (single-account, identical to prior behavior). `>1` enables the bundle.
+
+  **JWT shape**
+  - `JwtPayload` now carries `sessions: number[]` — the bundle of session IDs the device holds, with `id` pointing at the currently active one.
+  - `verifyAuthToken` / `decodeToken` normalize legacy tokens missing `sessions` to `[id]`, so existing tokens keep working across the rollout.
+  - `createAuthToken`'s `sessions` field is optional; defaults to `[id]`.
+
+  **New procedures (under `auth.multiAccount`)**
+  - `switchSession({ targetSessionId })` — make another session in the bundle active.
+  - `removeSession({ targetSessionId })` — revoke a session and drop it from the bundle; promotes the next session if the removed one was active, or clears cookies if it was the last.
+  - `clearBundle()` — revoke every session in the bundle ("log out of all accounts on this device").
+
+  **Auth guard changes**
+  - When the active session is revoked or missing, the guard now tries to promote another session from the bundle (rewriting cookies) and signals the rotation by throwing `UNAUTHORIZED` with message `ACTIVE_SESSION_SWITCHED` so clients can retry transparently.
+  - `TrpcContext` gains `bundleSessionIds?: number[]` for downstream procedures.
+
+  **Adapter change**
+  - `DatabaseAdapter.session.findManyByIds(ids)` is now **required**. Both `createPrismaAdapter` and `createDrizzleAdapter` implement it. Custom adapters must add it.
+
+  **New utilities**
+  - `issueAuthCookies(config, params)` — centralizes JWT + cookie issuance after sign-in / sign-up / oauth / magic-link, handles bundle append + cap enforcement + revoked-session pruning.
+  - `isUserInBundle(config, cookieHeader, userId)` — guards against signing the same user into one device twice. Used by base sign-in, OAuth, and magic-link procedures.
+
 ## 0.8.0
 
 ### Minor Changes
