@@ -95,7 +95,7 @@ program
   .option('-b, --branch <branch>', 'Branch to deploy from (defaults to current branch)')
   .option('--commit <hash>', 'Commit hash to deploy (passed by workflow)')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
-  .option('--secrets [action]', 'Manage or deploy secrets (list|set|get|delete|check|set-env|list-env|delete-env|deploy|write-ssh-keys)')
+  .option('--secrets [action]', 'Manage or deploy secrets (list|set|get|delete|check|set-env|list-env|delete-env|deploy|write-ssh-keys|export-vault|import-vault)')
   .option('--value <value>', 'Secret value (for scripting)')
   .option('--restart', 'Restart containers after deploying secrets')
   .option('--dry-run', 'Show deployment plan without actually deploying')
@@ -103,7 +103,7 @@ program
     // --secrets with an action string = vault management mode
     if (typeof options.secrets === 'string') {
       const action = options.secrets;
-      const validActions = ['list', 'set', 'get', 'delete', 'check', 'set-env', 'list-env', 'delete-env', 'deploy', 'write-ssh-keys'];
+      const validActions = ['list', 'set', 'get', 'delete', 'check', 'set-env', 'list-env', 'delete-env', 'deploy', 'write-ssh-keys', 'export-vault', 'import-vault'];
 
       if (!validActions.includes(action)) {
         console.log('');
@@ -122,6 +122,8 @@ program
         console.log('  delete-env <name> Delete environment variable from a stage');
         console.log('  deploy            Deploy secrets to staging/prod servers');
         console.log('  write-ssh-keys    Write SSH keys to ~/.ssh/ (for workflows)');
+        console.log('  export-vault [f]  Export vault password as encrypted file');
+        console.log('  import-vault <f>  Import vault password from exported file');
         console.log('');
         console.log('Examples:');
         console.log('  npx stack deploy --secrets list');
@@ -131,6 +133,8 @@ program
         console.log('  npx stack deploy --secrets set-env DATABASE_URL --staging');
         console.log('  npx stack deploy --secrets delete-env DATABASE_URL --staging');
         console.log('  npx stack deploy --secrets deploy --staging');
+        console.log('  npx stack deploy --secrets export-vault');
+        console.log('  npx stack deploy --secrets import-vault vault-key.export');
         console.log('');
         return;
       }
@@ -177,7 +181,7 @@ program
       await secretsInteractive(options);
       return;
     }
-    const validActions = ['list', 'set', 'get', 'delete', 'check', 'set-env', 'list-env', 'delete-env', 'deploy', 'write-ssh-keys'];
+    const validActions = ['list', 'set', 'get', 'delete', 'check', 'set-env', 'list-env', 'delete-env', 'deploy', 'write-ssh-keys', 'export-vault', 'import-vault'];
     if (!validActions.includes(action)) {
       console.log('Unknown action: ' + action);
       console.log('Valid actions: ' + validActions.join(', '));
@@ -295,6 +299,8 @@ program.addHelpText('after', '\n' +
   '  delete-env <name> --<stage>        Delete environment variable from a stage\n' +
   '  deploy --<stage>                   Push secrets to server\n' +
   '  write-ssh-keys                     Write SSH keys to ~/.ssh/\n' +
+  '  export-vault [file]                Export vault password as encrypted file for sharing\n' +
+  '  import-vault <file>                Import vault password from exported file\n' +
   '\n' +
   'DATABASE — npx stack db <command> --<stage>\n' +
   '  seed --staging                     Run db:seed script to populate initial data\n' +
