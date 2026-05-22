@@ -457,7 +457,7 @@ export async function secrets(
         ? (path.isAbsolute(secretName) ? secretName : path.join(process.cwd(), secretName))
         : defaultOutPath;
 
-      fs.writeFileSync(outPath, encrypted + '\n', 'utf8');
+      fs.writeFileSync(outPath, encrypted + '\n', { encoding: 'utf8', mode: 0o600 });
       console.log('');
       console.log('[OK] Vault key exported to: ' + outPath);
       console.log('');
