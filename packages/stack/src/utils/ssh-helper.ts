@@ -66,7 +66,7 @@ export function findProdPemKey(config: FactiiiConfig): string | null {
   const projectName = getStackProjectName(config);
   const configured = config.aws?.prod_ssh_key_path;
   const pemPath = configured
-    ? path.normalize(configured.replace(/^~/, os.homedir()))
+    ? configured.replace(/^~/, os.homedir())
     : path.join(getStackSshDir(projectName), 'prod.pem');
   if (!fs.existsSync(pemPath)) return null;
   try {
