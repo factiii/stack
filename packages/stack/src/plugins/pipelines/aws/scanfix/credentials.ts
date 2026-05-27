@@ -21,18 +21,17 @@ import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsAccountId,
   getCallerArn,
-  getLocalAccessKeyId,
   getAwsConfig,
   getIAMClient,
+  getLoadedCredentials,
   canManageIam,
   findIamUser,
-  clearClientCache,
   setCredentialsSyncFailed,
+  setLoadedCredentials,
+  verifyCredentialsWithSts,
   CreateUserCommand,
   PutUserPolicyCommand,
   CreateAccessKeyCommand,
-  writeAwsCredentials,
-  readAwsRegionFromConfig,
 } from '../utils/aws-helpers.js';
 
 /**
@@ -71,11 +70,19 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
   const awsConfig = getAwsConfig(config);
   const region = awsConfig.region || 'us-east-1';
 
-  // Phase A: Check if credentials already work
-  let accountId = await getAwsAccountId(region);
-  if (accountId) {
-    console.log('   AWS credentials already configured (account: ' + accountId + ')');
-    return true;
+  // Phase A: check existing in-memory credentials
+  let alreadyLoaded = false;
+  try {
+    getLoadedCredentials();
+    alreadyLoaded = true;
+  } catch { /* not loaded */ }
+
+  if (alreadyLoaded) {
+    const accountId = await getAwsAccountId(region);
+    if (accountId) {
+      console.log('   AWS credentials already configured (account: ' + accountId + ')');
+      return true;
+    }
   }
 
   // Phase B: Prompt user for AWS credentials directly (no CLI needed)
@@ -97,17 +104,19 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
     return false;
   }
 
-  writeAwsCredentials(inputAccessKeyId, inputSecretKey, finalRegion);
-  clearClientCache(); // Pick up new credentials
-
-  accountId = await getAwsAccountId(region);
-  if (!accountId) {
-    console.log('   AWS credentials still invalid after configuration.');
-    console.log('   Please verify your Access Key ID and Secret Access Key.');
+  const bootstrapAccountId = await verifyCredentialsWithSts(inputAccessKeyId, inputSecretKey, finalRegion);
+  if (!bootstrapAccountId) {
+    console.log('   AWS credentials invalid.');
     return false;
   }
 
-  console.log('   [OK] AWS login successful (account: ' + accountId + ')');
+  setLoadedCredentials({
+    accessKeyId: inputAccessKeyId,
+    secretAccessKey: inputSecretKey,
+    region: finalRegion,
+  });
+
+  console.log('   [OK] AWS login successful (account: ' + bootstrapAccountId + ')');
 
   // Phase C: Create IAM admin user
   const userName = 'factiii-admin';
@@ -165,9 +174,8 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
 
     console.log('   [OK] Created access key for ' + userName);
 
-    // Phase D: Write new IAM credentials to ~/.aws/
-    writeAwsCredentials(newAccessKeyId, newSecretKey, region);
-    clearClientCache(); // Pick up new IAM credentials
+    // Phase D: Load new IAM credentials into memory
+    setLoadedCredentials({ accessKeyId: newAccessKeyId, secretAccessKey: newSecretKey, region });
 
     // Verify new credentials work
     const verifyId = await getAwsAccountId(region);
@@ -218,7 +226,8 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
 async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise<boolean> {
   const awsConfig = getAwsConfig(config);
   const configKeyId = awsConfig.accessKeyId!;
-  const localKeyId = getLocalAccessKeyId();
+  let localKeyId: string | null = null;
+  try { localKeyId = getLoadedCredentials().accessKeyId; } catch { /* not loaded */ }
   const region = awsConfig.region || 'us-east-1';
 
   if (localKeyId && localKeyId !== configKeyId) {
@@ -227,7 +236,7 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
     console.log('   AWS CREDENTIAL MISMATCH');
     console.log('   ============================================================');
     console.log('   stack.yml access_key_id:   ' + configKeyId);
-    console.log('   ~/.aws/credentials key:    ' + localKeyId);
+    console.log('   loaded credentials key:    ' + localKeyId);
     const identity = await getCallerArn(region);
     if (identity) {
       console.log('   Logged in as: ' + identity);
@@ -283,9 +292,8 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
             fs.writeFileSync(stackPath, content, 'utf8');
             console.log('   [OK] Updated stack.yml access_key_id to ' + vaultKeyId);
 
-            // Now vault matches — write to ~/.aws/credentials
-            writeAwsCredentials(vaultKeyId, vaultSecret, region);
-            clearClientCache();
+            // Now vault matches — load into memory
+            setLoadedCredentials({ accessKeyId: vaultKeyId, secretAccessKey: vaultSecret, region });
 
             const accountId = await getAwsAccountId(region);
             if (accountId) {
@@ -312,34 +320,15 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
 
           const trimmedSecret = newSecret.trim();
 
-          // Verify credentials by passing them explicitly to STS (don't rely on file cache)
-          let verifyId: string | null = null;
-          try {
-            const { STSClient: STS, GetCallerIdentityCommand: GetId } = await import('@aws-sdk/client-sts');
-            const sts = new STS({
-              region,
-              credentials: {
-                accessKeyId: configKeyId,
-                secretAccessKey: trimmedSecret,
-              },
-            });
-            const result = await sts.send(new GetId({}));
-            verifyId = result.Account ?? null;
-          } catch (stsErr: unknown) {
-            const errMsg = stsErr instanceof Error ? stsErr.message : String(stsErr);
-            console.log('   Credentials invalid — check that the secret key matches ' + configKeyId);
-            console.log('   AWS error: ' + errMsg);
-            console.log('   TIP: New IAM keys can take ~10 seconds to propagate. Try again shortly.');
-            return false;
-          }
+          // Verify credentials directly via STS (don't rely on file cache)
+          const verifyId = await verifyCredentialsWithSts(configKeyId, trimmedSecret, region);
           if (!verifyId) {
-            console.log('   Credentials invalid — no account ID returned');
+            console.log('   Credentials invalid — check that the secret key matches ' + configKeyId);
             return false;
           }
 
-          // Credentials verified — write to ~/.aws/credentials
-          writeAwsCredentials(configKeyId, trimmedSecret, region);
-          clearClientCache();
+          // Credentials verified — load into memory
+          setLoadedCredentials({ accessKeyId: configKeyId, secretAccessKey: trimmedSecret, region });
 
           const verifyIdentity = await getCallerArn(region);
           console.log('   [OK] Verified: ' + (verifyIdentity ?? configKeyId));
@@ -364,9 +353,8 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
         }
       }
 
-      // Vault matches stack.yml — write to ~/.aws/credentials
-      writeAwsCredentials(vaultKeyId, vaultSecret, region);
-      clearClientCache();
+      // Vault matches stack.yml — load into memory
+      setLoadedCredentials({ accessKeyId: vaultKeyId, secretAccessKey: vaultSecret, region });
 
       // Verify the synced credentials work
       const accountId = await getAwsAccountId(region);
@@ -388,7 +376,7 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
         console.log('   ============================================================');
         console.log('   VAULT PASSWORD INCORRECT');
         console.log('   ============================================================');
-        console.log('   Cannot read AWS credentials — vault password in ~/.vault_pass');
+        console.log('   Cannot read AWS credentials — vault password in ' + (config.ansible?.vault_password_file ?? '.vault_pass'));
         console.log('   does not match the password used to encrypt the vault.');
         console.log('');
         console.log('   Options:');
@@ -400,8 +388,12 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
         const choice = await promptSingleLine('   Choose (1, 2, or 3): ');
 
         if (choice === '1') {
-          const passFile = (config.ansible?.vault_password_file ?? '~/.vault_pass')
-            .replace(/^~/, os.homedir());
+          if (!config.ansible?.vault_password_file) {
+            console.log('   ansible.vault_password_file not configured in stack.yml — cannot update password');
+            setCredentialsSyncFailed();
+            return true;
+          }
+          const passFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
           const vaultPath = config.ansible?.vault_path ?? '';
           const fullVaultPath = path.isAbsolute(vaultPath)
             ? vaultPath
@@ -456,10 +448,15 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
           }
           try {
             fs.unlinkSync(fullVaultPath);
+            if (!config.ansible?.vault_password_file) {
+              console.log('   ansible.vault_password_file not configured in stack.yml — cannot recreate vault');
+              setCredentialsSyncFailed();
+              return true;
+            }
             const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
             const vault = new AnsibleVaultSecrets({
               vault_path: vaultPath,
-              vault_password_file: config.ansible?.vault_password_file ?? '~/.vault_pass',
+              vault_password_file: config.ansible.vault_password_file,
               rootDir,
             });
             await vault.setSecret('_initialized', 'true');
@@ -512,13 +509,14 @@ export const credentialsFixes: Fix[] = [
       const configKeyId = awsConfig.accessKeyId;
       if (!configKeyId) return false; // No access_key_id in stack.yml — nothing to sync against
 
-      // Read what ~/.aws/credentials currently has
-      const localKeyId = getLocalAccessKeyId();
+      // Read what in-memory credentials currently has
+      let localKeyId: string | null = null;
+      try { localKeyId = getLoadedCredentials().accessKeyId; } catch { /* not loaded */ }
 
-      // Case 1: ~/.aws/credentials matches stack.yml — already synced
+      // Case 1: loaded credentials match stack.yml — already synced
       if (localKeyId === configKeyId) return false;
 
-      // Case 2: ~/.aws/credentials is missing or has a different key — needs sync
+      // Case 2: credentials are missing or have a different key — needs sync
       // Try to silently sync from vault so downstream scans can authenticate
       if (config.ansible?.vault_path) {
         try {
@@ -532,9 +530,8 @@ export const credentialsFixes: Fix[] = [
 
           if (vaultKeyId && vaultSecret) {
             if (vaultKeyId === configKeyId) {
-              // Vault matches stack.yml — sync silently so downstream scans work
-              writeAwsCredentials(vaultKeyId, vaultSecret, awsConfig.region || 'us-east-1');
-              clearClientCache();
+              // Vault matches stack.yml — load into memory so downstream scans work
+              setLoadedCredentials({ accessKeyId: vaultKeyId, secretAccessKey: vaultSecret, region: awsConfig.region || 'us-east-1' });
               return false; // Synced, no issue
             }
             // Vault doesn't match stack.yml — needs user intervention (fix will handle)
@@ -619,10 +616,9 @@ export const credentialsFixes: Fix[] = [
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       try {
-        // Try to read region from ~/.aws/config
-        let region = readAwsRegionFromConfig() ?? '';
-
-        if (!region) region = 'us-east-1'; // Safe default
+        // Use region from stack.yml, defaulting to us-east-1
+        const awsConf = getAwsConfig(config);
+        const region = awsConf.region || 'us-east-1';
 
         // Read stack.yml and add aws.region
         const stackPath = path.join(rootDir, 'stack.yml');
@@ -683,40 +679,31 @@ export const credentialsFixes: Fix[] = [
         return false;
       }
 
+      let creds: { accessKeyId: string; secretAccessKey: string } | null = null;
       try {
-        // Read from ~/.aws/credentials (set by aws configure or vault sync)
-        const awsCredsPath = path.join(os.homedir(), '.aws', 'credentials');
-        if (!fs.existsSync(awsCredsPath)) {
-          console.log('   ~/.aws/credentials not found — run "npx stack fix --dev" first');
-          return false;
-        }
+        const loaded = getLoadedCredentials();
+        creds = { accessKeyId: loaded.accessKeyId, secretAccessKey: loaded.secretAccessKey };
+      } catch { /* not loaded */ }
 
-        const content = fs.readFileSync(awsCredsPath, 'utf8');
-        const keyIdMatch = content.match(/aws_access_key_id\s*=\s*(.+)/);
-        const secretMatch = content.match(/aws_secret_access_key\s*=\s*(.+)/);
+      if (!creds) {
+        console.log('   AWS credentials not loaded. Run `npx stack fix --dev` to bootstrap first.');
+        return false;
+      }
 
-        if (!keyIdMatch || !keyIdMatch[1] || !secretMatch || !secretMatch[1]) {
-          console.log('   Could not read credentials from ~/.aws/credentials');
-          return false;
-        }
-
-        const accessKeyId = keyIdMatch[1].trim();
-        const secretKey = secretMatch[1].trim();
-
+      try {
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
         });
 
-        const r1 = await vault.setSecret('AWS_ACCESS_KEY_ID', accessKeyId);
-        const r2 = await vault.setSecret('AWS_SECRET_ACCESS_KEY', secretKey);
+        const r1 = await vault.setSecret('AWS_ACCESS_KEY_ID', creds.accessKeyId);
+        const r2 = await vault.setSecret('AWS_SECRET_ACCESS_KEY', creds.secretAccessKey);
 
         if (r1.success && r2.success) {
           console.log('   [OK] Stored AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY in Ansible Vault');
           return true;
         }
-
         console.log('   Failed to store in vault');
         return false;
       } catch (e) {
@@ -724,17 +711,7 @@ export const credentialsFixes: Fix[] = [
         return false;
       }
     },
-    manualFix: [
-      'Configure AWS credentials via one of:',
-      '',
-      '  Option A: Environment variables',
-      '    export AWS_ACCESS_KEY_ID=AKIA...',
-      '    export AWS_SECRET_ACCESS_KEY=...',
-      '',
-      '  Option B: Store in Ansible Vault',
-      '    npx stack deploy --secrets set AWS_ACCESS_KEY_ID',
-      '    npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY',
-    ].join('\n'),
+    manualFix: 'Bootstrap with `npx stack fix --dev`, or store directly in vault:\n  npx stack deploy --secrets set AWS_ACCESS_KEY_ID\n  npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY',
   },
   {
     id: 'aws-credentials-invalid',
@@ -744,22 +721,14 @@ export const credentialsFixes: Fix[] = [
     scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
       const awsConfig = getAwsConfig(config);
       const accountId = await getAwsAccountId(awsConfig.region);
-      if (!accountId) {
-        // Only flag if we have credentials configured (env vars or aws configure)
-        if (process.env.AWS_ACCESS_KEY_ID) return true;
-        try {
-          // Check ~/.aws/credentials directly (no AWS CLI needed)
-          const credPath = path.join(os.homedir(), '.aws', 'credentials');
-          if (fs.existsSync(credPath)) {
-            const content = fs.readFileSync(credPath, 'utf8');
-            return /aws_access_key_id\s*=\s*\S+/.test(content);
-          }
-          return false;
-        } catch {
-          return false;
-        }
+      if (accountId) return false; // credentials work
+      // Fire only if credentials are loaded but failing
+      try {
+        getLoadedCredentials();
+        return true;
+      } catch {
+        return false;
       }
-      return false;
     },
     fix: null,
     manualFix: 'Check AWS credentials: aws sts get-caller-identity\nIf expired, regenerate in AWS Console: IAM > Users > Security credentials',
@@ -815,8 +784,7 @@ export const credentialsFixes: Fix[] = [
             const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
 
             if (accessKeyId && secretKey) {
-              writeAwsCredentials(accessKeyId, secretKey, region);
-              clearClientCache();
+              setLoadedCredentials({ accessKeyId, secretAccessKey: secretKey, region });
 
               const newAccountId = await getAwsAccountId(region);
               if (newAccountId) {
@@ -856,14 +824,13 @@ export const credentialsFixes: Fix[] = [
         return false;
       }
 
-      writeAwsCredentials(inputAccessKeyId, inputSecretKey, region);
-      clearClientCache();
-
-      const verifyId = await getAwsAccountId(region);
+      const verifyId = await verifyCredentialsWithSts(inputAccessKeyId, inputSecretKey, region);
       if (!verifyId) {
         console.log('   Credentials invalid.');
         return false;
       }
+
+      setLoadedCredentials({ accessKeyId: inputAccessKeyId, secretAccessKey: inputSecretKey, region });
 
       const verifyArn = await getCallerArn(region);
       console.log('   [OK] Logged in as: ' + (verifyArn ?? 'unknown'));

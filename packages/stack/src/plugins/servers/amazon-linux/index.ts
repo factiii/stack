@@ -120,10 +120,9 @@ class AmazonLinuxPlugin {
     ...getPnpmFixes('staging').map(fix => ({ ...fix, os: 'amazon-linux' as ServerOS })),
     { ...createCertbotFix('staging', 'staging'), os: 'amazon-linux' as ServerOS },
 
-    // Prod stage - shared fixes (with OS filter)
+    // Prod stage - docker is the only required runtime; node + git are
+    // intentionally excluded (prod runs pre-built ECR images, no source).
     ...getDockerFixes('prod').map(fix => ({ ...fix, os: 'amazon-linux' as ServerOS })),
-    ...getNodeFixes('prod').map(fix => ({ ...fix, os: 'amazon-linux' as ServerOS })),
-    ...getGitFixes('prod').map(fix => ({ ...fix, os: 'amazon-linux' as ServerOS })),
     { ...createCertbotFix('prod', 'prod'), os: 'amazon-linux' as ServerOS },
   ];
 

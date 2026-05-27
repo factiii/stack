@@ -35,94 +35,6 @@ async function sshExecCommand(envConfig: EnvironmentConfig, command: string): Pr
 }
 
 /**
- * Ensure Node.js is installed on the server
- */
-async function ensureNodeInstalled(envConfig: EnvironmentConfig): Promise<void> {
-  try {
-    await sshExecCommand(envConfig, 'which node');
-  } catch {
-    console.log('      Installing Node.js...');
-    await sshExecCommand(
-      envConfig,
-      'curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs'
-    );
-  }
-}
-
-/**
- * Ensure git is installed on the server
- */
-async function ensureGitInstalled(envConfig: EnvironmentConfig): Promise<void> {
-  try {
-    await sshExecCommand(envConfig, 'which git');
-  } catch {
-    console.log('      Installing git...');
-    await sshExecCommand(envConfig, 'sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git');
-  }
-}
-
-/**
- * Ensure repository is cloned
- */
-async function ensureRepoCloned(
-  envConfig: EnvironmentConfig,
-  repoUrl: string | undefined,
-  repoDir: string,
-  repoName: string
-): Promise<void> {
-  const checkExists = await sshExecCommand(
-    envConfig,
-    `test -d ${repoDir}/.git && echo "exists" || echo "missing"`
-  );
-
-  if (checkExists.includes('missing')) {
-    console.log('      Cloning repository...');
-
-    // Extract GitHub repo from URL if provided, otherwise use GITHUB_REPO env var
-    let gitUrl = repoUrl;
-    if (repoUrl && !repoUrl.startsWith('git@') && !repoUrl.startsWith('https://')) {
-      // Format: owner/repo
-      gitUrl = `git@github.com:${repoUrl}.git`;
-    }
-
-    // Remove existing non-git directory if it exists (e.g., from mkdir -p)
-    await sshExecCommand(
-      envConfig,
-      `mkdir -p ~/.factiii && cd ~/.factiii && (test -d ${repoName} && rm -rf ${repoName} || true) && git clone ${gitUrl} ${repoName}`
-    );
-  }
-}
-
-/**
- * Pull latest changes and checkout specific commit
- */
-async function pullAndCheckout(
-  envConfig: EnvironmentConfig,
-  repoDir: string,
-  branch: string,
-  commitHash: string | undefined
-): Promise<void> {
-  console.log(
-    `      Checking out ${branch}${commitHash ? ' @ ' + commitHash.substring(0, 7) : ''}...`
-  );
-
-  const commands = [
-    `cd ${repoDir}`,
-    'git fetch --all',
-    'git reset --hard HEAD',
-    `git checkout ${branch}`,
-    `git pull origin ${branch}`,
-  ];
-
-  // If commit hash provided, checkout that specific commit
-  if (commitHash) {
-    commands.push(`git checkout ${commitHash}`);
-  }
-
-  await sshExecCommand(envConfig, commands.join(' && '));
-}
-
-/**
  * Write environment variables to .env file on server
  * Handles both local (on-server) and remote (SSH) execution
  */
@@ -316,14 +228,20 @@ async function updateComposeForECR(
 }
 
 /**
- * Ensure server is ready for deployment
- * Installs Node.js, git, clones repo, checks out commit
- * Note: Production doesn't install dependencies (pulls pre-built images)
+ * Ensure server is ready for deployment.
+ *
+ * Prod servers only need sshd + Docker — no node, no git, no source. Source
+ * never reaches prod; deployProd() ships a generated docker-compose.yml and
+ * pulls a pre-built image from ECR. This step only writes per-stage state
+ * (.env file + AWS credentials) that the running container needs.
+ *
+ * `options.commitHash` / `branch` / `repoUrl` are accepted for interface
+ * compatibility with staging's ensureServerReady but ignored on prod.
  */
 export async function ensureServerReady(
   config: FactiiiConfig,
   environment: string,
-  options: EnsureServerReadyOptions = {}
+  _options: EnsureServerReadyOptions = {}
 ): Promise<DeployResult> {
   // AWS only handles prod-type environments (prod, prod2, production, etc.)
   if (!environment.startsWith('prod') && environment !== 'production') {
@@ -342,25 +260,15 @@ export async function ensureServerReady(
     throw new Error(`${environment} domain not configured`);
   }
 
-  const { commitHash, branch = 'main', repoUrl } = options;
   const repoName = config.name ?? 'app';
   const repoDir = `~/.factiii/${repoName}`;
 
   try {
-    // 1. Ensure Node.js is installed
-    console.log('   Checking Node.js...');
-    await ensureNodeInstalled(envConfig);
+    // Ensure the artifact dir exists. This is the only filesystem prep prod
+    // needs — docker-compose.yml + .env files live here.
+    await sshExecCommand(envConfig, `mkdir -p ${repoDir}`);
 
-    // 2. Ensure git is installed
-    console.log('   Checking git...');
-    await ensureGitInstalled(envConfig);
-
-    // 3. Ensure repo is cloned and up to date
-    console.log('   Syncing repository...');
-    await ensureRepoCloned(envConfig, repoUrl, repoDir, repoName);
-    await pullAndCheckout(envConfig, repoDir, branch, commitHash);
-
-    // 4. Write environment variables from GitHub secrets if provided
+    // Write environment variables from GitHub secrets if provided
     const envVarsString = process.env.PROD_ENVS;
     if (envVarsString) {
       console.log('   Writing environment variables...');
@@ -369,9 +277,7 @@ export async function ensureServerReady(
       console.log('   ⚠️  PROD_ENVS not provided, skipping env file write (using existing .env.prod if present)');
     }
 
-    // Note: Production doesn't install dependencies - it pulls pre-built images from ECR
-
-    // 5. Auto-configure AWS credentials on server from Ansible Vault
+    // Auto-configure AWS credentials on server from Ansible Vault
     if (config.ansible?.vault_path) {
       try {
         const vault = new AnsibleVaultSecrets({
@@ -454,9 +360,8 @@ export async function deployProd(
         const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
         const secretKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
         if (accessKeyId && secretKey) {
-          const { writeAwsCredentials, clearClientCache } = await import('./utils/aws-helpers.js');
-          writeAwsCredentials(accessKeyId, secretKey, region);
-          clearClientCache();
+          const { setLoadedCredentials } = await import('./utils/aws-helpers.js');
+          setLoadedCredentials({ accessKeyId, secretAccessKey: secretKey, region });
           accountId = await getAwsAccountId(region);
           if (accountId) {
             console.log('   [OK] Restored AWS credentials from vault');

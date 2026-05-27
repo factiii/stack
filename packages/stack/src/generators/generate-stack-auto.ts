@@ -175,7 +175,7 @@ export async function generateFactiiiAuto(
   }
   autoConfig.ansible = {
     vault_path: defaultVaultPath,
-    vault_password_file: '~/.vault_pass',
+    vault_password_file: '.vault_pass',
   };
 
   // Organize config into sections for better readability

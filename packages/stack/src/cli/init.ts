@@ -112,6 +112,7 @@ export async function init(options: InitOptions = {}): Promise<void> {
   ensureGitignored(rootDir, STACK_LOCAL_FILENAME);
   ensureGitignored(rootDir, '.env.staging');
   ensureGitignored(rootDir, '.env.prod');
+  ensureGitignored(rootDir, '.vault_pass');
 
   console.log('  ────────────────────────────────────────────────');
   console.log('  NEXT STEPS');

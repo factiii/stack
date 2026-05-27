@@ -279,17 +279,16 @@ export function loadConfig(rootDir: string): FactiiiConfig {
       // stack.local.yml parse error — ignore
     }
   }
-  // Auto-populate ansible vault_path and vault_password_file defaults
-  // This ensures ALL downstream consumers (25+ places) get the correct per-repo vault path
-  // without needing explicit ansible: config in stack.yml
+  // Auto-populate ansible vault_path default.
+  // vault_password_file is intentionally NOT defaulted here — callers must rely on
+  // config.ansible.vault_password_file being set explicitly in stack.yml (or via the
+  // vault-password-file-location migration). Silently falling back to ~/.vault_pass
+  // causes cross-repo password collisions and is the bug this block used to introduce.
   if (!config.ansible) {
-    config.ansible = { vault_path: getDefaultVaultPath(config), vault_password_file: '~/.vault_pass' };
+    config.ansible = { vault_path: getDefaultVaultPath(config) };
   } else {
     if (!config.ansible.vault_path) {
       config.ansible.vault_path = getDefaultVaultPath(config);
-    }
-    if (!config.ansible.vault_password_file) {
-      config.ansible.vault_password_file = '~/.vault_pass';
     }
   }
 

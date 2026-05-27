@@ -336,7 +336,7 @@ function displayProblems(
         console.log('    Fix: Add ansible config to stack.yml:');
         console.log('           ansible:');
         console.log('             vault_path: group_vars/all/vault-YOUR_REPO_NAME.yml');
-        console.log('             vault_password_file: ~/.vault_pass');
+        console.log('             vault_password_file: .vault_pass');
       } else if (reasonLower.includes('vault password') || reasonLower.includes('vault_pass')) {
         console.log('    Fix: Create vault password file:');
         console.log('           echo "your-password" > ~/.vault_pass && chmod 600 ~/.vault_pass');
@@ -453,6 +453,17 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
   }
 
   const config = loadConfig(rootDir);
+
+  const { loadAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+  if (isAwsConfigured(config)) {
+    try {
+      await loadAwsCredentials(config, rootDir);
+    } catch (e) {
+      // Surface clean message; the scanfix system handles the "missing creds" case
+      // by emitting an actionable manualFix. Don't crash here — let the scan continue.
+      console.log('   [!] ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
 
   // If commit hash provided, verify we're scanning the right code
   if (options.commit) {

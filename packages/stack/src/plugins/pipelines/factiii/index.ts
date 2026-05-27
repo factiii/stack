@@ -60,6 +60,10 @@ import type {
 import { loadRelevantPlugins } from '../../index.js';
 import { findSshKeyForStage } from '../../../utils/ssh-helper.js';
 
+// Import migration scanfixes
+import { vaultPasswordFileLocationFix } from './scanfix/migrations/vault-password-file-location.js';
+import { sshKeysLocationFix } from './scanfix/migrations/ssh-keys-location.js';
+
 // Import scanfix arrays
 import { preflightFixes } from './scanfix/preflight.js';
 import { bootstrapFixes } from './scanfix/bootstrap.js';
@@ -74,6 +78,7 @@ import { portConventionFixes } from './scanfix/port-convention.js';
 import { startShFixes } from './scanfix/start-sh.js';
 import { dbSeedFixes } from './scanfix/db-seed.js';
 import { sshVerifyFixes } from './scanfix/ssh-verify.js';
+import { serverGithubAccessFixes } from './scanfix/server-github-access.js';
 import { claudeSkillFixes } from './scanfix/claude-skills.js';
 import { stackVersionPinFixes } from './scanfix/stack-version-pin.js';
 
@@ -228,6 +233,8 @@ class FactiiiPipeline {
   // ============================================================
 
   static readonly fixes: Fix[] = [
+    vaultPasswordFileLocationFix, // FIRST — moves vault password file before anything else uses it
+    sshKeysLocationFix,           // SECOND — moves SSH deploy keys into per-project directory
     ...preflightFixes,
     ...bootstrapFixes,
     ...configFixes,
@@ -238,6 +245,7 @@ class FactiiiPipeline {
     ...workflowFixes,
     ...secretsFixes,
     ...sshVerifyFixes,
+    ...serverGithubAccessFixes,
     ...envFileFixes,
     ...portConventionFixes,
     ...startShFixes,
@@ -1166,28 +1174,16 @@ class FactiiiPipeline {
           };
         }
 
-        // Resolve AWS credentials from vault via the credentials file
-        // The aws scanfix/credentials.ts writes ~/.aws/credentials from vault
-        // We rely on that being synced — check if credentials exist
-        const awsCredPath = (process.env.HOME ?? '') + '/.aws/credentials';
-        let hasCredentials = false;
+        // Check that AWS credentials are loaded in memory
+        const { getLoadedCredentials, getAwsConfig } = await import('../aws/utils/aws-helpers.js');
         try {
-          const content = fs.readFileSync(awsCredPath, 'utf8');
-          hasCredentials = /aws_access_key_id\s*=\s*\S+/.test(content);
+          getLoadedCredentials();
         } catch {
-          // no credentials file
-        }
-
-        if (!hasCredentials) {
-          // Try to sync credentials from vault
-          console.log('AWS credentials not found locally. Run scan to sync from vault:');
-          console.log('  npx stack scan --' + stage);
-          console.log('');
-          return { success: false, error: 'AWS credentials not available. Run npx stack scan --' + stage + ' first to sync from vault.' };
+          console.log('AWS credentials not loaded. Run `npx stack fix --dev` first.');
+          return { success: false, error: 'AWS credentials not loaded. Run `npx stack fix --dev` first.' };
         }
 
         // Get region from config
-        const { getAwsConfig } = await import('../aws/utils/aws-helpers.js');
         const awsConfig = getAwsConfig(config);
         const region = awsConfig.region;
 
@@ -1373,6 +1369,29 @@ class FactiiiPipeline {
     config: FactiiiConfig
   ): Promise<DeployResult> {
     return prodUtils.buildProductionImageLocally(config);
+  }
+
+  /**
+   * Build prod image on staging and stream it directly to prod via dev relay.
+   * Selected when prod has no registry/AWS configured but a staging server exists.
+   */
+  static async buildAndShipProdImage(
+    config: FactiiiConfig,
+    stagingConfig: EnvironmentConfig,
+    prodConfig: EnvironmentConfig
+  ): Promise<DeployResult> {
+    return prodUtils.buildAndShipProdImage(config, stagingConfig, prodConfig);
+  }
+
+  /**
+   * Run the prod-side `docker compose up` for the registry-less flow.
+   * Pairs with buildAndShipProdImage — image is already loaded on prod.
+   */
+  static async deployProdPiped(
+    config: FactiiiConfig,
+    prodConfig: EnvironmentConfig
+  ): Promise<DeployResult> {
+    return prodUtils.deployProdPiped(config, prodConfig);
   }
 
   // ============================================================
@@ -1567,7 +1586,20 @@ class FactiiiPipeline {
           }
         } else if (stage === 'prod') {
           const stagingConfig = environments.staging;
-          if (stagingConfig?.domain) {
+          const prodEnvConfig = environments.prod ?? environments.production;
+          // Registry-less path: no AWS/registry config but staging exists.
+          // Build amd64 on staging, stream save→load to prod via dev relay.
+          if (!this._config.aws && stagingConfig?.domain && prodEnvConfig?.domain) {
+            console.log('   🔨 Building & shipping prod image (no registry)...');
+            const buildResult = await FactiiiPipeline.buildAndShipProdImage(
+              this._config,
+              stagingConfig,
+              prodEnvConfig
+            );
+            if (!buildResult.success) {
+              return buildResult;
+            }
+          } else if (stagingConfig?.domain) {
             console.log('   🔨 Building production image on staging server...');
             const buildResult = await FactiiiPipeline.buildProductionImage(
               this._config,
@@ -1594,6 +1626,17 @@ class FactiiiPipeline {
       if (stage === 'prod' && this._config.aws) {
         const { deployProd } = await import('../aws/prod.js');
         return deployProd(this._config, stage);
+      }
+      // For prod without AWS but with a staging server: piped flow paired with
+      // buildAndShipProdImage. Skip ECR login/pull entirely.
+      if (stage === 'prod' && !this._config.aws) {
+        const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+        const envs = extractEnvironments(this._config);
+        const prodEnvConfig = envs.prod ?? envs.production;
+        const stagingConfig = envs.staging;
+        if (stagingConfig?.domain && prodEnvConfig?.domain) {
+          return FactiiiPipeline.deployProdPiped(this._config, prodEnvConfig);
+        }
       }
       return serverInstance.deploy(this._config, stage);
     } catch (error) {

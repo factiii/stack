@@ -143,6 +143,17 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   const rootDir = options.rootDir ?? process.cwd();
   const config = loadConfig(rootDir);
 
+  const { loadAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+  if (isAwsConfigured(config)) {
+    try {
+      await loadAwsCredentials(config, rootDir);
+    } catch (e) {
+      // Surface clean message; the scanfix system handles the "missing creds" case
+      // by emitting an actionable manualFix. Don't crash here — let the scan continue.
+      console.log('   [!] ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
   console.log('Running auto-fixes...\n');
 
   // Determine which stages to fix
@@ -278,16 +289,6 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   } else if (result.failed > 0) {
     console.log('');
     console.log('  ❌ Fix the errors above, then re-run: npx stack fix');
-  }
-
-  // Clear ~/.aws/credentials after AWS operations (security: never leave creds on disk)
-  try {
-    const { clearAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
-    if (isAwsConfigured(config)) {
-      clearAwsCredentials();
-    }
-  } catch {
-    // AWS module may not be available — skip cleanup
   }
 
   // Exit with error if any fixes failed

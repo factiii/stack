@@ -41,6 +41,57 @@ export interface EnvironmentConfig {
 }
 
 /**
+ * Top-level `aws:` block in stack.yml.
+ *
+ * Holds region/credentials and per-resource name overrides so a project can
+ * adopt pre-existing AWS resources whose names don't follow the convention
+ * (`factiii-{project}-X`) without having to rename them in AWS.
+ */
+export interface AwsBlockConfig {
+  region?: string;
+  config?: 'ec2' | 'free-tier' | 'standard' | 'enterprise';
+  access_key_id?: string;
+
+  /** Override S3 bucket name. Default: `factiii-{project}` or `factiii-{project}-{accountId}`. */
+  s3_bucket?: string;
+  /** Override RDS DBInstanceIdentifier. Default: `factiii-{project}-db`. */
+  rds_instance_id?: string;
+  /** Override ECR repository name. Default: `{project}`. */
+  ecr_repository?: string;
+  /** Override EC2 security group name. Default: `factiii-{project}-ec2`. */
+  ec2_security_group?: string;
+  /** Override RDS security group name. Default: `factiii-{project}-rds`. */
+  rds_security_group?: string;
+  /**
+   * Path to the prod EC2 key pair (.pem file). Defaults to
+   * `~/.ssh/factiii/<project>/prod.pem`. Used as the SSH identity for prod
+   * stage when no `prod_deploy_key` is present.
+   */
+  prod_ssh_key_path?: string;
+
+  // ──────────────────────────────────────────────────────────
+  // Network overrides — adopt an existing VPC instead of letting stack
+  // create its own (`factiii-{project}` VPC at 10.0.0.0/16). If `vpc_id`
+  // is set, the VPC/subnet/IGW create scanfixes self-skip and downstream
+  // resources (RDS, EC2, SGs) are looked up inside the override VPC.
+  // ──────────────────────────────────────────────────────────
+  /** Existing VPC to use for prod resources. Skips VPC + IGW creation. */
+  vpc_id?: string;
+  /**
+   * Subnet to launch the EC2 instance into. If unset and `vpc_id` is set,
+   * stack picks any subnet in that VPC where MapPublicIpOnLaunch=true
+   * (matches the AWS default-VPC behaviour).
+   */
+  subnet_public_id?: string;
+  /**
+   * Two or more subnets across different AZs for the RDS subnet group.
+   * If unset and `vpc_id` is set, stack picks one subnet per AZ in the
+   * override VPC, up to three.
+   */
+  subnet_private_ids?: string[];
+}
+
+/**
  * Main stack.yml configuration
  *
  * Environments are stored as top-level keys. Any key that is NOT
@@ -62,6 +113,13 @@ export interface FactiiiConfig {
   prisma_version?: string | null;
   trusted_plugins?: string[];
   container_exclusions?: string[];
+
+  // AWS configuration (region/creds/name overrides)
+  aws?: AwsBlockConfig;
+
+  // Top-level ECR overrides (legacy spots, also readable from aws.ecr_repository)
+  ecr_registry?: string;
+  ecr_repository?: string;
 
   // Ansible Vault configuration (for secrets)
   ansible?: {
