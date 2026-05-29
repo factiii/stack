@@ -220,12 +220,31 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
           }
         }
 
+        // Batched tRPC procedures share one res; only the first should issue
+        // cookies. Otherwise the client cookie is appended per-procedure, stacking
+        // N copies of Set-Cookie (overflows proxy buffers -> 502) and firing N
+        // redundant getClientCookiePayload queries — including on the slide path.
+        const issuedSetCookie = ctx.res.getHeader('Set-Cookie');
+        const issuedCookies = Array.isArray(issuedSetCookie)
+          ? issuedSetCookie
+          : issuedSetCookie
+            ? [issuedSetCookie]
+            : [];
+        const cookiesAlreadyIssued = issuedCookies.some(
+          (c) =>
+            typeof c === 'string' &&
+            (c.startsWith(`${storageKeys.authToken}=`) ||
+              (storageKeys.clientToken
+                ? c.startsWith(`${storageKeys.clientToken}=`)
+                : false))
+        );
+
         const slideNeeded =
           droppedIds.length > 0 ||
           (typeof payload.iat === 'number' &&
             Math.floor(Date.now() / 1000) - payload.iat > SLIDE_THRESHOLD_SECONDS);
 
-        if (slideNeeded) {
+        if (!cookiesAlreadyIssued && slideNeeded) {
           const newJwt = createAuthToken(
             {
               id: session.id,
@@ -243,7 +262,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
               : {}),
           };
           setAuthCookies(ctx.res, newJwt, clientPayload, config.secrets.jwt, cookieSettings, storageKeys);
-        } else if (storageKeys.clientToken) {
+        } else if (!cookiesAlreadyIssued && storageKeys.clientToken) {
           const rawClientCookie = parseClientCookie(ctx.headers.cookie, storageKeys);
           let needsRefresh = !rawClientCookie;
           if (rawClientCookie && !needsRefresh) {
