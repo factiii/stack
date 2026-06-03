@@ -400,9 +400,6 @@ export async function secrets(
     }
 
     case 'export-vault': {
-      const { promptSingleLine, confirm: confirmPrompt } = await import('../utils/secret-prompts.js');
-      const { getVaultPasswordString } = await import('../utils/ansible-vault-secrets.js');
-
       const vaultPassFile = (config.ansible?.vault_password_file ?? '~/.vault_pass').replace(/^~/, os.homedir());
 
       if (!fs.existsSync(vaultPassFile)) {
@@ -419,58 +416,26 @@ export async function secrets(
 
       console.log('\nEXPORT VAULT KEY');
       console.log('');
-      console.log('This creates an encrypted file containing your vault password.');
-      console.log('Share it with teammates along with the transfer passphrase.\n');
-
-      const passphrase = await promptSingleLine('   Enter a transfer passphrase (min 4 chars): ', { hidden: true });
-      if (!passphrase || passphrase.length < 4) {
-        console.log('[ERROR] Passphrase must be at least 4 characters');
-        return;
-      }
-
-      const passphraseConfirm = await promptSingleLine('   Confirm passphrase: ', { hidden: true });
-      if (passphrase !== passphraseConfirm) {
-        console.log('[ERROR] Passphrases do not match');
-        return;
-      }
-
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { Vault: VaultCls } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { encryptSync: (data: string) => string; decryptSync: (data: string) => string } };
-      const v = new VaultCls({ password: passphrase });
-      const encrypted = v.encryptSync(vaultPassword);
-
-      // Verify round-trip
-      const verifier = new VaultCls({ password: passphrase });
-      try {
-        const decrypted = verifier.decryptSync(encrypted);
-        if (decrypted !== vaultPassword) {
-          console.log('[ERROR] Round-trip verification failed — encryption produced corrupt output');
-          return;
-        }
-      } catch {
-        console.log('[ERROR] Round-trip verification failed — encryption produced corrupt output');
-        return;
-      }
+      console.log('This exports your vault password for team onboarding.');
+      console.log('The vault is already protected by your per-operation passphrase.\n');
 
       const defaultOutPath = path.join(process.cwd(), 'vault-key.export');
       const outPath = secretName
         ? (path.isAbsolute(secretName) ? secretName : path.join(process.cwd(), secretName))
         : defaultOutPath;
 
-      fs.writeFileSync(outPath, encrypted + '\n', { encoding: 'utf8', mode: 0o600 });
-      console.log('');
+      fs.writeFileSync(outPath, vaultPassword + '\n', { encoding: 'utf8', mode: 0o600 });
       console.log('[OK] Vault key exported to: ' + outPath);
       console.log('');
       console.log('Share this file with your teammate, then they run:');
       console.log('  npx stack secrets import-vault ' + path.basename(outPath));
       console.log('');
       console.log('IMPORTANT: Do not commit this file to git.');
-      console.log('           Send the passphrase through a separate channel.');
       break;
     }
 
     case 'import-vault': {
-      const { promptSingleLine: promptLine, confirm: confirmImport } = await import('../utils/secret-prompts.js');
+      const { confirm: confirmImport } = await import('../utils/secret-prompts.js');
 
       if (!secretName) {
         console.log('[ERROR] Export file path required');
@@ -487,49 +452,21 @@ export async function secrets(
         return;
       }
 
-      const encryptedContent = fs.readFileSync(importPath, 'utf8').replace(/^﻿/, '').trim();
-      if (!encryptedContent.startsWith('$ANSIBLE_VAULT;')) {
-        console.log('[ERROR] File does not appear to be a valid vault export');
+      const vaultPass = fs.readFileSync(importPath, 'utf8').replace(/^﻿/, '').trim();
+      if (!vaultPass) {
+        console.log('[ERROR] Vault key file is empty');
         return;
       }
 
       console.log('\nIMPORT VAULT KEY');
       console.log('');
-      console.log('This will decrypt the vault key file and save it to your local machine.\n');
-
-      const passphrase = await promptLine('   Enter the transfer passphrase: ', { hidden: true });
-      if (!passphrase) {
-        console.log('[ERROR] Passphrase required');
-        return;
-      }
-
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { Vault: VaultImport } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { encryptSync: (data: string) => string; decryptSync: (data: string) => string } };
-      const vi = new VaultImport({ password: passphrase });
-
-      let vaultPass: string;
-      try {
-        vaultPass = vi.decryptSync(encryptedContent);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes('Integrity check failed')) {
-          console.log('[ERROR] Wrong passphrase — decryption failed');
-        } else {
-          console.log('[ERROR] Decryption failed: ' + msg);
-        }
-        return;
-      }
-
-      if (!vaultPass || vaultPass.trim().length === 0) {
-        console.log('[ERROR] Decrypted vault password is empty');
-        return;
-      }
+      console.log('This will save the vault key to your local machine.\n');
 
       const destPath = (config.ansible?.vault_password_file ?? '~/.vault_pass').replace(/^~/, os.homedir());
 
       if (fs.existsSync(destPath)) {
         const existing = fs.readFileSync(destPath, 'utf8').replace(/^﻿/, '').trim();
-        if (existing === vaultPass.trim()) {
+        if (existing === vaultPass) {
           console.log('[OK] Vault password already matches — no changes needed');
           return;
         }
@@ -544,7 +481,7 @@ export async function secrets(
       if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir, { recursive: true });
       }
-      fs.writeFileSync(destPath, vaultPass.trim() + '\n', { mode: 0o600 });
+      fs.writeFileSync(destPath, vaultPass + '\n', { mode: 0o600 });
       console.log('');
       console.log('[OK] Vault password saved to: ' + destPath);
       console.log('');
