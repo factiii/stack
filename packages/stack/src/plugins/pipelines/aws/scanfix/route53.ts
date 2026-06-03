@@ -16,6 +16,7 @@ import {
     findHostedZone,
     findARecord,
     getRoute53Client,
+    confirmAwsAction,
     CreateHostedZoneCommand,
     ChangeResourceRecordSetsCommand,
     GetHostedZoneCommand,
@@ -62,6 +63,16 @@ export const route53Fixes: Fix[] = [
             const domain = prodEnv?.domain;
             if (!domain || !isProperDomain(domain)) {
                 console.log('   Prod domain not configured or is an IP address — skipping Route53');
+                return false;
+            }
+
+            const ok = await confirmAwsAction(
+                'Create Route53 hosted zone for "' + domain + '" (' + region + ')\n' +
+                '  - Cost: $0.50/month per hosted zone\n' +
+                '  - You\'ll need to update NS records at your domain registrar afterwards'
+            );
+            if (!ok) {
+                console.log('   [--] Skipped — no hosted zone created');
                 return false;
             }
 
@@ -161,6 +172,16 @@ export const route53Fixes: Fix[] = [
             const elasticIp = await findElasticIp(instanceId, region);
             if (!elasticIp) {
                 console.log('   Elastic IP must be assigned first');
+                return false;
+            }
+
+            const ok = await confirmAwsAction(
+                'Upsert Route53 A record for "' + domain + '" → ' + elasticIp + '\n' +
+                '  - Hosted zone: ' + zoneId + '\n' +
+                '  - TTL: 300s'
+            );
+            if (!ok) {
+                console.log('   [--] Skipped — A record unchanged');
                 return false;
             }
 

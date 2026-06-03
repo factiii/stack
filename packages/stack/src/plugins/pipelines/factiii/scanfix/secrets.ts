@@ -1,6 +1,6 @@
 /**
  * Ansible Vault Secrets fixes for Factiii Pipeline plugin
- * Handles Ansible Vault secrets validation for secrets stage
+ * Handles Ansible Vault secrets validation (vault unlock, SSH key extraction)
  */
 
 import * as fs from 'fs';
@@ -12,6 +12,8 @@ import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js'
 import { promptForSecret, promptSingleLine, confirm } from '../../../../utils/secret-prompts.js';
 import { extractEnvironments, hasEnvironments } from '../../../../utils/config-helpers.js';
 import { findSshKeyForStage, writeSecureKeyFile } from '../../../../utils/ssh-helper.js';
+import { getStackSshKeyPath, getStackSshDir } from '../../../../utils/ssh-paths.js';
+import { getStackProjectName } from '../../../../utils/project-identifier.js';
 
 function getAnsibleStore(config: FactiiiConfig, rootDir: string): AnsibleVaultSecrets | null {
   if (!config.ansible?.vault_path) return null;
@@ -23,27 +25,20 @@ function getAnsibleStore(config: FactiiiConfig, rootDir: string): AnsibleVaultSe
 }
 
 /**
- * Write an SSH key to disk: generic name + repo-specific name.
- * e.g. staging_deploy_key AND staging_deploy_key_factiii
+ * Write an SSH key to disk at the per-project isolated path.
+ * e.g. ~/.ssh/factiii/<projectName>/<stage>_deploy_key
  */
 export function writeSshKeyToDisk(stage: string, value: string, config: FactiiiConfig): string {
-  const sshDir = path.join(os.homedir(), '.ssh');
-  if (!fs.existsSync(sshDir)) {
-    fs.mkdirSync(sshDir, { mode: 0o700 });
+  const projectName = getStackProjectName(config);
+  const targetDir = getStackSshDir(projectName);
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
   }
 
-  const genericName = stage + '_deploy_key';
-  const genericPath = path.join(sshDir, genericName);
-  writeSecureKeyFile(genericPath, value.trimEnd() + '\n');
+  const keyPath = getStackSshKeyPath(projectName, stage);
+  writeSecureKeyFile(keyPath, value.trimEnd() + '\n');
 
-  // Also write repo-specific key for multi-repo isolation
-  const repoName = config.name;
-  if (repoName && !repoName.toUpperCase().startsWith('EXAMPLE')) {
-    const repoPath = path.join(sshDir, genericName + '_' + repoName);
-    writeSecureKeyFile(repoPath, value.trimEnd() + '\n');
-  }
-
-  return genericPath;
+  return keyPath;
 }
 
 /**
@@ -356,8 +351,12 @@ async function autoGenerateAndDeploySshKey(
     return await manualSshKeyEntry(stage, config, store);
   }
 
-  const keyName = stage + '_deploy_key';
-  const keyPath = path.join(os.homedir(), '.ssh', keyName);
+  const projectName = getStackProjectName(config);
+  const sshTargetDir = getStackSshDir(projectName);
+  if (!fs.existsSync(sshTargetDir)) {
+    fs.mkdirSync(sshTargetDir, { recursive: true, mode: 0o700 });
+  }
+  const keyPath = getStackSshKeyPath(projectName, stage);
   const pubKeyPath = keyPath + '.pub';
 
   console.log('');
@@ -548,7 +547,7 @@ async function manualSshKeyEntry(
 export const secretsFixes: Fix[] = [
   {
     id: 'missing-vault-password-file',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔐 Vault password file not found (required to decrypt secrets)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
@@ -561,8 +560,11 @@ export const secretsFixes: Fix[] = [
       return !fs.existsSync(passwordFile);
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
-      const passwordFile = (config.ansible?.vault_password_file ?? '~/.vault_pass')
-        .replace(/^~/, os.homedir());
+      if (!config.ansible?.vault_password_file) {
+        console.log('   ansible.vault_password_file not configured in stack.yml');
+        return false;
+      }
+      const passwordFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
 
       console.log('');
       console.log('   Creating Ansible Vault password file: ' + passwordFile);
@@ -594,12 +596,12 @@ export const secretsFixes: Fix[] = [
     },
     manualFix:
       'Create the vault password file:\n' +
-      '      macOS/Linux: echo "your-vault-password" > ~/.vault_pass && chmod 600 ~/.vault_pass\n' +
-      '      Windows:     echo your-vault-password > %USERPROFILE%\\.vault_pass',
+      '      macOS/Linux: echo "your-vault-password" > <repo>/.vault_pass && chmod 600 <repo>/.vault_pass\n' +
+      '      Windows:     echo your-vault-password > <repo>\\.vault_pass',
   },
   {
     id: 'missing-staging-ssh',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔑 STAGING_SSH secret not found in Ansible Vault',
     targetStage: 'staging', // Only run when targeting staging deployment
@@ -644,7 +646,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-prod-ssh',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔑 PROD_SSH secret not found in Ansible Vault',
     targetStage: 'prod', // Only run when targeting prod deployment
@@ -706,8 +708,8 @@ export const secretsFixes: Fix[] = [
               return false;
             }
 
-            const { writeAwsCredentials } = await import('../../aws/utils/aws-helpers.js');
-            writeAwsCredentials(inputAccessKeyId, inputSecretKey, region);
+            const { setLoadedCredentials } = await import('../../aws/utils/aws-helpers.js');
+            setLoadedCredentials({ accessKeyId: inputAccessKeyId, secretAccessKey: inputSecretKey, region });
 
             accountId = await getAwsAccountId(region);
             if (!accountId) {
@@ -838,7 +840,12 @@ export const secretsFixes: Fix[] = [
               console.log('');
               // Still create a local key for future use — will be authorized after EC2 is provisioned
               console.log('      Creating SSH key for future use...');
-              const localKeyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+              const localKeyProjName = getStackProjectName(config);
+              const localKeyDir = getStackSshDir(localKeyProjName);
+              if (!fs.existsSync(localKeyDir)) {
+                fs.mkdirSync(localKeyDir, { recursive: true, mode: 0o700 });
+              }
+              const localKeyPath = getStackSshKeyPath(localKeyProjName, 'prod');
               if (!fs.existsSync(localKeyPath)) {
                 try {
                   execSync('ssh-keygen -t ed25519 -f "' + localKeyPath + '" -N "" -C "prod-deploy"', { stdio: 'pipe' });
@@ -877,7 +884,12 @@ export const secretsFixes: Fix[] = [
             const sshUser = extractEnvironments(config).prod?.ssh_user ?? 'ubuntu';
 
             // Generate local SSH key if needed
-            const localKeyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+            const instanceKeyProjName = getStackProjectName(config);
+            const instanceKeyDir = getStackSshDir(instanceKeyProjName);
+            if (!fs.existsSync(instanceKeyDir)) {
+              fs.mkdirSync(instanceKeyDir, { recursive: true, mode: 0o700 });
+            }
+            const localKeyPath = getStackSshKeyPath(instanceKeyProjName, 'prod');
             const localPubPath = localKeyPath + '.pub';
             if (!fs.existsSync(localKeyPath)) {
               console.log('      [1/4] Generating SSH key...');
@@ -1035,7 +1047,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-staging-ssh-password',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '🔑 STAGING_SSH_PASSWORD not in vault (needed if staging uses password auth)',
     targetStage: 'staging', // Only run when targeting staging deployment
@@ -1045,8 +1057,12 @@ export const secretsFixes: Fix[] = [
       if (!environments.staging) return false;
 
       // Only flag if there's NO SSH key — password is the fallback
-      const keyPath = path.join(os.homedir(), '.ssh', 'staging_deploy_key');
-      if (fs.existsSync(keyPath)) return false;
+      try {
+        const stagingKeyPath = getStackSshKeyPath(getStackProjectName(config), 'staging');
+        if (fs.existsSync(stagingKeyPath)) return false;
+      } catch {
+        // project name not set — skip key-exists check
+      }
 
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
@@ -1065,10 +1081,14 @@ export const secretsFixes: Fix[] = [
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       // Re-check: SSH key may have been created by a prior fix in this same run
-      const keyPath = path.join(os.homedir(), '.ssh', 'staging_deploy_key');
-      if (fs.existsSync(keyPath)) {
-        console.log('      SSH key now exists — password not needed');
-        return true;
+      try {
+        const stagingKeyPath = getStackSshKeyPath(getStackProjectName(config), 'staging');
+        if (fs.existsSync(stagingKeyPath)) {
+          console.log('      SSH key now exists — password not needed');
+          return true;
+        }
+      } catch {
+        // project name not set — skip key-exists check
       }
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
@@ -1108,7 +1128,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-prod-ssh-password',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '🔑 PROD_SSH_PASSWORD not in vault (needed if prod uses password auth)',
     targetStage: 'prod', // Only run when targeting prod deployment
@@ -1118,8 +1138,12 @@ export const secretsFixes: Fix[] = [
       if (!environments.prod) return false;
 
       // Only flag if there's NO SSH key — password is the fallback
-      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
-      if (fs.existsSync(keyPath)) return false;
+      try {
+        const prodKeyPath = getStackSshKeyPath(getStackProjectName(config), 'prod');
+        if (fs.existsSync(prodKeyPath)) return false;
+      } catch {
+        // project name not set — skip key-exists check
+      }
 
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
@@ -1138,10 +1162,14 @@ export const secretsFixes: Fix[] = [
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       // Re-check: SSH key may have been created by a prior fix in this same run
-      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
-      if (fs.existsSync(keyPath)) {
-        console.log('      SSH key now exists — password not needed');
-        return true;
+      try {
+        const prodKeyPath = getStackSshKeyPath(getStackProjectName(config), 'prod');
+        if (fs.existsSync(prodKeyPath)) {
+          console.log('      SSH key now exists — password not needed');
+          return true;
+        }
+      } catch {
+        // project name not set — skip key-exists check
       }
       const store = getAnsibleStore(config, rootDir);
       if (!store) return false;
@@ -1181,7 +1209,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-aws-secret',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '🔑 AWS_SECRET_ACCESS_KEY not found in Ansible Vault (needed for ECR)',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -1209,26 +1237,22 @@ export const secretsFixes: Fix[] = [
       if (!store) return false;
 
       try {
-        // Try reading from ~/.aws/credentials first
-        const awsCredsPath = path.join(os.homedir(), '.aws', 'credentials');
-        if (fs.existsSync(awsCredsPath)) {
-          const content = fs.readFileSync(awsCredsPath, 'utf8');
-          const match = content.match(/aws_secret_access_key\s*=\s*(.+)/);
-          if (match && match[1]) {
-            const secretKey = match[1].trim();
-            if (secretKey && secretKey.length === 40) {
-              console.log('   Found AWS_SECRET_ACCESS_KEY in ~/.aws/credentials');
-              const result = await store.setSecret('AWS_SECRET_ACCESS_KEY', secretKey);
-              if (result.success) {
-                console.log('   Stored in Ansible Vault');
-                return true;
-              }
-            }
+        // Try reading from in-memory credentials cache first
+        let secretFromMemory: string | null = null;
+        try {
+          const { getLoadedCredentials } = await import('../../aws/utils/aws-helpers.js');
+          secretFromMemory = getLoadedCredentials().secretAccessKey;
+        } catch { /* not loaded */ }
+
+        if (secretFromMemory) {
+          const result = await store.setSecret('AWS_SECRET_ACCESS_KEY', secretFromMemory);
+          if (result.success) {
+            console.log('   Stored AWS_SECRET_ACCESS_KEY in Ansible Vault');
+            return true;
           }
         }
 
         // Fall back to interactive prompt
-        console.log('   AWS_SECRET_ACCESS_KEY not found in ~/.aws/credentials');
         const value = await promptForSecret('AWS_SECRET_ACCESS_KEY', config);
         const result = await store.setSecret('AWS_SECRET_ACCESS_KEY', value);
         return result.success;
@@ -1241,7 +1265,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-ssh-key-staging',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔑 STAGING_SSH key file not on disk (required for staging access)',
     targetStage: 'staging', // Only run when targeting staging deployment
@@ -1313,7 +1337,7 @@ export const secretsFixes: Fix[] = [
   },
   {
     id: 'missing-ssh-key-prod',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔑 PROD_SSH key file not on disk (required for prod access)',
     targetStage: 'prod', // Only run when targeting prod deployment

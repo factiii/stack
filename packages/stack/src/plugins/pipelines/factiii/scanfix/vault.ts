@@ -20,7 +20,7 @@ import { promptSingleLine } from '../../../../utils/secret-prompts.js';
 export const vaultFixes: Fix[] = [
   {
     id: 'group-vars-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '📁 group_vars/all/ directory not found',
     scan: async (_config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -38,7 +38,7 @@ export const vaultFixes: Fix[] = [
 
   {
     id: 'vault-file-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔐 Encrypted vault file not found',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -53,11 +53,12 @@ export const vaultFixes: Fix[] = [
       return !fs.existsSync(path.join(rootDir, vaultPath));
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      if (!config.ansible?.vault_password_file) return false; // scan already gated on this
       try {
         const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible?.vault_path ?? getDefaultVaultPath(config),
-          vault_password_file: config.ansible?.vault_password_file ?? '~/.vault_pass',
+          vault_password_file: config.ansible.vault_password_file,
           rootDir,
         });
         await vault.setSecret('_initialized', 'true');
@@ -71,7 +72,7 @@ export const vaultFixes: Fix[] = [
 
   {
     id: 'vault-password-mismatch',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: '🔐 Vault password does not match existing vault file',
     scan: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
@@ -95,7 +96,7 @@ export const vaultFixes: Fix[] = [
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { decryptSync: (data: string) => string } };
 
-        const password = getVaultPasswordString({
+        const password = await getVaultPasswordString({
           vault_path: vaultPath,
           vault_password_file: config.ansible.vault_password_file,
           rootDir,
@@ -124,19 +125,22 @@ export const vaultFixes: Fix[] = [
 
       console.log('');
       console.log('   ⚠️  Vault password mismatch detected!');
-      console.log('   The vault file was encrypted with a different password than ~/.vault_pass');
+      console.log('   The vault file was encrypted with a different password than ' + (config.ansible?.vault_password_file ?? '.vault_pass'));
       console.log('');
       console.log('   Options:');
       console.log('   1. Recreate vault with current password (existing secrets will be lost)');
-      console.log('   2. Update ~/.vault_pass with the original password');
+      console.log('   2. Update ' + (config.ansible?.vault_password_file ?? '.vault_pass') + ' with the original password');
       console.log('');
 
       const choice = await promptSingleLine('   Choose (1 or 2): ');
 
       if (choice === '2') {
         // User wants to update password file
-        const passFile = (config.ansible?.vault_password_file ?? '~/.vault_pass')
-          .replace(/^~/, os.homedir());
+        if (!config.ansible?.vault_password_file) {
+          console.log('   ansible.vault_password_file not configured in stack.yml');
+          return false;
+        }
+        const passFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
         console.log('');
         const newPass = await promptSingleLine('   Enter the original vault password: ', { hidden: true });
         if (!newPass) {
@@ -178,10 +182,14 @@ export const vaultFixes: Fix[] = [
           // Delete old vault and create fresh one
           fs.unlinkSync(fullVaultPath);
 
+          if (!config.ansible?.vault_password_file) {
+            console.log('   ansible.vault_password_file not configured in stack.yml');
+            return false;
+          }
           const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
           const vault = new AnsibleVaultSecrets({
             vault_path: vaultPath,
-            vault_password_file: config.ansible?.vault_password_file ?? '~/.vault_pass',
+            vault_password_file: config.ansible.vault_password_file,
             rootDir,
           });
           await vault.setSecret('_initialized', 'true');
@@ -199,6 +207,6 @@ export const vaultFixes: Fix[] = [
     manualFix:
       'Vault was created with a different password.\n' +
       '      Option 1: Delete the vault file and re-run: npx stack fix --secrets\n' +
-      '      Option 2: Copy the original ~/.vault_pass from the machine that created the vault',
+      '      Option 2: Copy the original <repo>/.vault_pass from the machine that created the vault',
   },
 ];

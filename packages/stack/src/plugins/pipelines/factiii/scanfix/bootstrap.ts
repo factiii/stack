@@ -74,7 +74,7 @@ export const bootstrapFixes: Fix[] = [
         'dev_os: ' + devOS + '\n' +
         '\n' +
         '# Dev-only mode (default: true)\n' +
-        '# When true, only --dev and --secrets stages are allowed.\n' +
+        '# When true, only --dev stage is allowed.\n' +
         '# Set to false to unlock staging/prod stages:\n' +
         '#   npx stack scan --staging   (auto-unlocks on first run)\n' +
         '#   or manually change to: dev_only: false\n' +
@@ -85,7 +85,7 @@ export const bootstrapFixes: Fix[] = [
       ensureGitignored(rootDir, 'factiii.local.yml');
       console.log('  [OK] Created ' + STACK_LOCAL_FILENAME + ' (dev_os: ' + devOS + ', dev_only: true)');
       console.log('');
-      console.log('  dev_only is enabled by default — only --dev and --secrets stages will run.');
+      console.log('  dev_only is enabled by default — only --dev stage will run.');
       console.log('  To unlock staging/prod, either:');
       console.log('    - Run: npx stack scan --staging   (auto-unlocks)');
       console.log('    - Edit ' + STACK_LOCAL_FILENAME + ' and set dev_only: false');

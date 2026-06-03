@@ -21,6 +21,7 @@ import {
   findElasticIp,
   tagSpec,
   getEC2Client,
+  confirmAwsAction,
   CreateKeyPairCommand,
   DescribeImagesCommand,
   RunInstancesCommand,
@@ -46,6 +47,16 @@ export const ec2Fixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
       const keyName = 'factiii-' + projectName;
+
+      const ok = await confirmAwsAction(
+        'Create EC2 key pair "' + keyName + '" in ' + region + '\n' +
+        '  - Type: ed25519\n' +
+        '  - Private key saved to ~/.ssh/prod_deploy_key + Ansible Vault'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no key pair created');
+        return false;
+      }
 
       try {
         const ec2 = getEC2Client(region);
@@ -102,13 +113,13 @@ export const ec2Fixes: Fix[] = [
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const vpcId = await findVpc(projectName, region);
+      const vpcId = await findVpc(projectName, region, config);
       if (!vpcId) {
         console.log('   VPC must be created first');
         return false;
       }
 
-      const publicSubnet = await findSubnet(projectName, region, 'public');
+      const publicSubnet = await findSubnet(projectName, region, 'public', config);
       if (!publicSubnet) {
         console.log('   Public subnet must be created first');
         return false;
@@ -123,6 +134,19 @@ export const ec2Fixes: Fix[] = [
       const keyName = 'factiii-' + projectName;
       if (!(await findKeyPair(keyName, region))) {
         console.log('   Key pair must be created first');
+        return false;
+      }
+
+      const ok = await confirmAwsAction(
+        'Launch EC2 instance for project "' + projectName + '" in ' + region + '\n' +
+        '  - AMI: latest Ubuntu 22.04 amd64\n' +
+        '  - Type: t3.micro (free-tier eligible 12 months, then ~$8/mo)\n' +
+        '  - Subnet: public (auto-assigned public IP, changes on restart)\n' +
+        '  - Security group: ' + ec2SgId + '\n' +
+        '  - Key pair: ' + keyName
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no EC2 instance launched');
         return false;
       }
 
@@ -206,6 +230,16 @@ export const ec2Fixes: Fix[] = [
       const instanceId = await findInstance(projectName, region);
       if (!instanceId) {
         console.log('   EC2 instance must be created first');
+        return false;
+      }
+
+      const ok = await confirmAwsAction(
+        'Allocate + associate Elastic IP with EC2 instance ' + instanceId + ' (' + region + ')\n' +
+        '  - Cost: free while attached to a running instance, ~$3.60/mo if detached\n' +
+        '  - Will update prod.domain in stack.yml to the new IP'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no Elastic IP allocated');
         return false;
       }
 

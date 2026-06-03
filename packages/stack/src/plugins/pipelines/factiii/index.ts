@@ -39,7 +39,7 @@
  *   - config.ts: When checking/generating stack.yml
  *   - github-cli.ts: When checking GitHub CLI installation (dev)
  *   - workflows.ts: When checking/generating GitHub workflows (dev)
- *   - secrets.ts: When checking GitHub Secrets (secrets stage)
+ *   - secrets.ts: When checking Ansible Vault secrets (vault unlock, SSH key extraction)
  * ============================================================
  */
 
@@ -58,7 +58,11 @@ import type {
   CommandResult,
 } from '../../../types/index.js';
 import { loadRelevantPlugins } from '../../index.js';
-import { findSshKeyForStage, sshRemoteFactiiiCommand } from '../../../utils/ssh-helper.js';
+import { findSshKeyForStage } from '../../../utils/ssh-helper.js';
+
+// Import migration scanfixes
+import { vaultPasswordFileLocationFix } from './scanfix/migrations/vault-password-file-location.js';
+import { sshKeysLocationFix } from './scanfix/migrations/ssh-keys-location.js';
 
 // Import scanfix arrays
 import { preflightFixes } from './scanfix/preflight.js';
@@ -74,7 +78,9 @@ import { portConventionFixes } from './scanfix/port-convention.js';
 import { startShFixes } from './scanfix/start-sh.js';
 import { dbSeedFixes } from './scanfix/db-seed.js';
 import { sshVerifyFixes } from './scanfix/ssh-verify.js';
+import { serverGithubAccessFixes } from './scanfix/server-github-access.js';
 import { claudeSkillFixes } from './scanfix/claude-skills.js';
+import { stackVersionPinFixes } from './scanfix/stack-version-pin.js';
 
 // Import AWS scanfix arrays (AWS provisioning runs as part of factiii pipeline)
 import { configFixes as awsConfigFixes } from '../aws/scanfix/config.js';
@@ -154,23 +160,18 @@ class FactiiiPipeline {
    *
    * Return values:
    *   { reachable: true, via: 'local' } - Run fixes on this machine
-   *   { reachable: true, via: 'ssh' } - SSH directly to the server
    *   { reachable: false, reason: '...' } - Cannot reach, show error
    *
-   * Note: 'workflow' path was removed — deploy/fix/scan workflows are gone.
-   * SSH from dev machine is now the only remote execution path.
-   * GitHub Actions only runs CI (build + test), not deployment.
+   * Dev-direct model: all execution happens on the dev machine. Staging/prod
+   * fixes that need server state reach through an SSH tunnel opened by
+   * runStageChain (see utils/ssh-tunnel.ts). canReach() never returns
+   * via: 'ssh' — there is no remote stack CLI to invoke.
    *
    * For the Factiii pipeline:
    *   - dev: always local
-   *   - secrets: needs vault password
    *   - staging/prod:
-   *       - If GITHUB_ACTIONS=true → local (we're on the server)
-   *       - If SSH key exists → ssh (direct SSH from dev machine)
+   *       - If SSH key exists at ~/.ssh/{stage}_deploy_key → local (tunnel via runStageChain)
    *       - Otherwise → not reachable (guide user to set up SSH keys)
-   *
-   * CRITICAL: When SSHing to a server, the command MUST include
-   *   --staging or --prod to prevent infinite loops.
    * ============================================================
    */
   static canReach(stage: Stage, config: FactiiiConfig): Reachability {
@@ -179,104 +180,46 @@ class FactiiiPipeline {
         // Dev is always reachable locally
         return { reachable: true, via: 'local' };
 
-      case 'secrets':
-        // Need Ansible Vault configuration
-        if (!config.ansible?.vault_path) {
-          return {
-            reachable: false,
-            reason: 'ansible.vault_path not configured in stack.yml',
-          };
-        }
-
-        // Check if vault password is available (file or env)
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const os = require('os');
-        const vaultPasswordFile = config.ansible.vault_password_file?.replace(/^~/, os.homedir());
-        const hasPasswordFile = vaultPasswordFile && fs.existsSync(vaultPasswordFile);
-        const hasPasswordEnv = !!process.env.ANSIBLE_VAULT_PASSWORD || !!process.env.ANSIBLE_VAULT_PASSWORD_FILE;
-
-        if (!hasPasswordFile && !hasPasswordEnv) {
-          return {
-            reachable: false,
-            reason: 'Vault password required. Set ansible.vault_password_file in stack.yml, or ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_PASSWORD_FILE env.',
-          };
-        }
-
-        return { reachable: true, via: 'local' };
-
       case 'staging':
-      case 'prod':
-        // If GITHUB_ACTIONS is set, we're running inside a workflow on the server
-        // Return 'local' so fixes run directly without triggering another workflow
-        if (process.env.GITHUB_ACTIONS || process.env.FACTIII_ON_SERVER) {
+      case 'prod': {
+        // Dev-direct model: every command runs on the dev machine. Staging/prod
+        // fixes that need server state reach through a per-stage SSH tunnel
+        // (see utils/ssh-tunnel.ts; tunnel lifecycle is owned by runStageChain).
+        // We no longer return via: 'ssh' — there's no remote stack CLI to invoke.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
+        const stageEnvs = getEnvironmentsForStage(config, stage);
+        const stageEnvValues = Object.values(stageEnvs) as EnvironmentConfig[];
+
+        const allExample = stageEnvValues.every((e: EnvironmentConfig) =>
+          !e.domain || e.domain.toUpperCase().startsWith('EXAMPLE')
+        );
+        const hasAws = stageEnvValues.some((e: EnvironmentConfig) =>
+          !!e.access_key_id || !!e.config
+        );
+
+        if (allExample && stageEnvValues.length > 0 && !hasAws) {
+          return {
+            reachable: false,
+            reason: stage + ' domain is still a placeholder (EXAMPLE_...).\n' +
+              '   Replace the EXAMPLE_ value in stack.yml with your actual domain.',
+          };
+        }
+
+        // Reachable when the domain is set (tunnel can be opened) or AWS
+        // config lets provisioning run from the dev machine. The SSH key is
+        // checked by runStageChain when opening the tunnel — its absence
+        // surfaces as a tunnel-open failure that skip-results the whole stage.
+        if (hasAws || !allExample) {
           return { reachable: true, via: 'local' };
         }
 
-        // ============================================================
-        // CRITICAL: Block SSH to EXAMPLE_ placeholder domains
-        // ============================================================
-        // If domain still has EXAMPLE_ prefix, the user hasn't configured
-        // it yet. Never attempt SSH to a placeholder domain.
-        // ============================================================
-        {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
-          const stageEnvs = getEnvironmentsForStage(config, stage);
-          const stageEnvValues = Object.values(stageEnvs) as EnvironmentConfig[];
-          const allExample = stageEnvValues.every((e: EnvironmentConfig) =>
-            !e.domain || e.domain.toUpperCase().startsWith('EXAMPLE')
-          );
-          if (allExample && stageEnvValues.length > 0) {
-            // Check if AWS config exists — allow local provisioning even with EXAMPLE_ domain
-            const hasAws = stageEnvValues.some((e: EnvironmentConfig) =>
-              !!e.access_key_id || !!e.config
-            );
-            if (hasAws) {
-              return { reachable: true, via: 'local' };
-            }
-            return {
-              reachable: false,
-              reason: stage + ' domain is still a placeholder (EXAMPLE_...).\n' +
-                '   Replace the EXAMPLE_ value in stack.yml with your actual domain.',
-            };
-          }
-        }
-
-        // On dev machine: check for SSH key to reach server directly
-        // This is the primary path - direct SSH is faster than GitHub workflows
-        {
-          const sshKey = findSshKeyForStage(stage, config.name);
-          if (sshKey) {
-            return { reachable: true, via: 'ssh' };
-          }
-        }
-
-        // If AWS config exists, allow local provisioning (no server needed yet)
-        // AWS scanfixes run on the dev machine to provision infrastructure
-        {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { getEnvironmentsForStage } = require('../../../utils/config-helpers.js');
-          const envs = getEnvironmentsForStage(config, stage);
-          const envValues = Object.values(envs) as EnvironmentConfig[];
-          const hasAws = envValues.some((e: EnvironmentConfig) =>
-            !!e.access_key_id || !!e.config
-          );
-          if (hasAws) {
-            return { reachable: true, via: 'local' };
-          }
-        }
-
-        // No SSH key, no AWS — cannot reach this stage
-        // If vault has a key, run: npx stack fix --secrets to extract it to disk
-        {
-          const vaultName = stage === 'staging' ? 'STAGING_SSH' : 'PROD_SSH';
-          return {
-            reachable: false,
-            reason: vaultName + ' not found (no key at ~/.ssh/' + stage + '_deploy_key).\n' +
-              '   Run: npx stack fix --secrets   (stores key in vault + writes to disk)\n' +
-              '   Or:  npx stack deploy --secrets set ' + vaultName + ' && npx stack deploy --secrets write-ssh-keys',
-          };
-        }
+        // No domain, no AWS — nothing to reach.
+        return {
+          reachable: false,
+          reason: 'No ' + stage + ' environment with a real domain or AWS config in stack.yml.',
+        };
+      }
 
       default:
         return { reachable: false, reason: `Unknown stage: ${stage}` };
@@ -290,15 +233,19 @@ class FactiiiPipeline {
   // ============================================================
 
   static readonly fixes: Fix[] = [
+    vaultPasswordFileLocationFix, // FIRST — moves vault password file before anything else uses it
+    sshKeysLocationFix,           // SECOND — moves SSH deploy keys into per-project directory
     ...preflightFixes,
     ...bootstrapFixes,
     ...configFixes,
+    ...stackVersionPinFixes,
     ...domainFixes,
     ...vaultFixes,
     ...githubCliFixes,
     ...workflowFixes,
     ...secretsFixes,
     ...sshVerifyFixes,
+    ...serverGithubAccessFixes,
     ...envFileFixes,
     ...portConventionFixes,
     ...startShFixes,
@@ -444,7 +391,7 @@ class FactiiiPipeline {
   /**
    * Change the Ansible Vault password for the configured vault file.
    *
-   * This runs locally on the dev machine (secrets stage) and uses:
+   * This runs locally on the dev machine and uses:
    *   ansible-vault rekey <vault_path> --vault-password-file <old> --new-vault-password-file <new>
    *
    * It then overwrites the configured vault_password_file with the new password
@@ -723,9 +670,9 @@ class FactiiiPipeline {
     },
     {
       name: 'change-vault-password',
-      description: 'Change the Ansible Vault encryption password (runs locally)',
+      description: 'Change the Ansible Vault encryption password (runs locally, use --dev)',
       category: 'ops',
-      stages: ['secrets'],
+      stages: ['dev'],
       prodSafety: 'safe',
       execute: async (_stage, _options, config, rootDir): Promise<CommandResult> => {
         return await FactiiiPipeline.changeVaultPassword(config, rootDir);
@@ -1227,28 +1174,16 @@ class FactiiiPipeline {
           };
         }
 
-        // Resolve AWS credentials from vault via the credentials file
-        // The aws scanfix/credentials.ts writes ~/.aws/credentials from vault
-        // We rely on that being synced — check if credentials exist
-        const awsCredPath = (process.env.HOME ?? '') + '/.aws/credentials';
-        let hasCredentials = false;
+        // Check that AWS credentials are loaded in memory
+        const { getLoadedCredentials, getAwsConfig } = await import('../aws/utils/aws-helpers.js');
         try {
-          const content = fs.readFileSync(awsCredPath, 'utf8');
-          hasCredentials = /aws_access_key_id\s*=\s*\S+/.test(content);
+          getLoadedCredentials();
         } catch {
-          // no credentials file
-        }
-
-        if (!hasCredentials) {
-          // Try to sync credentials from vault
-          console.log('AWS credentials not found locally. Run scan to sync from vault:');
-          console.log('  npx stack scan --' + stage);
-          console.log('');
-          return { success: false, error: 'AWS credentials not available. Run npx stack scan --' + stage + ' first to sync from vault.' };
+          console.log('AWS credentials not loaded. Run `npx stack fix --dev` first.');
+          return { success: false, error: 'AWS credentials not loaded. Run `npx stack fix --dev` first.' };
         }
 
         // Get region from config
-        const { getAwsConfig } = await import('../aws/utils/aws-helpers.js');
         const awsConfig = getAwsConfig(config);
         const region = awsConfig.region;
 
@@ -1436,6 +1371,29 @@ class FactiiiPipeline {
     return prodUtils.buildProductionImageLocally(config);
   }
 
+  /**
+   * Build prod image on staging and stream it directly to prod via dev relay.
+   * Selected when prod has no registry/AWS configured but a staging server exists.
+   */
+  static async buildAndShipProdImage(
+    config: FactiiiConfig,
+    stagingConfig: EnvironmentConfig,
+    prodConfig: EnvironmentConfig
+  ): Promise<DeployResult> {
+    return prodUtils.buildAndShipProdImage(config, stagingConfig, prodConfig);
+  }
+
+  /**
+   * Run the prod-side `docker compose up` for the registry-less flow.
+   * Pairs with buildAndShipProdImage — image is already loaded on prod.
+   */
+  static async deployProdPiped(
+    config: FactiiiConfig,
+    prodConfig: EnvironmentConfig
+  ): Promise<DeployResult> {
+    return prodUtils.deployProdPiped(config, prodConfig);
+  }
+
   // ============================================================
   // INSTANCE METHODS
   // ============================================================
@@ -1464,58 +1422,42 @@ class FactiiiPipeline {
       return { success: false, error: reach.reason };
     }
 
-    if (reach.via === 'ssh') {
-      // For prod with AWS config: build locally on dev machine, then SSH only for pull+restart
-      // This avoids building Docker on resource-constrained prod servers (e.g., t3.micro 1GB RAM)
-      if (stage === 'prod' && this._config.aws) {
-        console.log(`   Deploying to ${stage} via local build + SSH pull...`);
+    // Dev-direct: everything runs on the dev machine. For AWS prod, that
+    // means local build + SSH pull/restart (deployProd already does this
+    // git-free/node-free on the server). For other stages, the server
+    // plugin's deploy() runs via the shared SSH tunnel.
+    if (stage === 'prod' && this._config.aws) {
+      console.log(`   Deploying to ${stage} via local build + SSH pull...`);
 
-        // Step 1: Build Docker image locally and push to ECR (on dev machine)
-        if (!process.env.SKIP_BUILD) {
-          const { extractEnvironments } = await import('../../../utils/config-helpers.js');
-          const environments = extractEnvironments(this._config);
-          const stagingConfig = environments.staging;
+      if (!process.env.SKIP_BUILD) {
+        const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+        const environments = extractEnvironments(this._config);
+        const stagingConfig = environments.staging;
 
-          if (stagingConfig?.domain) {
-            console.log('   🔨 Building production image on staging server...');
-            const buildResult = await FactiiiPipeline.buildProductionImage(
-              this._config,
-              stagingConfig
-            );
-            if (!buildResult.success) {
-              return buildResult;
-            }
-          } else {
-            // No staging server — build locally on dev machine
-            console.log('   🔨 Building production image locally...');
-            const buildResult = await FactiiiPipeline.buildProductionImageLocally(this._config);
-            if (!buildResult.success) {
-              return buildResult;
-            }
+        if (stagingConfig?.domain) {
+          console.log('   🔨 Building production image on staging server...');
+          const buildResult = await FactiiiPipeline.buildProductionImage(
+            this._config,
+            stagingConfig,
+          );
+          if (!buildResult.success) {
+            return buildResult;
           }
         } else {
-          console.log('   ⏭️  Skipping build step (SKIP_BUILD is set)');
+          console.log('   🔨 Building production image locally...');
+          const buildResult = await FactiiiPipeline.buildProductionImageLocally(this._config);
+          if (!buildResult.success) {
+            return buildResult;
+          }
         }
-
-        // Step 2: SSH to prod server only for pull + restart (deployProd handles this)
-        const { deployProd } = await import('../aws/prod.js');
-        return deployProd(this._config, stage);
+      } else {
+        console.log('   ⏭️  Skipping build step (SKIP_BUILD is set)');
       }
 
-      // For non-prod or non-AWS: use the original SSH remote command flow
-      console.log(`   Deploying to ${stage} via direct SSH...`);
-      let sshCommand = 'deploy --' + stage;
-      if (options.branch) sshCommand += ' --branch ' + options.branch;
-      if (options.commit) sshCommand += ' --commit ' + options.commit;
-      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, sshCommand);
-      return {
-        success: sshResult.success,
-        message: sshResult.success ? 'Deployment complete via SSH' : undefined,
-        error: sshResult.success ? undefined : sshResult.stderr || 'SSH deployment failed',
-      };
+      const { deployProd } = await import('../aws/prod.js');
+      return deployProd(this._config, stage);
     }
 
-    // via: 'local' - we can run directly (dev stage, or on-server in workflow)
     const localResult = await this.runLocalDeploy(stage, options);
 
     // Also deploy to Vercel if configured (addon triggered by pipeline)
@@ -1548,30 +1490,9 @@ class FactiiiPipeline {
    */
   async scanStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean }> {
     const reach = FactiiiPipeline.canReach(stage, this._config);
-
-    if (!reach.reachable) {
-      return { handled: true };
-    }
-
-    if (reach.via === 'ssh') {
-      // Get domain for display
-      const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
-      const envs = getEnvironmentsForStage(this._config, stage);
-      const envValues = Object.values(envs) as { domain?: string }[];
-      const domain = envValues[0]?.domain || 'unknown';
-
-      console.log('');
-      console.log('┌─ ' + stage.toUpperCase() + ' (via SSH → ' + domain + ')');
-      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'scan --' + stage);
-      console.log('└─');
-
-      if (!sshResult.success) {
-        console.log('   [!] ' + stage + ' scan failed: ' + sshResult.stderr);
-      }
-      return { handled: true };
-    }
-
-    // via: 'local' - caller should run locally
+    if (!reach.reachable) return { handled: true };
+    // Dev-direct: every stage scans locally on the dev machine. Scanfixes
+    // reach the server (when they need to) through the per-stage SSH tunnel.
     return { handled: false };
   }
 
@@ -1583,30 +1504,8 @@ class FactiiiPipeline {
    */
   async fixStage(stage: Stage, _options: Record<string, unknown> = {}): Promise<{ handled: boolean; success?: boolean; error?: string }> {
     const reach = FactiiiPipeline.canReach(stage, this._config);
-
-    if (!reach.reachable) {
-      return { handled: true, success: false, error: reach.reason };
-    }
-
-    if (reach.via === 'ssh') {
-      // Get domain for display
-      const { getEnvironmentsForStage } = await import('../../../utils/config-helpers.js');
-      const envs = getEnvironmentsForStage(this._config, stage);
-      const envValues = Object.values(envs) as { domain?: string; ssh_user?: string }[];
-      const domain = envValues[0]?.domain || 'unknown';
-
-      console.log('');
-      console.log('┌─ ' + stage.toUpperCase() + ' (via SSH → ' + domain + ')');
-      const sshResult = await sshRemoteFactiiiCommand(stage, this._config, 'fix --' + stage);
-      console.log('└─');
-
-      // The remote fix already printed its own summary inline.
-      // Don't double-report: just mark as handled. The user already saw
-      // the server's detailed output (manual fixes, errors, etc.).
-      return { handled: true, success: sshResult.success };
-    }
-
-    // via: 'local' - caller should run locally
+    if (!reach.reachable) return { handled: true, success: false, error: reach.reason };
+    // Dev-direct: every stage's fixes run locally on the dev machine.
     return { handled: false };
   }
 
@@ -1687,7 +1586,20 @@ class FactiiiPipeline {
           }
         } else if (stage === 'prod') {
           const stagingConfig = environments.staging;
-          if (stagingConfig?.domain) {
+          const prodEnvConfig = environments.prod ?? environments.production;
+          // Registry-less path: no AWS/registry config but staging exists.
+          // Build amd64 on staging, stream save→load to prod via dev relay.
+          if (!this._config.aws && stagingConfig?.domain && prodEnvConfig?.domain) {
+            console.log('   🔨 Building & shipping prod image (no registry)...');
+            const buildResult = await FactiiiPipeline.buildAndShipProdImage(
+              this._config,
+              stagingConfig,
+              prodEnvConfig
+            );
+            if (!buildResult.success) {
+              return buildResult;
+            }
+          } else if (stagingConfig?.domain) {
             console.log('   🔨 Building production image on staging server...');
             const buildResult = await FactiiiPipeline.buildProductionImage(
               this._config,
@@ -1714,6 +1626,17 @@ class FactiiiPipeline {
       if (stage === 'prod' && this._config.aws) {
         const { deployProd } = await import('../aws/prod.js');
         return deployProd(this._config, stage);
+      }
+      // For prod without AWS but with a staging server: piped flow paired with
+      // buildAndShipProdImage. Skip ECR login/pull entirely.
+      if (stage === 'prod' && !this._config.aws) {
+        const { extractEnvironments } = await import('../../../utils/config-helpers.js');
+        const envs = extractEnvironments(this._config);
+        const prodEnvConfig = envs.prod ?? envs.production;
+        const stagingConfig = envs.staging;
+        if (stagingConfig?.domain && prodEnvConfig?.domain) {
+          return FactiiiPipeline.deployProdPiped(this._config, prodEnvConfig);
+        }
       }
       return serverInstance.deploy(this._config, stage);
     } catch (error) {

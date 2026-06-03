@@ -1,10 +1,12 @@
 /**
  * Tests for canReach() - the routing decision maker
  *
- * canReach() determines HOW each stage is reached:
+ * Dev-direct model:
  * - dev: always local
- * - secrets: needs vault password
- * - staging/prod: SSH key → 'ssh', GITHUB_TOKEN → 'workflow', neither → unreachable
+ * - staging/prod: `local` when a real domain (non-EXAMPLE) or AWS config exists;
+ *   the CLI runs on dev, reaches the server through the per-stage SSH tunnel
+ *   (opened by the `ssh-tunnel-<stage>` scanfix lazily). No `via: 'ssh'` or
+ *   `'workflow'` branches — the dev machine is the only agent.
  */
 import * as os from 'os';
 import * as path from 'path';
@@ -41,7 +43,8 @@ jest.mock('child_process', () => ({
 }));
 
 import FactiiiPipeline from '../src/plugins/pipelines/factiii/index';
-import type { FactiiiConfig } from '../src/types/index';
+import AWSPipeline from '../src/plugins/pipelines/aws/index';
+import type { FactiiiConfig, Stage } from '../src/types/index';
 
 function mockSshKey(keyName: string): void {
   const keyPath = path.join(os.homedir(), '.ssh', keyName).replace(/\\/g, '/');
@@ -87,106 +90,88 @@ describe('canReach - dev stage', () => {
   });
 });
 
-describe('canReach - secrets stage', () => {
-  test('unreachable when no vault config', () => {
-    const configNoVault = { name: 'test' } as FactiiiConfig;
-    const result = FactiiiPipeline.canReach('secrets', configNoVault);
-    expect(result.reachable).toBe(false);
-  });
-
-  test('reachable when vault password file exists', () => {
-    const vaultPassPath = path.join(os.homedir(), '.vault_pass').replace(/\\/g, '/');
-    mockFile(vaultPassPath);
-    const result = FactiiiPipeline.canReach('secrets', baseConfig);
+describe('canReach - staging/prod stages', () => {
+  test('staging with a real domain is reachable locally', () => {
+    const result = FactiiiPipeline.canReach('staging', baseConfig);
     expect(result.reachable).toBe(true);
-    if (result.reachable) {
-      expect(result.via).toBe('local');
-    }
+    if (result.reachable) expect(result.via).toBe('local');
   });
 
-  test('reachable when ANSIBLE_VAULT_PASSWORD env is set', () => {
-    process.env.ANSIBLE_VAULT_PASSWORD = 'test-password';
-    const result = FactiiiPipeline.canReach('secrets', baseConfig);
+  test('prod (labelled "production") with a real domain is reachable locally', () => {
+    const result = FactiiiPipeline.canReach('prod', baseConfig);
     expect(result.reachable).toBe(true);
+    if (result.reachable) expect(result.via).toBe('local');
   });
 
-  test('unreachable when no vault password available', () => {
-    const result = FactiiiPipeline.canReach('secrets', baseConfig);
+  test('SSH key presence does not change routing — still local', () => {
+    mockSshKey('staging_deploy_key');
+    const result = FactiiiPipeline.canReach('staging', baseConfig);
+    expect(result.reachable).toBe(true);
+    if (result.reachable) expect(result.via).toBe('local');
+  });
+
+  test('GITHUB_TOKEN does not change routing — still local', () => {
+    process.env.GITHUB_TOKEN = 'ghp_test_token';
+    const result = FactiiiPipeline.canReach('staging', baseConfig);
+    expect(result.reachable).toBe(true);
+    if (result.reachable) expect(result.via).toBe('local');
+  });
+
+  test('EXAMPLE domain with no AWS config is unreachable', () => {
+    const config: FactiiiConfig = {
+      name: 'test',
+      staging: { server: 'ubuntu', domain: 'EXAMPLE_staging.com' },
+    } as FactiiiConfig;
+    const result = FactiiiPipeline.canReach('staging', config);
     expect(result.reachable).toBe(false);
+    if (!result.reachable) expect(result.reason).toContain('placeholder');
+  });
+
+  test('EXAMPLE domain with AWS config is reachable (AWS can provision)', () => {
+    const config: FactiiiConfig = {
+      name: 'test',
+      staging: {
+        server: 'ubuntu',
+        domain: 'EXAMPLE_staging.com',
+        config: 'ec2',
+        access_key_id: 'AKIAEXAMPLE',
+      },
+    } as FactiiiConfig;
+    const result = FactiiiPipeline.canReach('staging', config);
+    expect(result.reachable).toBe(true);
+    if (result.reachable) expect(result.via).toBe('local');
   });
 });
 
-describe('canReach - staging/prod stages', () => {
-  test('returns local when GITHUB_ACTIONS is set (on server)', () => {
-    process.env.GITHUB_ACTIONS = 'true';
-    const result = FactiiiPipeline.canReach('staging', baseConfig);
-    expect(result.reachable).toBe(true);
-    if (result.reachable) {
-      expect(result.via).toBe('local');
-    }
-  });
+describe('canReach — no remote via paths', () => {
+  const stages: Stage[] = ['dev', 'staging', 'prod'];
 
-  test('returns local when FACTIII_ON_SERVER is set', () => {
-    process.env.FACTIII_ON_SERVER = 'true';
-    const result = FactiiiPipeline.canReach('staging', baseConfig);
-    expect(result.reachable).toBe(true);
-    if (result.reachable) {
-      expect(result.via).toBe('local');
-    }
-  });
+  // Minimal config covering both pipelines' branches.
+  const cfg: FactiiiConfig = {
+    name: 'test',
+    ansible: { vault_path: 'vault.yml', vault_password_file: '~/.vault_pass' },
+    staging: { domain: 'staging.test.com' },
+    prod: { domain: 'prod.test.com' },
+    aws: { region: 'us-east-1' },
+  } as unknown as FactiiiConfig;
 
-  test('returns ssh when staging SSH key exists', () => {
-    mockSshKey('staging_deploy_key');
-    const result = FactiiiPipeline.canReach('staging', baseConfig);
-    expect(result.reachable).toBe(true);
-    if (result.reachable) {
-      expect(result.via).toBe('ssh');
-    }
-  });
+  for (const stage of stages) {
+    test('FactiiiPipeline.canReach(' + stage + ') returns local or unreachable', () => {
+      const r = FactiiiPipeline.canReach(stage, cfg);
+      if (r.reachable) {
+        expect(r.via).toBe('local');
+      } else {
+        expect(typeof r.reason).toBe('string');
+      }
+    });
 
-  test('returns ssh when prod SSH key exists', () => {
-    mockSshKey('prod_deploy_key');
-    const result = FactiiiPipeline.canReach('prod', baseConfig);
-    expect(result.reachable).toBe(true);
-    if (result.reachable) {
-      expect(result.via).toBe('ssh');
-    }
-  });
-
-  test('returns unreachable when only generic key exists (no stage-specific fallback)', () => {
-    mockSshKey('id_ed25519');
-    // Implementation only accepts stage-specific keys (staging_deploy_key), not id_ed25519
-    const result = FactiiiPipeline.canReach('staging', baseConfig);
-    expect(result.reachable).toBe(false);
-    if (!result.reachable) {
-      expect(result.reason).toContain('SSH');
-    }
-  });
-
-  test('unreachable when no SSH key even if GITHUB_TOKEN exists', () => {
-    process.env.GITHUB_TOKEN = 'ghp_test_token';
-    const result = FactiiiPipeline.canReach('staging', baseConfig);
-    expect(result.reachable).toBe(false);
-    if (!result.reachable) {
-      expect(result.reason).toContain('SSH');
-    }
-  });
-
-  test('unreachable when no SSH key and no GITHUB_TOKEN', () => {
-    const result = FactiiiPipeline.canReach('staging', baseConfig);
-    expect(result.reachable).toBe(false);
-    if (!result.reachable) {
-      expect(result.reason).toContain('SSH');
-    }
-  });
-
-  test('SSH works regardless of GITHUB_TOKEN presence', () => {
-    mockSshKey('staging_deploy_key');
-    process.env.GITHUB_TOKEN = 'ghp_test_token';
-    const result = FactiiiPipeline.canReach('staging', baseConfig);
-    expect(result.reachable).toBe(true);
-    if (result.reachable) {
-      expect(result.via).toBe('ssh');
-    }
-  });
+    test('AWSPipeline.canReach(' + stage + ') returns local or unreachable', () => {
+      const r = AWSPipeline.canReach(stage, cfg);
+      if (r.reachable) {
+        expect(r.via).toBe('local');
+      } else {
+        expect(typeof r.reason).toBe('string');
+      }
+    });
+  }
 });

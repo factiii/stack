@@ -11,7 +11,7 @@ import { getDefaultVaultPath } from '../../../../utils/config-helpers.js';
 export const fixes: Fix[] = [
   {
     id: 'vercel-token-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'critical',
     description: 'VERCEL_TOKEN not found in Ansible Vault',
     scan: async (config: FactiiiConfig, rootDir: string) => {

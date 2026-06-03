@@ -10,11 +10,13 @@ import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsConfig,
   getProjectName,
+  getResourceNames,
   isAwsConfigured,
   getAwsAccountId,
   findBucket,
   hasCors,
   getS3Client,
+  confirmAwsAction,
   CreateBucketCommand,
   PutPublicAccessBlockCommand,
   PutBucketEncryptionCommand,
@@ -23,10 +25,13 @@ import {
 
 /**
  * Get a globally unique S3 bucket name.
- * Tries `factiii-{project}` first (backwards compatible).
- * Falls back to `factiii-{project}-{accountId}` if the simple name is taken.
+ * Honors `aws.s3_bucket` override first (lets you adopt an existing bucket
+ * whose name doesn't follow the convention).
+ * Otherwise tries `factiii-{project}` then `factiii-{project}-{accountId}`.
  */
-async function resolveBucketName(projectName: string, region: string): Promise<string> {
+async function resolveBucketName(config: FactiiiConfig, projectName: string, region: string): Promise<string> {
+  const override = getResourceNames(config).s3Bucket;
+  if (override) return override;
   const simpleName = 'factiii-' + projectName;
   if (await findBucket(simpleName, region)) return simpleName; // Already ours
   // Try simple name first, use account-scoped name as fallback
@@ -44,13 +49,23 @@ export const s3Fixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const bucketName = await resolveBucketName(projectName, region);
+      const bucketName = await resolveBucketName(config, projectName, region);
       return !(await findBucket(bucketName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const bucketName = await resolveBucketName(projectName, region);
+      const bucketName = await resolveBucketName(config, projectName, region);
+
+      const ok = await confirmAwsAction(
+        'Create S3 bucket "' + bucketName + '" in ' + region + '\n' +
+        '  - Public access: blocked\n' +
+        '  - Encryption: AES-256 server-side'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no S3 bucket created');
+        return false;
+      }
 
       try {
         const s3 = getS3Client(region);
@@ -108,14 +123,14 @@ export const s3Fixes: Fix[] = [
       if (!isAwsConfigured(config)) return false;
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const bucketName = await resolveBucketName(projectName, region);
+      const bucketName = await resolveBucketName(config, projectName, region);
       if (!(await findBucket(bucketName, region))) return false;
       return !(await hasCors(bucketName, region));
     },
     fix: async (config: FactiiiConfig): Promise<boolean> => {
       const { region } = getAwsConfig(config);
       const projectName = getProjectName(config);
-      const bucketName = await resolveBucketName(projectName, region);
+      const bucketName = await resolveBucketName(config, projectName, region);
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { extractEnvironments } = require('../../../../utils/config-helpers.js');
@@ -125,6 +140,16 @@ export const s3Fixes: Fix[] = [
 
       if (!domain || domain.toUpperCase().startsWith('EXAMPLE')) {
         console.log('   Set production domain in stack.yml first');
+        return false;
+      }
+
+      const ok = await confirmAwsAction(
+        'Update S3 bucket CORS for "' + bucketName + '"\n' +
+        '  - Allowed origin: https://' + domain + '\n' +
+        '  - Methods: GET, PUT, POST, DELETE'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — CORS unchanged');
         return false;
       }
 

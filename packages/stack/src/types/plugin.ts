@@ -10,7 +10,7 @@ import type { DeployOptions } from './cli.js';
 /**
  * Deployment stages
  */
-export type Stage = 'dev' | 'secrets' | 'staging' | 'prod';
+export type Stage = 'dev' | 'staging' | 'prod';
 
 /**
  * Server OS types
@@ -36,7 +36,7 @@ export type Severity = 'critical' | 'warning' | 'info';
 /**
  * How a stage can be reached
  */
-export type ReachVia = 'local' | 'ssh' | 'workflow' | 'api' | 'github-api';
+export type ReachVia = 'local';
 
 /**
  * Reachability check result - discriminated union for type safety
@@ -91,13 +91,29 @@ export interface PluginCommand {
   localOnly?: boolean;
   /** Command-specific options */
   options?: CommandOption[];
-  /** Execute the command */
+  /** Execute the command (always runs on the dev machine). */
   execute: (
     stage: Stage,
     options: Record<string, unknown>,
     config: FactiiiConfig,
     rootDir: string
   ) => Promise<CommandResult>;
+  /**
+   * Optional: remote command string to exec on the stage's server via the
+   * shared SSH tunnel. When set and the stage is staging/prod,
+   * `executePluginCommand` opens `ssh-tunnel-<stage>` once, runs this
+   * string through `tunnelExec`, and streams the output back to dev.
+   * Typical shape:
+   *   (stage, opts, cfg) => `sudo docker compose -f ~/.factiii/${cfg.name}/docker-compose.yml logs --tail 30 ${cfg.name}-${stage}`
+   * Commands without a `remoteCmd` and a staging/prod target fail fast with
+   * a clear "not migrated to dev-direct yet" error instead of silently
+   * reaching for a server-side stack CLI that no longer exists.
+   */
+  remoteCmd?: (
+    stage: Stage,
+    options: Record<string, unknown>,
+    config: FactiiiConfig
+  ) => string;
 }
 
 /**
@@ -113,7 +129,7 @@ export interface Fix {
   os?: ServerOS | ServerOS[];
   /**
    * Optional: Only run this fix for specific deployment targets
-   * Used for secrets stage to differentiate staging vs prod secrets
+   * Used to differentiate staging vs prod secrets within dev-stage fix runs
    * Example: A fix with targetStage: 'staging' only runs when deploying to staging
    */
   targetStage?: 'staging' | 'prod';
@@ -123,6 +139,29 @@ export interface Fix {
    * nothing else can run without it.
    */
   blocking?: boolean;
+  /**
+   * Optional: ids of fixes that must succeed before this one runs.
+   *
+   * The DAG runner (utils/dag-runner.ts) orders fixes by these edges, runs
+   * siblings with no shared prereqs in parallel, and marks a fix as `skipped`
+   * (not `failed`) if any of its requires are skipped/failed — so errors
+   * collect cleanly instead of cascading into false "broken" reports.
+   *
+   * Typical chains:
+   *   vault-password-file → vault-unlocked → staging-ssh-key-to-disk
+   *   staging-ssh-key-to-disk → [every staging fix that needs server state]
+   */
+  requires?: string[];
+  /**
+   * Optional: named resource this fix holds. Fixes sharing any id in their
+   * serializeOn lists run serially with respect to each other even when they
+   * have no direct `requires` edge. Use for shared mutable resources: the
+   * single SSH tunnel, interactive prompts, a lock file, etc.
+   *
+   * Example: every staging fix sets `serializeOn: ['ssh-staging']` so they
+   * share one tunnel until a multiplexing channel layer lands later.
+   */
+  serializeOn?: string[];
   scan: (config: FactiiiConfig, rootDir: string) => Promise<boolean>;
   fix?: ((config: FactiiiConfig, rootDir: string) => Promise<boolean>) | null;
   manualFix: string;

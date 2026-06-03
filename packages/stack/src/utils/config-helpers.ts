@@ -7,7 +7,7 @@
 
 import * as fs from 'fs';
 import yaml from 'js-yaml';
-import type { FactiiiConfig, EnvironmentConfig } from '../types/index.js';
+import type { FactiiiConfig, EnvironmentConfig, Stage } from '../types/index.js';
 import { getStackConfigPath, getStackAutoPath, getStackLocalPath } from '../constants/config-files.js';
 
 // ============================================================
@@ -42,9 +42,10 @@ export const RESERVED_CONFIG_KEYS = [
 ] as const;
 
 /**
- * Stage type definition
+ * Stage type — re-exported from types/plugin for convenience.
+ * Canonical definition lives in src/types/plugin.ts.
  */
-export type Stage = 'dev' | 'secrets' | 'staging' | 'prod';
+export type { Stage };
 
 /**
  * Extract environment configs from config object
@@ -86,23 +87,21 @@ export function hasEnvironments(config: FactiiiConfig): boolean {
  *
  * Rules:
  * - 'dev' → 'dev'
- * - 'secrets' → 'secrets'
  * - starts with 'staging' or 'stage-' → 'staging'
  * - starts with 'prod' or equals 'production' → 'prod'
  *
  * @param envName - Environment name (e.g., 'staging2', 'prod')
- * @returns Stage name ('dev' | 'secrets' | 'staging' | 'prod')
+ * @returns Stage name ('dev' | 'staging' | 'prod')
  * @throws Error if environment name doesn't match any pattern
  */
 export function getStageFromEnvironment(envName: string): Stage {
   if (envName === 'dev') return 'dev';
-  if (envName === 'secrets') return 'secrets';
   if (envName.startsWith('staging') || envName.startsWith('stage-')) return 'staging';
   if (envName.startsWith('prod') || envName === 'production') return 'prod';
 
   throw new Error(
     `Cannot determine stage for environment: ${envName}. ` +
-    `Environment names must start with 'staging', 'prod', or be 'dev'/'secrets'.`
+    `Environment names must start with 'staging', 'prod', or be 'dev'.`
   );
 }
 
@@ -280,17 +279,16 @@ export function loadConfig(rootDir: string): FactiiiConfig {
       // stack.local.yml parse error — ignore
     }
   }
-  // Auto-populate ansible vault_path and vault_password_file defaults
-  // This ensures ALL downstream consumers (25+ places) get the correct per-repo vault path
-  // without needing explicit ansible: config in stack.yml
+  // Auto-populate ansible vault_path default.
+  // vault_password_file is intentionally NOT defaulted here — callers must rely on
+  // config.ansible.vault_password_file being set explicitly in stack.yml (or via the
+  // vault-password-file-location migration). Silently falling back to ~/.vault_pass
+  // causes cross-repo password collisions and is the bug this block used to introduce.
   if (!config.ansible) {
-    config.ansible = { vault_path: getDefaultVaultPath(config), vault_password_file: '~/.vault_pass' };
+    config.ansible = { vault_path: getDefaultVaultPath(config) };
   } else {
     if (!config.ansible.vault_path) {
       config.ansible.vault_path = getDefaultVaultPath(config);
-    }
-    if (!config.ansible.vault_password_file) {
-      config.ansible.vault_password_file = '~/.vault_pass';
     }
   }
 

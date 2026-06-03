@@ -6,4 +6,5 @@ Minimal specs for consistent AI behavior on this codebase. For full standards, s
 |------|-------------|
 | `config.md` | Touching stack.yml, stackAuto.yml, stack.local.yml, or environment config |
 | `flow.md` | Understanding deployment flow, fix vs deploy boundary, AWS strategy |
+| `triggering.md` | Adding cross-stage scanfixes, deciding what runs on dev vs staging vs prod |
 | `types.md` | Writing any TypeScript in this repo |
