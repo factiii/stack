@@ -381,17 +381,23 @@ export async function secrets(
     }
 
     case 'export-vault': {
-      const vaultPassFile = (config.ansible?.vault_password_file ?? '~/.vault_pass').replace(/^~/, os.homedir());
+      const { getVaultPasswordString } = await import('../utils/ansible-vault-secrets.js');
 
-      if (!fs.existsSync(vaultPassFile)) {
-        console.log('[ERROR] Vault password file not found: ' + vaultPassFile);
-        console.log('Run: npx stack init  (or npx stack fix --dev) to create one');
+      let vaultPassword: string;
+      try {
+        vaultPassword = await getVaultPasswordString({
+          vault_path: config.ansible?.vault_path ?? '',
+          vault_password_file: config.ansible?.vault_password_file,
+          rootDir,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log('[ERROR] ' + msg);
         return;
       }
 
-      const vaultPassword = fs.readFileSync(vaultPassFile, 'utf8').replace(/^﻿/, '').trim();
       if (!vaultPassword) {
-        console.log('[ERROR] Vault password file is empty: ' + vaultPassFile);
+        console.log('[ERROR] Vault password is empty');
         return;
       }
 
@@ -402,8 +408,12 @@ export async function secrets(
 
       const defaultOutPath = path.join(process.cwd(), 'vault-key.export');
       const outPath = secretName
-        ? (path.isAbsolute(secretName) ? secretName : path.join(process.cwd(), secretName))
+        ? path.resolve(process.cwd(), secretName)
         : defaultOutPath;
+      if (!outPath.startsWith(process.cwd() + path.sep) && outPath !== defaultOutPath) {
+        console.log('[ERROR] Export path must be within the current directory');
+        return;
+      }
 
       fs.writeFileSync(outPath, vaultPassword + '\n', { encoding: 'utf8', mode: 0o600 });
       console.log('[OK] Vault key exported to: ' + outPath);
@@ -426,7 +436,11 @@ export async function secrets(
         return;
       }
 
-      const importPath = path.isAbsolute(secretName) ? secretName : path.join(process.cwd(), secretName);
+      const importPath = path.resolve(process.cwd(), secretName);
+      if (!importPath.startsWith(process.cwd() + path.sep) && importPath !== path.resolve(process.cwd(), secretName)) {
+        console.log('[ERROR] Import path must be within the current directory');
+        return;
+      }
 
       if (!fs.existsSync(importPath)) {
         console.log('[ERROR] File not found: ' + importPath);

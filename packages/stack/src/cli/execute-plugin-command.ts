@@ -9,7 +9,7 @@
  * 4. If via: 'local' -> execute command directly (all routes are local in dev-direct model)
  */
 
-import { execSync, spawn } from 'child_process';
+import { execSync, execFileSync, spawn } from 'child_process';
 
 import { loadConfig } from '../utils/config-helpers.js';
 import type {
@@ -74,13 +74,13 @@ async function triggerCommandWorkflow(
     const optionsJson = JSON.stringify(options);
 
     // Use gh workflow run with -f for each input field
-    const cmd = 'gh workflow run "' + workflowFile + '" ' +
-      '-f category="' + command.category + '" ' +
-      '-f command="' + command.name + '" ' +
-      '-f stage="' + stage + '" ' +
-      "-f options='" + optionsJson.replace(/'/g, "'\\''") + "'";
-
-    execSync(cmd, {
+    execFileSync('gh', [
+      'workflow', 'run', workflowFile,
+      '-f', 'category=' + command.category,
+      '-f', 'command=' + command.name,
+      '-f', 'stage=' + stage,
+      '-f', 'options=' + optionsJson,
+    ], {
       encoding: 'utf8',
       stdio: 'pipe',
     });
@@ -89,10 +89,9 @@ async function triggerCommandWorkflow(
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Get the latest run ID for this workflow
-    const runs = execSync(
-      'gh run list --workflow="' + workflowFile + '" --limit=1 --json databaseId,url',
-      { encoding: 'utf8', stdio: 'pipe' }
-    );
+    const runs = execFileSync('gh', [
+      'run', 'list', '--workflow=' + workflowFile, '--limit=1', '--json', 'databaseId,url',
+    ], { encoding: 'utf8', stdio: 'pipe' });
 
     const runData = JSON.parse(runs) as Array<{ databaseId: number; url: string }>;
     if (runData.length > 0 && runData[0]) {

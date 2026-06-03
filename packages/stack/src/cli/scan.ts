@@ -578,10 +578,14 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
   }
 
   // Apply target-stage and OS filters.
+  const platformToOS: Record<string, string> = { darwin: 'mac', linux: 'ubuntu', win32: 'windows' };
   const filteredFixes = allFixes.filter((fix) => {
     if (targetStage && fix.targetStage && fix.targetStage !== targetStage) return false;
     if (fix.os) {
-      const targetOS = stageToOS[fix.stage];
+      let targetOS = stageToOS[fix.stage];
+      if (!targetOS && fix.stage === 'dev') {
+        targetOS = platformToOS[process.platform] as ServerOS | undefined;
+      }
       if (targetOS) {
         const fixOSList = Array.isArray(fix.os) ? fix.os : [fix.os];
         if (!fixOSList.includes(targetOS)) return false;

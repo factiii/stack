@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { deploySecrets } from './deploy-secrets.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
-import type { FactiiiConfig, DeployOptions, DeployResult, Fix, Stage } from '../types/index.js';
+import type { FactiiiConfig, DeployOptions, DeployResult, Fix, Stage, ServerOS } from '../types/index.js';
 import { extractEnvironments, getStageFromEnvironment, loadConfig } from '../utils/config-helpers.js';
 
 /**
@@ -196,8 +196,23 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     }
   }
 
+  // OS filter: skip fixes meant for a different OS (e.g. mac Homebrew on Windows)
+  const platformToOS: Record<string, string> = { darwin: 'mac', linux: 'ubuntu', win32: 'windows' };
+  const filteredFixes = allFixes.filter((fix) => {
+    if (fix.os) {
+      if (fix.stage === 'dev') {
+        const currentOS = platformToOS[process.platform] as ServerOS | undefined;
+        if (currentOS) {
+          const fixOSList = Array.isArray(fix.os) ? fix.os : [fix.os];
+          if (!fixOSList.includes(currentOS)) return false;
+        }
+      }
+    }
+    return true;
+  });
+
   const { runStageChain } = await import('../utils/stage-chain.js');
-  const chain = await runStageChain(allFixes, {
+  const chain = await runStageChain(filteredFixes, {
     config,
     rootDir,
     stages: prereqStages,

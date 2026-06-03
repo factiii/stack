@@ -22,7 +22,7 @@ import * as path from 'path';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import { loadConfig, isDevOnly } from '../utils/config-helpers.js';
 import { generateEnvVarFixes } from './scan.js';
-import type { FactiiiConfig, Fix, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
+import type { FactiiiConfig, Fix, FixOptions, FixResult, Stage, Reachability, ServerOS } from '../types/index.js';
 
 interface PluginClass {
   id: string;
@@ -86,8 +86,16 @@ async function runChainAsFix(
     allFixes.push(...envFixes);
   }
 
+  const platformToOS: Record<string, string> = { darwin: 'mac', linux: 'ubuntu', win32: 'windows' };
   const filtered = allFixes.filter((fix) => {
     if (options.targetStage && fix.targetStage && fix.targetStage !== options.targetStage) return false;
+    if (fix.os && fix.stage === 'dev') {
+      const currentOS = platformToOS[process.platform] as ServerOS | undefined;
+      if (currentOS) {
+        const fixOSList = Array.isArray(fix.os) ? fix.os : [fix.os];
+        if (!fixOSList.includes(currentOS)) return false;
+      }
+    }
     return true;
   });
 

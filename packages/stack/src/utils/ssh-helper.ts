@@ -242,7 +242,7 @@ async function autoSetupSshKey(
     console.log('');
     try {
       const pubKeyContent = fs.readFileSync(pubKeyPath, 'utf8').trim();
-      const addKeyCmd = 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo "' + pubKeyContent + '" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && sort -u -o ~/.ssh/authorized_keys ~/.ssh/authorized_keys';
+      const addKeyCmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys << 'SSHPUBKEYEOF'\n" + pubKeyContent + "\nSSHPUBKEYEOF\nchmod 600 ~/.ssh/authorized_keys && sort -u -o ~/.ssh/authorized_keys ~/.ssh/authorized_keys";
       const copyResult = spawnSync('ssh', [
         '-o', 'StrictHostKeyChecking=no',
         '-o', 'ConnectTimeout=10',

@@ -241,14 +241,16 @@ export function loadConfig(rootDir: string): FactiiiConfig {
     }
   }
 
+  const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
   // Merge stackAuto.yml (auto-detected defaults, stack.yml wins)
   const autoPath = getStackAutoPath(rootDir);
   if (fs.existsSync(autoPath)) {
     try {
       const autoConfig = (yaml.load(fs.readFileSync(autoPath, 'utf8')) as Record<string, unknown>) ?? {};
       for (const [key, value] of Object.entries(autoConfig)) {
+        if (DANGEROUS_KEYS.has(key)) continue;
         if (!(key in config)) {
-          // stackAuto.yml provides defaults that stack.yml can override
           (config as Record<string, unknown>)[key] = value;
         } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
           // Deep merge objects (e.g., ansible section)
@@ -272,7 +274,7 @@ export function loadConfig(rootDir: string): FactiiiConfig {
     try {
       const localConfig = (yaml.load(fs.readFileSync(localPath, 'utf8')) as Record<string, unknown>) ?? {};
       for (const [key, value] of Object.entries(localConfig)) {
-        // stack.local.yml values always win (override stack.yml and stackAuto.yml)
+        if (DANGEROUS_KEYS.has(key)) continue;
         (config as Record<string, unknown>)[key] = value;
       }
     } catch {
