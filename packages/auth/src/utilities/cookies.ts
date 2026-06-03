@@ -223,6 +223,17 @@ export function setClientCookie(
   settings: Partial<CookieSettings>,
   storageKeys: { clientToken: string },
 ): void {
+  // Batched tRPC procedures run concurrently on one shared res. The check and
+  // appendHeader below are synchronous and adjacent (no await between them), so
+  // the first stale-cookie procedure appends and the rest bail — without this,
+  // every procedure appends its own copy, stacking N Set-Cookie headers and
+  // overflowing the proxy's header buffer (502).
+  const existing = res.getHeader('Set-Cookie');
+  const existingCookies = Array.isArray(existing) ? existing : existing ? [existing] : [];
+  if (existingCookies.some((c) => typeof c === 'string' && c.startsWith(`${storageKeys.clientToken}=`))) {
+    return;
+  }
+
   const expiresDate = settings.maxAge
     ? new Date(Date.now() + settings.maxAge * 1000).toUTCString()
     : undefined;
