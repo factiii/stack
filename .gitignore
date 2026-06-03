@@ -53,3 +53,7 @@ infra.conf
 # Local config overrides (per-developer, never committed)
 stack.local.yml
 factiii.local.yml
+
+# Vault key export files (contain encrypted vault passwords)
+vault-key.export
+*.vault-export

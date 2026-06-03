@@ -32,7 +32,9 @@ export type SecretsAction =
   | 'list-env'
   | 'delete-env'
   | 'deploy'
-  | 'write-ssh-keys';
+  | 'write-ssh-keys'
+  | 'export-vault'
+  | 'import-vault';
 
 function loadConfigOrThrow(rootDir: string): FactiiiConfig {
   const config = loadConfig(rootDir);
@@ -375,6 +377,98 @@ export async function secrets(
       if (!stagingKey && !prodKey) {
         console.log('[!] No SSH keys found in vault');
       }
+      break;
+    }
+
+    case 'export-vault': {
+      const vaultPassFile = (config.ansible?.vault_password_file ?? '~/.vault_pass').replace(/^~/, os.homedir());
+
+      if (!fs.existsSync(vaultPassFile)) {
+        console.log('[ERROR] Vault password file not found: ' + vaultPassFile);
+        console.log('Run: npx stack init  (or npx stack fix --dev) to create one');
+        return;
+      }
+
+      const vaultPassword = fs.readFileSync(vaultPassFile, 'utf8').replace(/^﻿/, '').trim();
+      if (!vaultPassword) {
+        console.log('[ERROR] Vault password file is empty: ' + vaultPassFile);
+        return;
+      }
+
+      console.log('\nEXPORT VAULT KEY');
+      console.log('');
+      console.log('This exports your vault password for team onboarding.');
+      console.log('The vault is already protected by your per-operation passphrase.\n');
+
+      const defaultOutPath = path.join(process.cwd(), 'vault-key.export');
+      const outPath = secretName
+        ? (path.isAbsolute(secretName) ? secretName : path.join(process.cwd(), secretName))
+        : defaultOutPath;
+
+      fs.writeFileSync(outPath, vaultPassword + '\n', { encoding: 'utf8', mode: 0o600 });
+      console.log('[OK] Vault key exported to: ' + outPath);
+      console.log('');
+      console.log('Share this file with your teammate, then they run:');
+      console.log('  npx stack secrets import-vault ' + path.basename(outPath));
+      console.log('');
+      console.log('IMPORTANT: Do not commit this file to git.');
+      break;
+    }
+
+    case 'import-vault': {
+      const { confirm: confirmImport } = await import('../utils/secret-prompts.js');
+
+      if (!secretName) {
+        console.log('[ERROR] Export file path required');
+        console.log('Usage: npx stack secrets import-vault <file>');
+        console.log('');
+        console.log('Example: npx stack secrets import-vault vault-key.export');
+        return;
+      }
+
+      const importPath = path.isAbsolute(secretName) ? secretName : path.join(process.cwd(), secretName);
+
+      if (!fs.existsSync(importPath)) {
+        console.log('[ERROR] File not found: ' + importPath);
+        return;
+      }
+
+      const vaultPass = fs.readFileSync(importPath, 'utf8').replace(/^﻿/, '').trim();
+      if (!vaultPass) {
+        console.log('[ERROR] Vault key file is empty');
+        return;
+      }
+
+      console.log('\nIMPORT VAULT KEY');
+      console.log('');
+      console.log('This will save the vault key to your local machine.\n');
+
+      const destPath = (config.ansible?.vault_password_file ?? '~/.vault_pass').replace(/^~/, os.homedir());
+
+      if (fs.existsSync(destPath)) {
+        const existing = fs.readFileSync(destPath, 'utf8').replace(/^﻿/, '').trim();
+        if (existing === vaultPass) {
+          console.log('[OK] Vault password already matches — no changes needed');
+          return;
+        }
+        const overwrite = await confirmImport('   Vault password file already exists at ' + destPath + '. Overwrite?', false);
+        if (!overwrite) {
+          console.log('   Aborted — no changes made');
+          return;
+        }
+      }
+
+      const destDir = path.dirname(destPath);
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+      }
+      fs.writeFileSync(destPath, vaultPass + '\n', { mode: 0o600 });
+      console.log('');
+      console.log('[OK] Vault password saved to: ' + destPath);
+      console.log('');
+      console.log('You can now access the shared vault. Run:');
+      console.log('  npx stack secrets list    — to verify secrets are readable');
+      console.log('  npx stack scan            — to continue setup');
       break;
     }
   }
