@@ -16,14 +16,13 @@
  *
  * How this works:
  *
- * 1. User specifies stage: --dev, --secrets, --staging, --prod
+ * 1. User specifies stage: --dev, --staging, --prod
  *    Or no flag = all stages in order
  *
  * 2. This file groups all plugin fixes by their stage property
  *
  * 3. For each requested stage, asks PIPELINE PLUGIN: canReach(stage)?
  *    - { reachable: true, via: 'local' } → run fixes locally
- *    - { reachable: true, via: 'ssh' } → pipeline SSHs to server
  *    - { reachable: false, reason: '...' } → show error, stop
  *
  * CRITICAL: This file does NOT know about:
@@ -71,19 +70,6 @@ interface PluginClass {
   fixes?: Fix[];
   requiredEnvVars?: string[];
   canReach?: (stage: Stage, config: FactiiiConfig) => Reachability;
-}
-
-/**
- * Pipeline plugin class interface (mirrors deploy.ts pattern)
- */
-interface PipelinePluginClass {
-  id: string;
-  category: 'pipeline';
-  new(config: FactiiiConfig): PipelinePluginInstance;
-}
-
-interface PipelinePluginInstance {
-  scanStage(stage: Stage, options: Record<string, unknown>): Promise<{ handled: boolean }>;
 }
 
 /**
@@ -163,7 +149,7 @@ async function runBootstrapFixes(plugins: PluginClass[], rootDir: string): Promi
 /**
  * Generate env var fixes from plugin requiredEnvVars
  */
-function generateEnvVarFixes(
+export function generateEnvVarFixes(
   plugin: PluginClass,
   rootDir: string,
   _config: FactiiiConfig
@@ -265,15 +251,6 @@ function getStageStatus(
     };
   }
 
-  // Stage is reachable remotely (pipeline handles it)
-  if (reach && reach.reachable && reach.via !== 'local') {
-    return {
-      icon: '[~]',
-      label: 'Via ' + reach.via,
-      detail: 'Handled by pipeline plugin',
-    };
-  }
-
   // Stage is directly reachable (local)
   if (problemCount === 0) {
     return {
@@ -300,16 +277,16 @@ function displayProblems(
 ): void {
   if (options.silent) return;
 
-  const stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
+  const stages: Stage[] = ['dev', 'staging', 'prod'];
   let totalProblems = 0;
   const unreachableStages: { stage: Stage; reason: string }[] = [];
 
   // Count total problems (only for locally-scanned stages)
   for (const stage of stages) {
     if (reachability[stage]) {
-      const stageProblems = problems[stage] ?? [];
+      const stageProblems = problems[stage as keyof ScanProblems] ?? [];
       const reach = reachability[stage];
-      if (reach?.reachable && reach.via === 'local') {
+      if (reach?.reachable) {
         totalProblems += stageProblems.length;
       }
     }
@@ -323,7 +300,7 @@ function displayProblems(
     const reach = reachability[stage];
     if (!reach) continue; // Stage wasn't checked
 
-    const problemCount = problems[stage]?.length ?? 0;
+    const problemCount = problems[stage as keyof ScanProblems]?.length ?? 0;
     const status = getStageStatus(stage, reach, problemCount);
 
     // Format: [STAGE]     icon Status (detail)
@@ -359,7 +336,7 @@ function displayProblems(
         console.log('    Fix: Add ansible config to stack.yml:');
         console.log('           ansible:');
         console.log('             vault_path: group_vars/all/vault-YOUR_REPO_NAME.yml');
-        console.log('             vault_password_file: ~/.vault_pass');
+        console.log('             vault_password_file: .vault_pass');
       } else if (reasonLower.includes('vault password') || reasonLower.includes('vault_pass')) {
         console.log('    Fix: Create vault password file:');
         console.log('           echo "your-password" > ~/.vault_pass && chmod 600 ~/.vault_pass');
@@ -369,8 +346,8 @@ function displayProblems(
         console.log('           npx stack deploy --secrets write-ssh-keys  (extract keys to ~/.ssh/)');
       } else if (reasonLower.includes('github_token')) {
         console.log('    Fix: export GITHUB_TOKEN=your_token');
-        console.log('         Or set up SSH keys instead (preferred):');
-        console.log('           npx stack fix --secrets');
+        console.log('         Or set up SSH keys (preferred):');
+        console.log('           npx stack deploy --secrets write-ssh-keys');
       } else {
         console.log('    Fix: npx stack fix');
       }
@@ -388,10 +365,9 @@ function displayProblems(
       const reach = reachability[stage];
       if (!reach) continue;
 
-      const stageProblems = problems[stage] ?? [];
+      const stageProblems = problems[stage as keyof ScanProblems] ?? [];
 
-      // Skip stages not scanned locally
-      if (!reach.reachable || reach.via !== 'local') {
+      if (!reach.reachable) {
         continue;
       }
 
@@ -418,13 +394,6 @@ function displayProblems(
     console.log('Found ' + totalProblems + ' issue' + (totalProblems > 1 ? 's' : '') + '.');
     console.log('Hint: Run: npx stack fix\n');
   }
-}
-
-/**
- * Get pipeline plugin from loaded plugins
- */
-function getPipelinePlugin(plugins: PluginClass[]): PluginClass | undefined {
-  return plugins.find((p) => p.category === 'pipeline');
 }
 
 /**
@@ -480,10 +449,21 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
     console.log('  This will scan your codebase and create stack.yml');
     console.log('  with EXAMPLE_ values for you to fill in.');
     console.log('');
-    return { dev: [], secrets: [], staging: [], prod: [] };
+    return { dev: [], staging: [], prod: [] };
   }
 
   const config = loadConfig(rootDir);
+
+  const { loadAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+  if (isAwsConfigured(config)) {
+    try {
+      await loadAwsCredentials(config, rootDir);
+    } catch (e) {
+      // Surface clean message; the scanfix system handles the "missing creds" case
+      // by emitting an actionable manualFix. Don't crash here — let the scan continue.
+      console.log('   [!] ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
 
   // If commit hash provided, verify we're scanning the right code
   if (options.commit) {
@@ -508,7 +488,7 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
   }
 
   // Determine which stages to scan
-  let stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
+  let stages: Stage[] = ['dev', 'staging', 'prod'];
   let targetStage: 'staging' | 'prod' | undefined;
 
   // Explicit stages array takes priority (used by fix.ts multi-pass loop)
@@ -518,23 +498,21 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
     targetStage = options.targetStage;
   }
   else if (options.dev) stages = ['dev'];
-  else if (options.secrets) stages = ['secrets'];
   else if (options.staging) {
-    stages = ['dev', 'secrets', 'staging'];
+    stages = ['dev', 'staging'];
     targetStage = 'staging'; // Only scan staging secrets
   }
   else if (options.prod) {
-    stages = ['dev', 'secrets', 'prod'];
+    stages = ['dev', 'prod'];
     targetStage = 'prod'; // Only scan prod secrets
   }
 
-  // Dev-only gate: when dev_only is true (default), restrict to dev+secrets only
-  // Secrets stage is always allowed (needed to set up tokens/keys before unlocking staging/prod)
+  // Dev-only gate: when dev_only is true (default), restrict to dev only
   // CRITICAL: Keep targetStage so secrets fixes only run for the requested stage
   // Skip dev_only gate when running on the server (SSH'd in or CI)
   const onServer = process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true';
   if (isDevOnly(config) && !onServer) {
-    if (stages.some(s => s !== 'dev' && s !== 'secrets')) {
+    if (stages.some(s => s !== 'dev')) {
       // User explicitly passed --staging or --prod — auto-unlock
       const localPath = path.join(rootDir, 'stack.local.yml');
       if (fs.existsSync(localPath)) {
@@ -550,72 +528,35 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
     }
   }
 
-  // Load all plugins (guaranteed non-null after bootstrap check above)
+  // Reachability check (drives BLOCKERS output and short-circuits unreachable stages).
   const plugins = (await loadPlugins(rootDir))!;
-
-  // Get all pipeline plugins to check reachability (multi-pipeline support)
   const pipelinePlugins = getAllPipelinePlugins(plugins);
-  const pipelinePlugin = getPipelinePlugin(plugins);
 
-  // Check reachability for each stage
-  // Separate local vs remote stages — pipeline plugin handles remote
   const reachability: Record<string, Reachability> = {};
-  const localStages: Stage[] = [];
-  const remoteStages: Stage[] = [];
-
   for (const stage of stages) {
-    // dev and secrets always run locally — they never route via SSH
-    if (stage === 'dev' || stage === 'secrets') {
+    if (stage === 'dev') {
       reachability[stage] = { reachable: true, via: 'local' };
-      localStages.push(stage);
       continue;
     }
-
-    if (pipelinePlugins.length > 0) {
-      // Check all pipeline plugins — first reachable wins
-      reachability[stage] = checkReachability(pipelinePlugins, stage, config);
-
-      if (reachability[stage]?.reachable) {
-        if (reachability[stage]!.via === 'local') {
-          localStages.push(stage);
-        } else {
-          remoteStages.push(stage);
-        }
-      }
-    } else {
-      // No pipeline plugin or no canReach method - assume all reachable locally
-      reachability[stage] = { reachable: true, via: 'local' };
-      localStages.push(stage);
-    }
+    reachability[stage] =
+      pipelinePlugins.length > 0
+        ? checkReachability(pipelinePlugins, stage, config)
+        : { reachable: true, via: 'local' };
   }
+  const reachableStages = stages.filter((s) => reachability[s]?.reachable);
 
-  // Collect all fixes from all plugins (deduplicate by id+stage)
+  // Collect all fixes (deduplicate, env-var fixes, OS-filter — same as before).
   const allFixes: Fix[] = [];
   const seenFixKeys = new Set<string>();
   for (const plugin of plugins) {
-    // Add plugin fixes
     for (const fix of plugin.fixes ?? []) {
       const key = fix.id + ':' + fix.stage;
-      if (seenFixKeys.has(key)) continue; // Skip duplicate
+      if (seenFixKeys.has(key)) continue;
       seenFixKeys.add(key);
       allFixes.push({ ...fix, plugin: plugin.id });
     }
-
-    // Add auto-generated env var fixes
     const envFixes = generateEnvVarFixes(plugin, rootDir, config);
     allFixes.push(...envFixes);
-  }
-
-  // Run scan() for each fix, collect problems found
-  const problems: ScanProblems = {
-    dev: [],
-    secrets: [],
-    staging: [],
-    prod: [],
-  };
-
-  if (!options.silent) {
-    console.log('Scanning...\n');
   }
 
   // Get target server OS for each stage (for OS filtering)
@@ -636,60 +577,40 @@ export async function scan(options: ScanOptions = {}, _isRerun = false): Promise
     stageToOS['dev'] = localConfig.dev_os as ServerOS;
   }
 
-  for (const fix of allFixes) {
-    // Skip if stage not in local stages
-    if (!localStages.includes(fix.stage)) continue;
-
-    // Target stage filtering: Skip secret fixes that don't match deployment target
-    // When running `npx stack fix --staging`, only run staging-related secret fixes
-    // When running `npx stack fix --prod`, only run prod-related secret fixes
-    if (targetStage && fix.targetStage && fix.targetStage !== targetStage) {
-      continue; // Skip this fix - target stage doesn't match
-    }
-
-    // OS filtering: Skip fixes that don't match the target OS
+  // Apply target-stage and OS filters.
+  const filteredFixes = allFixes.filter((fix) => {
+    if (targetStage && fix.targetStage && fix.targetStage !== targetStage) return false;
     if (fix.os) {
       const targetOS = stageToOS[fix.stage];
       if (targetOS) {
         const fixOSList = Array.isArray(fix.os) ? fix.os : [fix.os];
-        if (!fixOSList.includes(targetOS)) {
-          continue; // Skip this fix - OS doesn't match
-        }
+        if (!fixOSList.includes(targetOS)) return false;
       }
     }
+    return true;
+  });
 
-    const startTime = performance.now();
-    try {
-      // Run the scan function
-      const hasProblem = await fix.scan(config, rootDir);
-      const duration = performance.now() - startTime;
+  // Run the chain. applyFixes=false because this is scan.
+  const { runStageChain } = await import('../utils/stage-chain.js');
+  const chainResult = await runStageChain(filteredFixes, {
+    config,
+    rootDir,
+    stages: reachableStages,
+    applyFixes: false,
+  });
 
-      // Log timing for slow checks (> 500ms)
-      if (duration > 500 && !options.silent) {
-        console.log('   [' + duration.toFixed(0) + 'ms] ' + fix.id);
-      }
-
-      if (hasProblem) {
-        problems[fix.stage].push(fix);
-      }
-    } catch (e) {
-      // Scan failed - treat as problem
-      if (!options.silent) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        console.log('  [!] Error scanning ' + fix.id + ': ' + errorMessage);
-      }
-    }
-  }
-
-  // Remote stages: delegate to pipeline plugin
-  if (remoteStages.length > 0 && !options.silent) {
-    const PipelineClass = pipelinePlugin as unknown as PipelinePluginClass;
-    if (PipelineClass && typeof PipelineClass === 'function') {
-      const pipeline = new PipelineClass(config);
-      if (typeof pipeline.scanStage === 'function') {
-        for (const stage of remoteStages) {
-          await pipeline.scanStage(stage, {});
-        }
+  // Convert StageChainResult into the legacy ScanProblems shape so existing
+  // callers (notably fix.ts during its transitional state, the JSON consumers,
+  // anything that reads scan()'s return value) continue to work.
+  const problems: ScanProblems = { dev: [], staging: [], prod: [] };
+  for (const stage of stages) {
+    const stageResult = chainResult.byStage.get(stage);
+    if (!stageResult) continue;
+    for (const fix of filteredFixes) {
+      if (fix.stage !== stage) continue;
+      const outcome = stageResult.outcomes.get(fix.id);
+      if (outcome && outcome.issueDetected) {
+        problems[stage].push(fix);
       }
     }
   }

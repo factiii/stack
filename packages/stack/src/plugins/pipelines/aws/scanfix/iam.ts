@@ -15,11 +15,10 @@ import {
   findIamUser,
   getAwsAccountId,
   getCallerArn,
-  getLocalAccessKeyId,
+  getLoadedCredentials,
   canManageIam,
   getIAMClient,
-  writeAwsCredentials,
-  clearClientCache,
+  setLoadedCredentials,
   CreateUserCommand,
   PutUserPolicyCommand,
   CreateAccessKeyCommand,
@@ -178,16 +177,17 @@ async function ensureIamAccess(config: FactiiiConfig, region: string): Promise<b
 async function _ensureIamAccessInner(config: FactiiiConfig, region: string): Promise<boolean> {
   const { confirm } = await import('../../../../utils/secret-prompts.js');
   const configKeyId = getAwsConfig(config).accessKeyId;
-  const localKeyId = getLocalAccessKeyId();
+  let localKeyId: string | null = null;
+  try { localKeyId = getLoadedCredentials().accessKeyId; } catch { /* not loaded */ }
   const identity = await getCallerArn(region);
 
   // Determine if we can't connect at all vs connected but lacking permissions
   const canConnect = !!identity;
 
-  // Show the key that's actually being used (from ~/.aws/credentials), not just stack.yml
+  // Show the key that's actually being used (from in-memory credentials), not just stack.yml
   const activeKeyId = localKeyId ?? configKeyId ?? 'unknown';
 
-  // Detect mismatch between stack.yml and ~/.aws/credentials
+  // Detect mismatch between stack.yml and loaded credentials
   const hasMismatch = configKeyId && localKeyId && configKeyId !== localKeyId;
 
   console.log('');
@@ -252,8 +252,7 @@ async function _ensureIamAccessInner(config: FactiiiConfig, region: string): Pro
           return false;
         }
 
-        writeAwsCredentials(vaultKeyId, secretKey, region);
-        clearClientCache(); // Pick up new credentials
+        setLoadedCredentials({ accessKeyId: vaultKeyId, secretAccessKey: secretKey, region });
         const newArn = await getCallerArn(region);
         console.log('   [OK] Switched to: ' + (newArn ?? 'unknown'));
 
@@ -301,7 +300,7 @@ async function _ensureIamAccessInner(config: FactiiiConfig, region: string): Pro
 export const iamFixes: Fix[] = [
   {
     id: 'aws-iam-admin-user-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '👤 IAM admin user not created (required for dev workflows)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {
@@ -422,7 +421,7 @@ export const iamFixes: Fix[] = [
   },
   {
     id: 'aws-iam-prod-user-missing',
-    stage: 'secrets',
+    stage: 'dev',
     severity: 'warning',
     description: '👤 IAM prod user not created (deployment access for staging/prod)',
     scan: async (config: FactiiiConfig): Promise<boolean> => {

@@ -91,39 +91,6 @@ export function parseClientCookiePayload(
   }
 }
 
-// ── Domain extraction ───────────────────────────────────────────────────────
-
-/**
- * Extract domain from request headers.
- * Tries origin header first (for POST/PUT/DELETE), then referer (for GET), then host.
- */
-function extractDomain(req: CreateHTTPContextOptions['res']['req']): string | undefined {
-  const origin = req.headers.origin;
-  if (origin) {
-    try {
-      return new URL(origin).hostname;
-    } catch {
-      // Invalid URL, continue to next option
-    }
-  }
-
-  const referer = req.headers.referer;
-  if (referer) {
-    try {
-      return new URL(referer).hostname;
-    } catch {
-      // Invalid URL, continue to next option
-    }
-  }
-
-  const host = req.headers.host;
-  if (host) {
-    return host.split(':')[0];
-  }
-
-  return undefined;
-}
-
 // ── Cookie string builder ───────────────────────────────────────────────────
 
 /**
@@ -162,12 +129,17 @@ export function setAuthCookie(
     authToken: DEFAULT_STORAGE_KEYS.AUTH_TOKEN,
   },
 ): void {
-  const domain = settings.domain ?? extractDomain(res.req);
   const expiresDate = settings.maxAge
     ? new Date(Date.now() + settings.maxAge * 1000).toUTCString()
     : undefined;
 
-  const cookie = buildCookieString(storageKeys.authToken, authToken, settings, domain, expiresDate);
+  const cookie = buildCookieString(
+    storageKeys.authToken,
+    authToken,
+    settings,
+    settings.domain,
+    expiresDate,
+  );
   res.setHeader('Set-Cookie', cookie);
 }
 
@@ -181,10 +153,15 @@ export function clearAuthCookie(
     authToken: DEFAULT_STORAGE_KEYS.AUTH_TOKEN,
   },
 ): void {
-  const domain = extractDomain(res.req);
   const expiredDate = new Date(0).toUTCString();
 
-  const cookie = buildCookieString(storageKeys.authToken, 'destroy', settings, domain, expiredDate);
+  const cookie = buildCookieString(
+    storageKeys.authToken,
+    'destroy',
+    settings,
+    settings.domain,
+    expiredDate,
+  );
   res.setHeader('Set-Cookie', cookie);
 }
 
@@ -202,7 +179,6 @@ export function setAuthCookies(
   settings: Partial<CookieSettings>,
   storageKeys: { authToken: string; clientToken?: string },
 ): void {
-  const domain = settings.domain ?? extractDomain(res.req);
   const expiresDate = settings.maxAge
     ? new Date(Date.now() + settings.maxAge * 1000).toUTCString()
     : undefined;
@@ -212,7 +188,7 @@ export function setAuthCookies(
     storageKeys.authToken,
     authToken,
     settings,
-    domain,
+    settings.domain,
     expiresDate,
   );
 
@@ -229,7 +205,7 @@ export function setAuthCookies(
     storageKeys.clientToken,
     clientValue,
     clientSettings,
-    domain,
+    settings.domain,
     expiresDate,
   );
 
@@ -247,7 +223,17 @@ export function setClientCookie(
   settings: Partial<CookieSettings>,
   storageKeys: { clientToken: string },
 ): void {
-  const domain = settings.domain ?? extractDomain(res.req);
+  // Batched tRPC procedures run concurrently on one shared res. The check and
+  // appendHeader below are synchronous and adjacent (no await between them), so
+  // the first stale-cookie procedure appends and the rest bail — without this,
+  // every procedure appends its own copy, stacking N Set-Cookie headers and
+  // overflowing the proxy's header buffer (502).
+  const existing = res.getHeader('Set-Cookie');
+  const existingCookies = Array.isArray(existing) ? existing : existing ? [existing] : [];
+  if (existingCookies.some((c) => typeof c === 'string' && c.startsWith(`${storageKeys.clientToken}=`))) {
+    return;
+  }
+
   const expiresDate = settings.maxAge
     ? new Date(Date.now() + settings.maxAge * 1000).toUTCString()
     : undefined;
@@ -258,7 +244,7 @@ export function setClientCookie(
     storageKeys.clientToken,
     clientValue,
     clientSettings,
-    domain,
+    settings.domain,
     expiresDate,
   );
 
@@ -273,14 +259,13 @@ export function clearAuthCookies(
   settings: Partial<CookieSettings>,
   storageKeys: { authToken: string; clientToken?: string },
 ): void {
-  const domain = extractDomain(res.req);
   const expiredDate = new Date(0).toUTCString();
 
   const authCookie = buildCookieString(
     storageKeys.authToken,
     'destroy',
     settings,
-    domain,
+    settings.domain,
     expiredDate,
   );
 
@@ -295,7 +280,7 @@ export function clearAuthCookies(
     storageKeys.clientToken,
     'destroy',
     clientSettings,
-    domain,
+    settings.domain,
     expiredDate,
   );
 

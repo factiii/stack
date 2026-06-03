@@ -75,34 +75,5 @@ export const configFixes: Fix[] = [
     fix: null,
     manualFix: 'Check network connectivity to production server',
   },
-  {
-    id: 'prod-repo-not-cloned',
-    stage: 'prod',
-    severity: 'warning',
-    description: '📂 Repository not cloned on production server',
-    scan: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      if (isOnServer()) return false;
-      const { extractEnvironments } = await import('../../../../utils/config-helpers.js');
-      const environments = extractEnvironments(config);
-
-      const envConfig = environments.prod ?? environments.production;
-      if (!envConfig) return false;
-      if (!envConfig?.domain) return false;
-
-      const repoName = config.name ?? 'app';
-
-      // Executed locally - SSH handled by CLI wrapper
-      const fs = await import('fs');
-      const path = await import('path');
-      try {
-        const repoPath = path.join(process.env.HOME ?? '/home/ubuntu', '.factiii', repoName, '.git');
-        return !fs.existsSync(repoPath);
-      } catch {
-        return true;
-      }
-    },
-    fix: null, // Will be handled by ensureServerReady()
-    manualFix: 'Repository will be cloned automatically on first deployment',
-  },
 ];
 

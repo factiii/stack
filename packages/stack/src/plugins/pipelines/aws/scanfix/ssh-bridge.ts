@@ -8,14 +8,12 @@
  * this fix automatically stores it in Ansible Vault as PROD_SSH so that:
  * - Other dev machines can pull the key via `npx stack deploy --secrets write-ssh-keys`
  * - The `missing-prod-ssh` secrets check passes
- * - canReach('prod') returns via: 'ssh' on subsequent runs
+ * - canReach('prod') returns { reachable: true, via: 'local' } on subsequent runs
  *
  * Uses AWS SDK v3 for Elastic IP lookup.
  */
 
 import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsConfig,
@@ -24,6 +22,8 @@ import {
   findInstance,
   findElasticIp,
 } from '../utils/aws-helpers.js';
+import { getStackSshKeyPath } from '../../../../utils/ssh-paths.js';
+import { getStackProjectName } from '../../../../utils/project-identifier.js';
 
 /**
  * Get the Ansible Vault store for this project (if configured)
@@ -50,7 +50,12 @@ export const sshBridgeFixes: Fix[] = [
       if (!config.ansible?.vault_path) return false;
 
       // Check if key file exists on disk (created by aws-keypair-missing fix)
-      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+      let keyPath: string;
+      try {
+        keyPath = getStackSshKeyPath(getStackProjectName(config), 'prod');
+      } catch {
+        return false;
+      }
       if (!fs.existsSync(keyPath)) return false;
 
       // Check if PROD_SSH is already in vault
@@ -65,7 +70,13 @@ export const sshBridgeFixes: Fix[] = [
       }
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
-      const keyPath = path.join(os.homedir(), '.ssh', 'prod_deploy_key');
+      let keyPath: string;
+      try {
+        keyPath = getStackSshKeyPath(getStackProjectName(config), 'prod');
+      } catch (e) {
+        console.log('   ' + (e instanceof Error ? e.message : String(e)));
+        return false;
+      }
       if (!fs.existsSync(keyPath)) {
         console.log('   Key file not found at ' + keyPath);
         return false;

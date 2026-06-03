@@ -6,7 +6,6 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
@@ -84,15 +83,11 @@ export async function getECRRegistry(config: FactiiiConfig, rootDir?: string): P
  */
 async function syncAwsCredsFromVault(config: FactiiiConfig, region: string, rootDir?: string): Promise<void> {
   try {
-    const os = await import('os');
-    const credPath = path.join(os.homedir(), '.aws', 'credentials');
-    // Check if credentials file already has valid content
-    if (fs.existsSync(credPath)) {
-      const content = fs.readFileSync(credPath, 'utf8');
-      if (content.includes('aws_access_key_id') && content.includes('aws_secret_access_key')) {
-        return; // Already configured
-      }
-    }
+    const { getLoadedCredentials } = await import('../aws/utils/aws-helpers.js');
+    try {
+      getLoadedCredentials();
+      return; // credentials already loaded in memory
+    } catch { /* not loaded — fall through to vault read */ }
 
     // Try to read from vault
     if (!config.ansible?.vault_path) return;
@@ -107,8 +102,8 @@ async function syncAwsCredsFromVault(config: FactiiiConfig, region: string, root
     });
     const secretKey = await store.getSecret('AWS_SECRET_ACCESS_KEY');
     if (secretKey) {
-      const { writeAwsCredentials } = await import('../aws/utils/aws-helpers.js');
-      writeAwsCredentials(configKeyId, secretKey, region);
+      const { setLoadedCredentials } = await import('../aws/utils/aws-helpers.js');
+      setLoadedCredentials({ accessKeyId: configKeyId, secretAccessKey: secretKey, region });
       console.log('   [OK] Synced AWS credentials from vault');
     }
   } catch { /* vault sync is best-effort */ }
@@ -439,6 +434,192 @@ export async function buildProductionImageLocally(
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('   Failed to build/push production image: ' + errorMessage);
     return { success: false, error: 'Failed to build/push production image: ' + errorMessage };
+  }
+}
+
+// ============================================================
+// Registry-less prod flow
+// ============================================================
+// Selected when prod has no AWS/registry configured but a staging server
+// exists. Builds linux/amd64 on staging, then streams `docker save | gzip`
+// from staging through the dev machine into `docker load` on prod. No ECR,
+// no docker login, no push/pull. Useful for testing the prod path against
+// a sandbox VM (e.g. an OrbStack instance) without breaking the real
+// AWS/ECR-driven prod release flow.
+// ============================================================
+
+/**
+ * Build prod image on staging and ship it directly to prod via dev relay.
+ *
+ * - Build target: `<config.name>:prod` (no registry prefix), linux/amd64
+ * - Transfer:    ssh staging "docker save | gzip" | ssh prod "gzip -d | docker load"
+ *                (bash handles the pipe; the dev machine relays bytes only)
+ *
+ * The dev machine needs SSH keys for *both* staging (`~/.ssh/staging_deploy_key[_repo]`)
+ * and prod (`~/.ssh/prod_deploy_key[_repo]`). It does NOT require staging to
+ * have any credentials for prod, which is the whole point.
+ */
+export async function buildAndShipProdImage(
+  config: FactiiiConfig,
+  stagingConfig: EnvironmentConfig,
+  prodConfig: EnvironmentConfig
+): Promise<DeployResult> {
+  _sshStage = 'staging';
+  _sshConfig = config;
+
+  const repoName = config.name ?? 'app';
+  const imageTag = repoName + ':prod';
+  const repoDir = '~/.factiii/' + repoName;
+  const dockerfile = 'apps/server/Dockerfile';
+
+  const { findSshKeyForStage } = await import('../../../utils/ssh-helper.js');
+  const stagingKey = findSshKeyForStage('staging', config.name);
+  const prodKey = findSshKeyForStage('prod', config.name);
+  if (!stagingKey) {
+    return { success: false, error: 'No staging SSH key on dev machine (~/.ssh/staging_deploy_key)' };
+  }
+  if (!prodKey) {
+    return { success: false, error: 'No prod SSH key on dev machine (~/.ssh/prod_deploy_key)' };
+  }
+
+  const stagingHost = stagingConfig.domain;
+  const stagingUser = stagingConfig.ssh_user ?? 'ubuntu';
+  const prodHost = prodConfig.domain;
+  const prodUser = prodConfig.ssh_user ?? 'ubuntu';
+
+  if (!stagingHost) return { success: false, error: 'staging domain not configured' };
+  if (!prodHost) return { success: false, error: 'prod domain not configured' };
+
+  console.log('   🔨 Building prod image on staging (' + stagingHost + ')');
+  console.log('      Image: ' + imageTag + ' [linux/amd64]');
+
+  try {
+    // Step 1 — build amd64 image on staging with --load so it's in staging's
+    // docker daemon (docker save needs it loaded, not just in buildx cache).
+    await sshExecCommand(
+      stagingConfig,
+      'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && ' +
+      'cd ' + repoDir + ' && ' +
+      'docker buildx build --platform linux/amd64 --load -t ' + imageTag + ' -f ' + dockerfile + ' .'
+    );
+
+    console.log('   📦 Streaming image staging → dev → prod (gzip -1)');
+
+    // Step 2 — pipe save→load through bash on dev. We use bash directly so
+    // backpressure is handled by the kernel; node would just be a slow relay.
+    const sshOpts = [
+      '-o', 'IdentitiesOnly=yes',
+      '-o', 'StrictHostKeyChecking=accept-new',
+      '-o', 'BatchMode=yes',
+      '-o', 'ServerAliveInterval=15',
+    ].join(' ');
+
+    const cmd =
+      'ssh ' + sshOpts + ' -i ' + stagingKey + ' ' + stagingUser + '@' + stagingHost +
+      ' "docker save ' + imageTag + ' | gzip -1"' +
+      ' | ' +
+      'ssh ' + sshOpts + ' -i ' + prodKey + ' ' + prodUser + '@' + prodHost +
+      ' "gzip -d | docker load"';
+
+    execSync(cmd, { stdio: 'inherit', shell: '/bin/bash' });
+
+    console.log('   ✅ Image loaded on prod: ' + imageTag);
+    return { success: true, message: 'Built ' + imageTag + ' on staging and loaded on prod' };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, error: 'buildAndShipProdImage failed: ' + errorMessage };
+  }
+}
+
+/**
+ * Deploy on prod for the registry-less flow.
+ *
+ * Assumes the image (<config.name>:prod) is already loaded in prod's docker
+ * daemon by buildAndShipProdImage. Updates the prod service's image: in the
+ * existing docker-compose.yml on prod, then `docker compose up -d`. No ECR
+ * login, no docker pull, no internet round-trip for image bytes.
+ *
+ * If no compose file exists on prod yet, we error out — generating compose
+ * from scratch is a separate concern (matches deployProd's behavior).
+ */
+export async function deployProdPiped(
+  config: FactiiiConfig,
+  prodConfig: EnvironmentConfig
+): Promise<DeployResult> {
+  _sshStage = 'prod';
+  _sshConfig = config;
+
+  const repoName = config.name ?? 'app';
+  const imageTag = repoName + ':prod';
+  const serviceName = repoName + '-prod';
+
+  if (!prodConfig.domain) {
+    return { success: false, error: 'prod domain not configured' };
+  }
+
+  console.log('   🚀 Deploying to prod (' + prodConfig.domain + ', no-registry mode)');
+
+  try {
+    // Step 1 — locate compose file. Prefer ~/.factiii (managed) over ~/ (legacy).
+    const composeCheck = await sshExecCommand(
+      prodConfig,
+      'test -f ~/.factiii/docker-compose.yml && echo FACTIII || ' +
+      '(test -f ~/docker-compose.yml && echo HOME || echo MISSING)'
+    );
+
+    let composePath: string;
+    if (composeCheck.includes('FACTIII')) {
+      composePath = '~/.factiii/docker-compose.yml';
+    } else if (composeCheck.includes('HOME')) {
+      composePath = '~/docker-compose.yml';
+    } else {
+      return {
+        success: false,
+        error:
+          'No docker-compose.yml on prod (~/.factiii/ or ~/). ' +
+          'Seed one before running piped prod deploy — see docs.',
+      };
+    }
+
+    // Step 2 — rewrite the prod service's image: to the local tag (drops any
+    // build: section). We pull the file via SSH, mutate locally, write back.
+    const composeContent = await sshExecCommand(prodConfig, 'cat ' + composePath);
+    const compose = yaml.load(composeContent) as {
+      services?: Record<string, { build?: unknown; image?: string; [key: string]: unknown }>;
+      [key: string]: unknown;
+    };
+    if (!compose?.services?.[serviceName]) {
+      return {
+        success: false,
+        error: 'Service "' + serviceName + '" missing from ' + composePath + ' on prod',
+      };
+    }
+    delete compose.services[serviceName].build;
+    compose.services[serviceName].image = imageTag;
+
+    const updated = yaml.dump(compose, { lineWidth: -1 });
+    await sshExecCommand(
+      prodConfig,
+      'cat > ' + composePath + " << 'COMPOSEEOF'\n" + updated + 'COMPOSEEOF'
+    );
+
+    // Step 3 — `up -d`. Image is already loaded; compose just starts it.
+    const composeDir = composePath.replace(/\/docker-compose\.yml$/, '');
+    console.log('   ▶️  docker compose up -d ' + serviceName);
+    await sshExecCommand(
+      prodConfig,
+      'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && ' +
+      'cd ' + composeDir + ' && ' +
+      'docker compose up -d ' + serviceName + ' && ' +
+      'sleep 3 && ' +
+      'docker ps --filter name=' + repoName + ' --format "{{.Names}}: {{.Status}}"'
+    );
+
+    console.log('   ✅ Prod is up with ' + imageTag);
+    return { success: true, message: 'Deployed ' + imageTag + ' to prod (no registry)' };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, error: 'deployProdPiped failed: ' + errorMessage };
   }
 }
 

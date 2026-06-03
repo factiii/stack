@@ -3,11 +3,26 @@
  *
  * Tests SSH key detection and environment config resolution.
  */
-import * as os from 'os';
-import * as path from 'path';
+import * as nativePath from 'path';
+import * as nativeOs from 'os';
+
+// Must be `var` so it is hoisted above jest.mock() calls.
+// The homedir() mock below is only *called* during test execution,
+// at which point the var is already assigned by beforeAll.
+// eslint-disable-next-line no-var
+var fakeHomeOverride: string | undefined;
 
 // Track which files "exist" in our mock
 let mockExistingFiles: Set<string> = new Set();
+
+// Mock os.homedir() using the hoisted var
+jest.mock('os', () => {
+  const actual = jest.requireActual<typeof nativeOs>('os');
+  return {
+    ...actual,
+    homedir: () => fakeHomeOverride ?? actual.homedir(),
+  };
+});
 
 // Mock fs module
 jest.mock('fs', () => {
@@ -43,16 +58,24 @@ jest.mock('child_process', () => ({
   })),
 }));
 
-import { findSshKeyForStage, getEnvConfigForStage } from '../src/utils/ssh-helper';
+import { findSshKeyForStage, findProdPemKey, getEnvConfigForStage } from '../src/utils/ssh-helper';
 import type { FactiiiConfig } from '../src/types/index';
 
-function mockSshKey(keyName: string): string {
-  const keyPath = path.join(os.homedir(), '.ssh', keyName);
-  // Store normalized (forward slash) for mock matching
+const FAKE_HOME = nativePath.join(nativeOs.tmpdir(), 'ssh-helper-test-home');
+
+function mockSshKey(relPath: string): string {
+  const keyPath = nativePath.join(FAKE_HOME, relPath);
   mockExistingFiles.add(keyPath.replace(/\\/g, '/'));
-  // Return native path for comparison (findSshKeyForStage returns native paths)
   return keyPath;
 }
+
+beforeAll(() => {
+  fakeHomeOverride = FAKE_HOME;
+});
+
+afterAll(() => {
+  fakeHomeOverride = undefined;
+});
 
 beforeEach(() => {
   mockExistingFiles = new Set();
@@ -62,41 +85,67 @@ beforeEach(() => {
 });
 
 describe('findSshKeyForStage', () => {
-  test('finds staging_deploy_key for staging stage', () => {
-    const keyPath = mockSshKey('staging_deploy_key');
-    expect(findSshKeyForStage('staging')).toBe(keyPath);
+  test('finds staging_deploy_key for staging stage under ~/.ssh/factiii/<project>/', () => {
+    const keyPath = mockSshKey(nativePath.join('.ssh', 'factiii', 'myapp', 'staging_deploy_key'));
+    expect(findSshKeyForStage('staging', 'myapp')).toBe(keyPath);
   });
 
-  test('finds prod_deploy_key for prod stage', () => {
-    const keyPath = mockSshKey('prod_deploy_key');
-    expect(findSshKeyForStage('prod')).toBe(keyPath);
+  test('finds prod_deploy_key for prod stage under ~/.ssh/factiii/<project>/', () => {
+    const keyPath = mockSshKey(nativePath.join('.ssh', 'factiii', 'myapp', 'prod_deploy_key'));
+    expect(findSshKeyForStage('prod', 'myapp')).toBe(keyPath);
   });
 
-  test('finds mac_deploy_key for mac stage', () => {
-    const keyPath = mockSshKey('mac_deploy_key');
-    expect(findSshKeyForStage('mac')).toBe(keyPath);
+  test('finds mac_deploy_key for mac stage under ~/.ssh/factiii/<project>/', () => {
+    const keyPath = mockSshKey(nativePath.join('.ssh', 'factiii', 'myapp', 'mac_deploy_key'));
+    expect(findSshKeyForStage('mac', 'myapp')).toBe(keyPath);
   });
 
-  test('returns null when only id_ed25519 exists (no stage-specific fallback)', () => {
-    mockSshKey('id_ed25519');
-    // Implementation only checks stage-specific keys (staging_deploy_key), not generic keys
-    expect(findSshKeyForStage('staging')).toBeNull();
+  test('returns null when key does not exist', () => {
+    expect(findSshKeyForStage('staging', 'myapp')).toBeNull();
   });
 
-  test('returns null when only id_rsa exists (no generic key fallback)', () => {
-    mockSshKey('id_rsa');
-    // Implementation only checks stage-specific keys, not generic keys
-    expect(findSshKeyForStage('staging')).toBeNull();
+  test('returns null when key at old legacy path (~/.ssh/staging_deploy_key) but not new path', () => {
+    // Old location — should not be found under new scheme
+    mockSshKey(nativePath.join('.ssh', 'staging_deploy_key'));
+    expect(findSshKeyForStage('staging', 'myapp')).toBeNull();
   });
 
-  test('prefers stage-specific key over generic key', () => {
-    mockSshKey('id_ed25519');
-    const stagingKey = mockSshKey('staging_deploy_key');
-    expect(findSshKeyForStage('staging')).toBe(stagingKey);
+  test('isolates by project name — key for other project is not returned', () => {
+    mockSshKey(nativePath.join('.ssh', 'factiii', 'otherapp', 'staging_deploy_key'));
+    expect(findSshKeyForStage('staging', 'myapp')).toBeNull();
+  });
+});
+
+describe('findProdPemKey', () => {
+  test('finds prod.pem at ~/.ssh/factiii/<project>/prod.pem when no override configured', () => {
+    const pemPath = mockSshKey(nativePath.join('.ssh', 'factiii', 'myapp', 'prod.pem'));
+    const config: FactiiiConfig = { name: 'myapp' } as FactiiiConfig;
+    expect(findProdPemKey(config)).toBe(pemPath);
   });
 
-  test('returns null when no SSH key exists', () => {
-    expect(findSshKeyForStage('staging')).toBeNull();
+  test('returns null when prod.pem does not exist', () => {
+    const config: FactiiiConfig = { name: 'myapp' } as FactiiiConfig;
+    expect(findProdPemKey(config)).toBeNull();
+  });
+
+  test('uses configured aws.prod_ssh_key_path when set', () => {
+    const customPath = nativePath.join(FAKE_HOME, '.ssh', 'custom-key.pem');
+    mockExistingFiles.add(customPath.replace(/\\/g, '/'));
+    const config: FactiiiConfig = {
+      name: 'myapp',
+      aws: { prod_ssh_key_path: customPath } as any,
+    } as FactiiiConfig;
+    expect(findProdPemKey(config)).toBe(customPath);
+  });
+
+  test('expands ~ in configured aws.prod_ssh_key_path', () => {
+    const expandedPath = nativePath.join(FAKE_HOME, '.ssh', 'custom-key.pem');
+    mockExistingFiles.add(expandedPath.replace(/\\/g, '/'));
+    const config: FactiiiConfig = {
+      name: 'myapp',
+      aws: { prod_ssh_key_path: '~/.ssh/custom-key.pem' } as any,
+    } as FactiiiConfig;
+    expect(findProdPemKey(config)).toBe(expandedPath);
   });
 });
 

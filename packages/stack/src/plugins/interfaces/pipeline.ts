@@ -50,7 +50,7 @@ export abstract class PipelinePlugin {
   /**
    * Check if this pipeline can reach a specific stage from current environment
    *
-   * @param stage - 'dev' | 'secrets' | 'staging' | 'prod'
+   * @param stage - 'dev' | 'staging' | 'prod'
    * @param config - stack.yml config
    * @returns Reachability result
    */

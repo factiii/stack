@@ -18,10 +18,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { scan } from './scan.js';
 import { deploySecrets } from './deploy-secrets.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
-import type { FactiiiConfig, DeployOptions, DeployResult, Stage } from '../types/index.js';
+import type { FactiiiConfig, DeployOptions, DeployResult, Fix, Stage } from '../types/index.js';
 import { extractEnvironments, getStageFromEnvironment, loadConfig } from '../utils/config-helpers.js';
 
 /**
@@ -113,6 +112,17 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   const rootDir = options.rootDir ?? process.cwd();
   const config = loadConfig(rootDir);
 
+  const { loadAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+  if (isAwsConfigured(config)) {
+    try {
+      await loadAwsCredentials(config, rootDir);
+    } catch (e) {
+      // Surface clean message; the scanfix system handles the "missing creds" case
+      // by emitting an actionable manualFix. Don't crash here — let the scan continue.
+      console.log('   [!] ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
   console.log('FACTIII DEPLOY\n');
 
   // ============================================================
@@ -124,7 +134,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
   // ============================================================
 
   // Map environment name to stage (staging2 -> staging, prod2 -> prod, etc.)
-  // Do this FIRST because 'dev' and 'secrets' don't require environment configs
+  // Do this FIRST because 'dev' doesn't require environment configs
   let stage: Stage;
   try {
     stage = getStageFromEnvironment(environment);
@@ -134,9 +144,9 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     return { success: false, error: errorMessage };
   }
 
-  // Special stages (dev, secrets) don't require environment configuration
-  // They run locally and don't need server configs
-  if (stage !== 'dev' && stage !== 'secrets') {
+  // Dev stage doesn't require environment configuration
+  // It runs locally and doesn't need server configs
+  if (stage !== 'dev') {
     // Validate environment exists in config (only for staging/prod)
     const environments = extractEnvironments(config);
 
@@ -166,63 +176,41 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
 
   console.log('Stage 1: Running pre-deploy checks...\n');
 
-  // First run scan to check for blocking issues
-  // Only scan the target stage - don't let prod issues block a staging deploy
-  // Clear stage flags from options so they don't override the stages array
-  // (e.g., --secrets sets options.secrets=true which scan interprets as "scan secrets stage only")
-  const scanOptions = { ...options, silent: true, stages: [stage] as Stage[] };
-  delete scanOptions.dev;
-  delete scanOptions.secrets;
-  delete scanOptions.staging;
-  delete scanOptions.prod;
-  delete scanOptions.deploySecrets;
-  const problems = await scan(scanOptions);
+  // Run prereq stages as a fix chain so anything dev/staging that's broken
+  // gets fixed (or surfaces) before we touch deployment artifacts.
+  const prereqStages: Stage[] = stage === 'prod' ? ['dev', 'staging'] : ['dev'];
 
-  // Only block on CRITICAL issues - warnings/info will be auto-fixed during deployment
-  const criticalProblems = Object.values(problems)
-    .flat()
-    .filter(fix => fix && fix.severity === 'critical');
-
-  if (criticalProblems.length > 0) {
-    console.log('[ERROR] Critical issues found that must be fixed before deployment:\n');
-
-    // Group by stage for clearer output
-    const problemsByStage: Record<string, typeof criticalProblems> = {
-      dev: [],
-      secrets: [],
-      staging: [],
-      prod: [],
-    };
-
-    for (const problem of criticalProblems) {
-      const stage = problem?.stage;
-      if (stage && stage in problemsByStage) {
-        const stageArray = problemsByStage[stage];
-        if (stageArray) {
-          stageArray.push(problem);
-        }
-      }
+  // Build fix list same way scan.ts/fix.ts do.
+  const prereqPlugins = await loadRelevantPlugins(rootDir, config);
+  const allFixes: Fix[] = [];
+  const seenFixKeys = new Set<string>();
+  for (const plugin of prereqPlugins) {
+    for (const fix of (plugin as { fixes?: Fix[] }).fixes ?? []) {
+      // Skip fixes targeted at a different deploy stage (e.g. don't run
+      // `missing-prod-ssh` during a staging deploy). Mirrors scan.ts/fix.ts.
+      if (fix.targetStage && fix.targetStage !== stage) continue;
+      const key = fix.id + ':' + fix.stage;
+      if (seenFixKeys.has(key)) continue;
+      seenFixKeys.add(key);
+      allFixes.push({ ...fix, plugin: (plugin as { id: string }).id });
     }
-
-    // Display each stage's critical problems
-    for (const [stageName, stageProblems] of Object.entries(problemsByStage)) {
-      if (stageProblems.length === 0) continue;
-
-      console.log(`${stageName.toUpperCase()}:`);
-      for (const problem of stageProblems) {
-        console.log(`  [ERROR] ${problem.description}`);
-        if (problem.manualFix) {
-          console.log(`    Hint: ${problem.manualFix}`);
-        }
-      }
-      console.log('');
-    }
-
-    console.log('Please fix the issues above and try again.\n');
-    return { success: false, error: 'Critical pre-deploy checks failed' };
-  } else {
-    console.log('[OK] All pre-deploy checks passed!\n');
   }
+
+  const { runStageChain } = await import('../utils/stage-chain.js');
+  const chain = await runStageChain(allFixes, {
+    config,
+    rootDir,
+    stages: prereqStages,
+    applyFixes: true,
+  });
+
+  if (chain.chainBroken) {
+    console.error('\n[X] Prereq stage broken (' + chain.firstFailedStage + '). Fix and retry:');
+    console.error('    npx stack fix');
+    return { success: false, error: 'Prereq chain broken at ' + chain.firstFailedStage };
+  }
+
+  console.log('[OK] All pre-deploy checks passed!\n');
 
   // Auto-deploy secrets from vault if available
   if (!options.deploySecrets && (stage === 'staging' || stage === 'prod') && config.ansible?.vault_path) {
@@ -261,7 +249,7 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
     console.log('  Environment: ' + environment);
     console.log('  Stage:       ' + stage);
 
-    if (stage !== 'dev' && stage !== 'secrets') {
+    if (stage !== 'dev') {
       const environments = extractEnvironments(config);
       const envConfig = environments[environment];
       if (envConfig) {

@@ -13,6 +13,7 @@ import {
   isDomainVerified,
   hasDkim,
   getSESClient,
+  confirmAwsAction,
   VerifyDomainIdentityCommand,
   GetIdentityVerificationAttributesCommand,
   VerifyDomainDkimCommand,
@@ -50,6 +51,16 @@ export const sesFixes: Fix[] = [
       const domain = getProdDomain(config);
       if (!domain) {
         console.log('   Set production domain in stack.yml first');
+        return false;
+      }
+
+      const ok = await confirmAwsAction(
+        'Start SES domain identity verification for "' + domain + '" in ' + region + '\n' +
+        '  - Adds the domain to SES\n' +
+        '  - Returns a TXT record value to add to your DNS'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — no SES verification started');
         return false;
       }
 
@@ -99,6 +110,15 @@ export const sesFixes: Fix[] = [
       const { region } = getAwsConfig(config);
       const domain = getProdDomain(config);
       if (!domain) return false;
+
+      const ok = await confirmAwsAction(
+        'Enable SES DKIM for "' + domain + '" in ' + region + '\n' +
+        '  - Returns 3 CNAME records to add to your DNS for DKIM signing'
+      );
+      if (!ok) {
+        console.log('   [--] Skipped — DKIM not enabled');
+        return false;
+      }
 
       try {
         const ses = getSESClient(region);

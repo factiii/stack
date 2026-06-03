@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import yaml from 'js-yaml';
+import { isWrapped, unwrapPassword, wrapPassword, STACK_VAULT_HEADER } from './vault-key.js';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { encryptSync: (data: string) => string; decryptSync: (data: string) => string } };
 
@@ -59,30 +60,134 @@ function resolveVaultPath(config: AnsibleVaultSecretsConfig): string {
   return path.join(root, p);
 }
 
+// In-process cache of unwrapped vault passwords keyed by absolute file path,
+// so a single CLI invocation prompts for the user passphrase at most once
+// even if it touches the vault many times. Cleared on process exit.
+const unwrappedCache: Map<string, string> = new Map();
+
 /**
- * Get vault password as a string (from env var or password file)
+ * Resolve the vault password for use with ansible-vault.
+ *
+ * Supports three storage formats, tried in order:
+ *   1. ANSIBLE_VAULT_PASSWORD env var (plaintext, CI-friendly)
+ *   2. STACK_VAULT_PASSPHRASE env var unwrapping a STACKVAULT1-headed file
+ *   3. ~/.vault_pass on disk:
+ *      - if first line is "STACKVAULT1": prompt the user for their passphrase
+ *        and unwrap the inner ansible password (scrypt + AES-GCM)
+ *      - otherwise: treat as legacy plaintext, and on first encounter offer
+ *        to encrypt it now (gated by interactive TTY + no opt-out marker)
+ *
+ * Within a single process, the unwrapped password is cached so subsequent
+ * calls don't re-prompt.
  */
-export function getVaultPasswordString(config: AnsibleVaultSecretsConfig): string {
-  // Priority 1: Direct env var
+export async function getVaultPasswordString(config: AnsibleVaultSecretsConfig): Promise<string> {
+  // Priority 1: Direct env var (used by CI / scripted invocations).
   const envPass = getVaultPassword();
   if (envPass) return envPass;
 
-  // Priority 2: Password file (strip BOM + whitespace)
+  // Priority 2: Password file. Read raw, then decide format.
   const file = getVaultPasswordFile(config);
-  if (file) {
-    return fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').trim();
+  if (!file) {
+    throw new Error(
+      'Vault password required. Set ansible.vault_password_file in stack.yml, or ANSIBLE_VAULT_PASSWORD_FILE / ANSIBLE_VAULT_PASSWORD env.'
+    );
   }
 
-  throw new Error(
-    'Vault password required. Set ansible.vault_password_file in stack.yml, or ANSIBLE_VAULT_PASSWORD_FILE / ANSIBLE_VAULT_PASSWORD env.'
-  );
+  const cached = unwrappedCache.get(file);
+  if (cached !== undefined) return cached;
+
+  const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+
+  if (isWrapped(raw)) {
+    // Wrapped form \u2014 need passphrase to unwrap.
+    const passphrase = process.env.STACK_VAULT_PASSPHRASE
+      ?? await promptVaultPassphrase('   Vault passphrase: ');
+    if (!passphrase) {
+      throw new Error('Vault passphrase required (STACKVAULT1-wrapped ' + file + ')');
+    }
+    let inner: string;
+    try {
+      inner = await unwrapPassword(raw, passphrase);
+    } catch {
+      throw new Error('Failed to unwrap ' + file + ' \u2014 wrong passphrase or file is corrupt');
+    }
+    unwrappedCache.set(file, inner);
+    return inner;
+  }
+
+  // Legacy plaintext. Trim and use as-is. Optionally offer to encrypt now,
+  // but only when running interactively and the user hasn't opted out.
+  const plain = raw.trim();
+  await maybeOfferAutoEncrypt(file, plain);
+  unwrappedCache.set(file, plain);
+  return plain;
+}
+
+/**
+ * Prompt the user for the wrapping passphrase. Hidden input on TTY; falls back
+ * to refusing in non-TTY contexts (CI must use STACK_VAULT_PASSPHRASE env).
+ */
+async function promptVaultPassphrase(prompt: string): Promise<string | null> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
+  const { promptSingleLine } = await import('./secret-prompts.js');
+  const value = await promptSingleLine(prompt, { hidden: true });
+  return value || null;
+}
+
+/**
+ * If the password file is plaintext and we're interactive, ask whether to
+ * encrypt it. The user's "no" is remembered via a sidecar marker so we don't
+ * keep nagging.
+ */
+async function maybeOfferAutoEncrypt(file: string, plaintextPassword: string): Promise<void> {
+  if (process.env.STACK_VAULT_NO_ENCRYPT) return;
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return;
+  const declineMarker = file + '.no_encrypt';
+  if (fs.existsSync(declineMarker)) return;
+  if (process.env.GITHUB_ACTIONS === 'true' || process.env.FACTIII_ON_SERVER === 'true') return;
+
+  const { confirm, promptSingleLine } = await import('./secret-prompts.js');
+  console.log('');
+  console.log('   Your ' + file + ' is stored in plaintext.');
+  console.log('   Encrypt it with a passphrase you\'ll be asked for in future commands?');
+  const yes = await confirm('   Encrypt now?', true);
+  if (!yes) {
+    try {
+      fs.writeFileSync(declineMarker, 'declined ' + new Date().toISOString() + '\n', { mode: 0o600 });
+    } catch {
+      // best effort; user can re-decline next time
+    }
+    return;
+  }
+
+  let passphrase = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const a = await promptSingleLine('   New passphrase: ', { hidden: true });
+    const b = await promptSingleLine('   Confirm:        ', { hidden: true });
+    if (!a || a !== b) {
+      console.log('   Passphrases empty or did not match \u2014 try again');
+      continue;
+    }
+    passphrase = a;
+    break;
+  }
+  if (!passphrase) {
+    console.log('   Skipping \u2014 vault password file remains plaintext');
+    return;
+  }
+
+  const wrapped = await wrapPassword(plaintextPassword, passphrase);
+  fs.writeFileSync(file, wrapped, { mode: 0o600 });
+  console.log('   \u2705 Wrote wrapped password file (' + STACK_VAULT_HEADER + ') to ' + file);
+  console.log('      Future commands will prompt for this passphrase.');
+  console.log('      Remove ' + file + ' and recreate plaintext to roll back.');
 }
 
 /**
  * Decrypt an Ansible Vault–encrypted file (pure Node.js, no CLI)
  */
-function vaultView(vaultPath: string, config: AnsibleVaultSecretsConfig): string {
-  const password = getVaultPasswordString(config);
+async function vaultView(vaultPath: string, config: AnsibleVaultSecretsConfig): Promise<string> {
+  const password = await getVaultPasswordString(config);
   // Strip BOM and normalize line endings for cross-platform compatibility
   const vaultContent = fs.readFileSync(vaultPath, 'utf8')
     .replace(/^\uFEFF/, '')
@@ -107,12 +212,12 @@ function vaultView(vaultPath: string, config: AnsibleVaultSecretsConfig): string
 /**
  * Encrypt a plaintext file to Ansible Vault format (pure Node.js, no CLI)
  */
-function vaultEncrypt(
+async function vaultEncrypt(
   inputPath: string,
   outputPath: string,
   config: AnsibleVaultSecretsConfig
-): void {
-  const password = getVaultPasswordString(config);
+): Promise<void> {
+  const password = await getVaultPasswordString(config);
   const plaintext = fs.readFileSync(inputPath, 'utf8');
   const v = new Vault({ password });
   const encrypted = v.encryptSync(plaintext);
@@ -184,13 +289,13 @@ export class AnsibleVaultSecrets {
   /**
    * Ensure vault file exists; if not, create an empty encrypted file
    */
-  private ensureVaultExists(vaultPath: string): void {
+  private async ensureVaultExists(vaultPath: string): Promise<void> {
     if (fs.existsSync(vaultPath)) return;
     const dir = path.dirname(vaultPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const tmp = path.join(os.tmpdir(), `factiii-vault-${Date.now()}.yml`);
     fs.writeFileSync(tmp, '# Factiii secrets\n{}\n', 'utf8');
-    vaultEncrypt(tmp, vaultPath, this.config);
+    await vaultEncrypt(tmp, vaultPath, this.config);
     try {
       fs.unlinkSync(tmp);
     } catch {
@@ -204,7 +309,7 @@ export class AnsibleVaultSecrets {
   private async getDecrypted(): Promise<Record<string, string>> {
     const vaultPath = resolveVaultPath(this.config);
     if (!fs.existsSync(vaultPath)) return {};
-    const content = vaultView(vaultPath, this.config);
+    const content = await vaultView(vaultPath, this.config);
     return parseVaultContent(content);
   }
 
@@ -214,7 +319,7 @@ export class AnsibleVaultSecrets {
   private async getDecryptedFull(): Promise<VaultContent> {
     const vaultPath = resolveVaultPath(this.config);
     if (!fs.existsSync(vaultPath)) return {};
-    const content = vaultView(vaultPath, this.config);
+    const content = await vaultView(vaultPath, this.config);
     return parseVaultContentFull(content);
   }
 
@@ -224,13 +329,13 @@ export class AnsibleVaultSecrets {
   private async saveVault(data: VaultContent): Promise<SetSecretResult> {
     try {
       const vaultPath = resolveVaultPath(this.config);
-      this.ensureVaultExists(vaultPath);
+      await this.ensureVaultExists(vaultPath);
 
       const yamlContent = yaml.dump(data, { lineWidth: -1, noRefs: true });
       const tmpPath = path.join(os.tmpdir(), `factiii-vault-edit-${Date.now()}.yml`);
       fs.writeFileSync(tmpPath, yamlContent, 'utf8');
 
-      vaultEncrypt(tmpPath, vaultPath, this.config);
+      await vaultEncrypt(tmpPath, vaultPath, this.config);
       try {
         fs.unlinkSync(tmpPath);
       } catch {

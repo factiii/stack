@@ -19,39 +19,32 @@ CI/CD systems that trigger deployments.
 **Required Methods:**
 
 ```typescript
-// STATIC: How can this pipeline reach each stage?
+// STATIC: Can this pipeline reach a stage from the dev machine?
+//
+// Under the dev-direct architecture, every command runs on dev.
+// canReach() returns local-or-unreachable; the legacy 'ssh' / 'workflow'
+// routing values no longer exist.
 static canReach(stage: Stage, config: FactiiiConfig): Reachability {
-  // Returns: { reachable: true, via: 'local' | 'ssh' | 'workflow' }
-  // Or:      { reachable: false, reason: 'PROD_SSH not found' }
+  // Returns: { reachable: true, via: 'local' }
+  // Or:      { reachable: false, reason: '...' }
 }
 
-// INSTANCE: Deploy to a stage - handles routing
+// INSTANCE: Deploy to a stage. The CLI runs runStageChain first (in
+// fix mode) and only invokes this when prereqs are clean.
 async deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult> {
-  const reach = MyPipeline.canReach(stage, this.config);
-
-  if (!reach.reachable) {
-    return { success: false, error: reach.reason };
-  }
-
-  if (reach.via === 'ssh') {
-    // SSH to server, run CLI there
-    await sshExec(envConfig, 'npx stack deploy --staging');
-    return { success: true, message: 'Deployed via SSH' };
-  }
-
-  // via: 'local' - execute directly
   return this.runLocalDeploy(stage, options);
 }
 ```
 
-**The Four Stages:**
+**The Three Stages:**
 
-| Stage | Description | Typical Access |
-|-------|-------------|----------------|
-| `dev` | Local development | Always local |
-| `secrets` | Ansible Vault secrets | Always local |
-| `staging` | Staging server | SSH key → password fallback → unreachable |
-| `prod` | Production server | SSH key → password fallback → unreachable |
+| Stage | Description |
+|-------|-------------|
+| `dev` | Dev machine. All scanfixes run here, including ones that touch the vault or write SSH keys. |
+| `staging` | Staging server. Scanfixes run from dev; remote commands route via `serverExec` over the SSH tunnel. |
+| `prod` | Production server. Same as staging. |
+
+Note: the legacy `secrets` stage is folded into `dev`. Vault unlocking, key extraction, and `.env` writing are now `stage: 'dev'` fixes ordered with `requires` chains.
 
 **Factiii Pipeline Routing (actual implementation):**
 
@@ -59,31 +52,25 @@ async deployStage(stage: Stage, options: DeployOptions): Promise<DeployResult> {
 static canReach(stage: Stage, config: FactiiiConfig): Reachability {
   switch (stage) {
     case 'dev':
-    case 'secrets':
       return { reachable: true, via: 'local' };
 
     case 'staging':
-    case 'prod':
-      // On server (in workflow or direct): run locally
-      if (process.env.GITHUB_ACTIONS || process.env.FACTIII_ON_SERVER) {
-        return { reachable: true, via: 'local' };
+    case 'prod': {
+      const envs = getEnvironmentsForStage(config, stage);
+      const allExample = Object.values(envs).every(
+        (e) => !e.domain || e.domain.toUpperCase().startsWith('EXAMPLE'),
+      );
+      const hasAws = Object.values(envs).some((e) => !!e.config || !!e.access_key_id);
+      if (allExample && !hasAws) {
+        return { reachable: false, reason: stage + ' domain is still a placeholder' };
       }
-
-      // On dev machine: check for SSH key (~/.ssh/{stage}_deploy_key)
-      const sshKey = findSshKeyForStage(stage, config.name);
-      if (sshKey) return { reachable: true, via: 'ssh' };
-
-      // Fallback: check vault for {STAGE}_SSH_PASSWORD
-      // ... vault password check → returns via: 'ssh' if found
-
-      // AWS environments: allow local provisioning
-      // ... AWS config check → returns via: 'local' if found
-
-      // Nothing available
-      return { reachable: false, reason: '{STAGE}_SSH not found' };
+      return { reachable: true, via: 'local' };
+    }
   }
 }
 ```
+
+(No SSH-key probing, no GITHUB_TOKEN fallback — the tunnel itself is opened by `runStageChain` on stage entry, and the SSH key is fetched lazily via `findSshKeyForStage`.)
 
 ### 2. SERVERS (OS Types)
 Operating system types that handle OS-specific commands and package management.
@@ -122,27 +109,32 @@ Extensions to frameworks and infrastructure.
 
 ## Stage Execution
 
-**Environment Variables That Affect Routing:**
-
-| Variable | Purpose |
-|----------|---------|
-| `GITHUB_ACTIONS` | Set in GitHub Actions. `canReach()` returns `'local'` for all stages. |
-| `FACTIII_ON_SERVER` | Set when running on server (non-GitHub). `canReach()` returns `'local'`. |
-
 ### How Commands Work
 
-1. User specifies stage: `--dev`, `--secrets`, `--staging`, `--prod` (or no flag = all stages)
-2. Command groups all plugin fixes by their `stage` property
-3. For each requested stage, asks **pipeline plugin**: `canReach(stage)?`
-   - `{ reachable: true, via: 'local' }` → run fixes locally
-   - `{ reachable: true, via: 'ssh' }` → SSH to server, run with `--staging` or `--prod`
-   - `{ reachable: false, reason: '...' }` → show error, stop
+1. User specifies stage: `--dev`, `--staging`, `--prod` (or no flag = all stages).
+2. The command (scan/fix/deploy) collects all plugin fixes.
+3. The command calls `runStageChain(fixes, { stages, applyFixes, ... })`.
+4. The chain runs each stage as a DAG. For staging/prod it opens an SSH tunnel before the DAG and closes it after.
+5. Per-fix outcomes (`ok`/`fixed`/`failed`/`skipped`/`manual`) are returned as a `StageChainResult` and rendered as the end-of-run summary.
 
-### Commands Are Dumb
+### The serverExec Contract
 
-- `scan.ts`, `fix.ts`, `deploy.ts` do NOT know about GITHUB_TOKEN, SSH, workflows
-- They ONLY ask the pipeline plugin: "can you reach this stage?"
-- The **pipeline plugin** decides what's needed (SSH keys, tokens, etc.)
+When a scanfix's `scan` or `fix` function needs to issue a shell command, it calls `serverExec(stage, cmd)`:
+
+- `stage === 'dev'` → local `execSync`.
+- `stage === 'staging' | 'prod'` → `tunnelExec` over the cached per-stage SSH tunnel that `runStageChain` opened on stage entry.
+
+Returns trimmed stdout. Throws on non-zero exit. Scanfix authors do not call `tunnelExec` or `execSync` directly.
+
+### Scanfix Authoring Rules
+
+- **`scan` returns `true` for "issue detected."** Throw only for genuine surprises (filesystem error, malformed config the scan reasonably expected to be valid).
+- **`fix` returns `true` if it resolved the issue, `false` if it could not.** Do not catch errors and return `true` to silence them — let them propagate.
+- **Use `serverExec(stage, cmd)` for all shell commands.** Never call `execSync` directly when you mean "run this on the target stage."
+- **Order with `requires`.** Within a stage, list prereq fix ids in `requires`. The DAG runner topo-sorts and skip-cascades on prereq failure.
+- **Use `os` to filter by target server type.** Cross-OS scanfixes either declare `os: ['mac', 'ubuntu']` and write commands that work on both, or duplicate per-OS with single-OS `os` filters.
+- **Never `process.exit` inside scan or fix.** Return false or throw.
+- **Never check `process.env.GITHUB_ACTIONS` or `FACTIII_ON_SERVER` inside scan or fix.** Scanfixes always run on the dev machine.
 
 ### Command Responsibilities
 
@@ -152,48 +144,23 @@ Extensions to frameworks and infrastructure.
 
 **fix** — Safe changes only. Creates/updates config files, installs CLI tools, creates workflow files. MUST NOT touch deployment artifacts (docker-compose.yml, nginx configs, containers, SSL certs). If a deployment artifact is broken, fix should say: "Run `npx stack deploy --{stage}` to regenerate"
 
-**deploy** — Modifies deployment artifacts. Runs scan first, blocks on critical issues. Handles: docker build, compose up/down, nginx reload, SSL setup.
+**deploy** — Modifies deployment artifacts. Runs the upstream-stage fix chain first (see Deploy Prereq Policy below), then touches deployment artifacts: docker build, compose up/down, nginx reload, SSL setup.
 
-### Workflow Pattern (ultra-thin)
+### Deploy Prereq Policy
 
-Workflows MUST specify `--staging` or `--prod`:
+`npx stack deploy --<stage>` runs the upstream-stage fix chain before touching any deployment artifact:
 
-```bash
-# Correct
-GITHUB_ACTIONS=true npx stack deploy --staging
+- `deploy --staging` runs `runStageChain(['dev'], applyFixes: true)` first.
+- `deploy --prod` runs `runStageChain(['dev', 'staging'], applyFixes: true)` first. The `staging` step opens an SSH tunnel to the staging server and applies any pending staging fixes end-to-end before prod artifacts are touched.
 
-# WRONG — will try all stages, may trigger more workflows
-npx stack fix
-```
+If a prereq stage breaks — a fix fails, a critical issue goes unfixed, or the SSH tunnel cannot open — deploy aborts with `Prereq stage broken (<stage>). Fix and retry.` before `deployStage` is called.
 
-**Workflows should ONLY:** trigger + pass secrets + SSH to server + run CLI command.
+Two operational consequences:
 
-**Workflows should NEVER contain:** server setup, repo cloning, dependency install, build logic, bash >5 lines.
+1. **Deploy is no longer read-only before the deploy step.** The prereq pass mutates dev-machine state idempotently (`.env.example` regeneration, vault-key extraction, SSH-key-to-disk, etc.) — the same mutations `npx stack fix` would apply.
+2. **Deploying to prod requires staging to be reachable.** If the staging server is down or the SSH key is missing, `deploy --prod` aborts without touching prod.
 
-**Exception:** Node.js bootstrap — workflows can check if Node.js exists and install if missing (chicken-and-egg: `npx stack` requires Node.js).
-
-## Stage Batching
-
-All scan/fix operations are batched by stage to minimize SSH overhead.
-
-1. **Collect** — Gather all fixes for requested stages from all plugins
-2. **Bundle** — Group fixes by stage (all dev, all staging, all prod)
-3. **Execute** — CLI asks pipeline `canReach(stage)` for each stage:
-   - `via: 'local'` → run all scans locally in one pass
-   - `via: 'ssh'` → SSH once and run with `--staging` or `--prod`
-4. **Return** — Results per stage with issue details (not just counts)
-
-### Fix Function Rules
-
-**NEVER in fix scan/fix functions:**
-- Check `GITHUB_ACTIONS` or other env vars to determine context
-- Call SSH or remote execution
-- Assume execution context
-
-**ALWAYS in fix scan/fix functions:**
-- Assume running locally on target machine
-- Use `execSync` for local commands
-- Return boolean (scan: true = issue exists, fix: true = resolved)
+Escape hatch: run `npx stack fix --staging` to resolve staging state manually, then retry `deploy --prod`.
 
 ### Host-Machine Fixes (Opt-In)
 

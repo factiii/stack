@@ -132,7 +132,8 @@ describe('loadConfig with stack.local.yml merge', () => {
 
         const config = loadConfig(testDir);
         expect(config.ansible?.vault_path).toBe('group_vars/all/vault-greasemoto.yml');
-        expect(config.ansible?.vault_password_file).toBe('~/.vault_pass');
+        // vault_password_file is NOT auto-defaulted — must be configured explicitly in stack.yml
+        expect(config.ansible?.vault_password_file).toBeUndefined();
     });
 
     test('auto-populates vault_path even with no ansible section', () => {

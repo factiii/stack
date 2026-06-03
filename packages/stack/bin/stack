@@ -52,7 +52,6 @@ program
   .option('--dev', 'Scan dev environment only')
   .option('--staging', 'Scan staging environment only')
   .option('--prod', 'Scan production environment only')
-  .option('--secrets', 'Scan secrets only')
   .option('--commit <hash>', 'Commit hash to verify (for deployment verification)')
   .action(async (options) => {
     await scan(options);
@@ -65,7 +64,6 @@ program
   .option('--dev', 'Fix dev environment only')
   .option('--staging', 'Fix staging environment only')
   .option('--prod', 'Fix production environment only')
-  .option('--secrets', 'Fix secrets only')
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .option('--continue-on-error', 'Continue even if some fixes fail')
   .action(async (options) => {

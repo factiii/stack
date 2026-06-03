@@ -3,7 +3,7 @@
  *
  * Runs auto-fixes for detected problems.
  * For remote stages (staging/prod), delegates to pipeline plugin.
- * For local stages (dev/secrets), runs fixes directly.
+ * For local stages (dev), runs fixes directly.
  *
  * ============================================================
  * STAGE EXECUTION PATTERN
@@ -19,35 +19,15 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { scan } from './scan.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import { loadConfig, isDevOnly } from '../utils/config-helpers.js';
-import type { FactiiiConfig, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
+import { generateEnvVarFixes } from './scan.js';
+import type { FactiiiConfig, Fix, FixOptions, FixResult, Stage, Reachability } from '../types/index.js';
 
 interface PluginClass {
   id: string;
   category: string;
   canReach?: (stage: Stage, config: FactiiiConfig) => Reachability;
-}
-
-/**
- * Pipeline plugin class interface (mirrors deploy.ts pattern)
- */
-interface PipelinePluginClass {
-  id: string;
-  category: 'pipeline';
-  new(config: FactiiiConfig): PipelinePluginInstance;
-}
-
-interface PipelinePluginInstance {
-  fixStage(stage: Stage, options: Record<string, unknown>): Promise<{ handled: boolean }>;
-}
-
-/**
- * Get pipeline plugin from loaded plugins
- */
-function getPipelinePlugin(plugins: PluginClass[]): PluginClass | undefined {
-  return plugins.find((p) => p.category === 'pipeline');
 }
 
 /**
@@ -82,166 +62,80 @@ function checkReachability(
   return { reachable: false, reason: defaultPipelineReason || lastReason };
 }
 
-/**
- * Find which pipeline plugin claims a stage (first reachable).
- */
-function findPipelineForStage(
-  pipelinePlugins: PluginClass[],
-  stage: Stage,
-  config: FactiiiConfig
-): PluginClass | undefined {
-  for (const plugin of pipelinePlugins) {
-    if (typeof plugin.canReach === 'function') {
-      const result = plugin.canReach(stage, config);
-      if (result.reachable) return plugin;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Run fixes locally for reachable stages.
- *
- * Uses multi-pass execution: after running fixes for a stage, if any
- * succeeded, re-scans to find newly-unblocked fixes. This handles
- * dependency chains (e.g., vault password → vault file → store secrets
- * → create SSH key) in a single `npx stack fix` run.
- *
- * Max 3 iterations per stage to prevent infinite loops.
- */
-async function runLocalFixes(
+async function runChainAsFix(
   options: FixOptions,
-  reachableStages: Stage[]
+  reachableStages: Stage[],
 ): Promise<FixResult> {
   const rootDir = options.rootDir ?? process.cwd();
+  const config = loadConfig(rootDir);
 
-  const result: FixResult = {
-    fixed: 0,
-    manual: 0,
-    failed: 0,
-    fixes: [],
-  };
-
-  // Track IDs that have been processed (fixed, failed, or manual) to avoid re-running
-  const processedIds = new Set<string>();
-  let criticalFailed = false;
-
-  // Run fixes for reachable stages only
-  for (const stage of reachableStages) {
-    if (criticalFailed) break;
-    let iteration = 0;
-    const maxIterations = 3;
-    let stageHeaderShown = false;
-
-    while (iteration < maxIterations) {
-      // Re-load config each iteration (fixes may have modified stack.yml or vault)
-      const config = loadConfig(rootDir);
-
-      // Strip stage booleans — only pass stages array so scan doesn't override it
-      const { dev: _d, secrets: _sec, staging: _stg, prod: _p, stages: _s, ...cleanOptions } = options;
-      const problems = await scan({
-        ...cleanOptions,
-        silent: true,
-        stages: [stage],
-      });
-
-      const stageProblems = problems[stage] ?? [];
-      // Filter out already-processed fixes
-      const newProblems = stageProblems.filter(p => !processedIds.has(p.id));
-      if (newProblems.length === 0) break;
-
-      // Stage header on first iteration, re-scan marker on subsequent
-      if (!stageHeaderShown) {
-        const totalCount = newProblems.length;
-        console.log('┌─ ' + stage.toUpperCase() + ' (' + totalCount + ' issue' + (totalCount > 1 ? 's' : '') + ')');
-        stageHeaderShown = true;
-      } else {
-        console.log('│  ── re-scan (' + newProblems.length + ' new) ──');
-      }
-
-      let fixedAny = false;
-
-      for (const problem of newProblems) {
-        processedIds.add(problem.id);
-
-        if (problem.fix) {
-          const startTime = performance.now();
-          try {
-            const success = await problem.fix(config, rootDir);
-            const duration = performance.now() - startTime;
-
-            // Only show timing for slow fixes (> 1s)
-            const timeSuffix = duration > 1000 ? ' (' + (duration / 1000).toFixed(1) + 's)' : '';
-
-            if (success) {
-              console.log('│  ✅ ' + problem.description + timeSuffix);
-              result.fixed++;
-              result.fixes.push({
-                id: problem.id,
-                stage,
-                status: 'fixed',
-                description: problem.description,
-              });
-              fixedAny = true;
-            } else {
-              console.log('│  ❌ ' + problem.description + timeSuffix);
-              if (problem.manualFix) {
-                const hint = problem.manualFix.trim().split('\n')
-                  .map((l: string) => l.trim())
-                  .filter((l: string) => l.length > 0)[0];
-                if (hint) console.log('│     → ' + hint);
-              }
-              console.log('│     Run `npx stack fix` again to retry');
-              result.failed++;
-              result.fixes.push({
-                id: problem.id,
-                stage,
-                status: 'failed',
-                description: problem.description,
-              });
-
-              // Blocking fix failed — skip remaining fixes in this and later stages
-              if (problem.blocking) {
-                criticalFailed = true;
-                break;
-              }
-            }
-          } catch (e) {
-            const errorMessage = e instanceof Error ? e.message : String(e);
-            console.log('│  ❌ ' + problem.description + ': ' + errorMessage);
-            result.failed++;
-            result.fixes.push({
-              id: problem.id,
-              stage,
-              status: 'failed',
-              description: problem.description,
-              error: errorMessage,
-            });
-          }
-        } else {
-          // Manual fix — show short description only (details in summary)
-          console.log('│  📝 ' + problem.description);
-          result.manual++;
-          result.fixes.push({
-            id: problem.id,
-            stage,
-            status: 'manual',
-            description: problem.description,
-            manualFix: problem.manualFix,
-          });
-        }
-      }
-
-      if (!fixedAny) break; // No progress, stop iterating
-      iteration++;
+  // Build the fix list the same way scan.ts does (deduplicate + env-var fixes
+  // + os/targetStage filter). Extract into a shared helper if the duplication grows.
+  const plugins = await loadRelevantPlugins(rootDir, config);
+  const allFixes: Fix[] = [];
+  const seen = new Set<string>();
+  for (const plugin of plugins) {
+    for (const fix of (plugin as { fixes?: Fix[] }).fixes ?? []) {
+      const key = fix.id + ':' + fix.stage;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      allFixes.push({ ...fix, plugin: (plugin as { id: string }).id });
     }
-
-    if (stageHeaderShown) {
-      console.log('└─');
-      console.log('');
-    }
+    // Add auto-generated env var fixes from plugin requiredEnvVars
+    const envFixes = generateEnvVarFixes(plugin as { id: string; category: string; requiredEnvVars?: string[] }, rootDir, config);
+    allFixes.push(...envFixes);
   }
 
+  const filtered = allFixes.filter((fix) => {
+    if (options.targetStage && fix.targetStage && fix.targetStage !== options.targetStage) return false;
+    return true;
+  });
+
+  const { runStageChain } = await import('../utils/stage-chain.js');
+  const chain = await runStageChain(filtered, {
+    config,
+    rootDir,
+    stages: reachableStages,
+    applyFixes: true,
+    onOutcome: (outcome, fix, _stage) => {
+      // Streaming progress: print each outcome as it lands.
+      if (outcome.status === 'fixed') {
+        console.log('  ✅ ' + fix.description);
+      } else if (outcome.status === 'failed') {
+        console.log('  ❌ ' + fix.description + (outcome.reason ? ' — ' + outcome.reason : ''));
+      } else if (outcome.status === 'manual') {
+        console.log('  📝 ' + fix.description);
+      } else if (outcome.status === 'skipped') {
+        console.log('  ⊘ ' + fix.description + ' — ' + (outcome.reason ?? 'skipped'));
+      }
+    },
+  });
+
+  // Translate StageChainResult → FixResult (legacy shape).
+  const result: FixResult = { fixed: 0, manual: 0, failed: 0, fixes: [] };
+  for (const stage of reachableStages) {
+    const dag = chain.byStage.get(stage);
+    if (!dag) continue;
+    for (const [id, outcome] of dag.outcomes) {
+      const fix = filtered.find((f) => f.id === id);
+      if (!fix) continue;
+      if (outcome.status === 'fixed') {
+        result.fixed++;
+        result.fixes.push({ id, stage, status: 'fixed', description: fix.description });
+      } else if (outcome.status === 'manual') {
+        result.manual++;
+        result.fixes.push({
+          id, stage, status: 'manual', description: fix.description, manualFix: fix.manualFix,
+        });
+      } else if (outcome.status === 'failed') {
+        result.failed++;
+        result.fixes.push({
+          id, stage, status: 'failed', description: fix.description, error: outcome.reason,
+        });
+      }
+      // 'ok' and 'skipped' are not surfaced in the legacy summary — same as before.
+    }
+  }
   return result;
 }
 
@@ -249,31 +143,40 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   const rootDir = options.rootDir ?? process.cwd();
   const config = loadConfig(rootDir);
 
+  const { loadAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
+  if (isAwsConfigured(config)) {
+    try {
+      await loadAwsCredentials(config, rootDir);
+    } catch (e) {
+      // Surface clean message; the scanfix system handles the "missing creds" case
+      // by emitting an actionable manualFix. Don't crash here — let the scan continue.
+      console.log('   [!] ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
   console.log('Running auto-fixes...\n');
 
   // Determine which stages to fix
-  let stages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
+  let stages: Stage[] = ['dev', 'staging', 'prod'];
   let targetStage: 'staging' | 'prod' | undefined;
 
   if (options.dev) stages = ['dev'];
-  else if (options.secrets) stages = ['secrets'];
   else if (options.staging) {
-    stages = ['dev', 'secrets', 'staging'];
+    stages = ['dev', 'staging'];
     targetStage = 'staging'; // Only fix staging secrets
   }
   else if (options.prod) {
-    stages = ['dev', 'secrets', 'prod'];
+    stages = ['dev', 'prod'];
     targetStage = 'prod'; // Only fix prod secrets
   }
   else if (options.stages) stages = options.stages;
 
-  // Dev-only gate: when dev_only is true (default), restrict to dev+secrets only
-  // Secrets stage is always allowed (needed to set up tokens/keys before unlocking staging/prod)
+  // Dev-only gate: when dev_only is true (default), restrict to dev only
   // CRITICAL: Keep targetStage so secrets fixes only run for the requested stage
   // Skip dev_only gate when running on the server (SSH'd in or CI)
   const onServer = process.env.FACTIII_ON_SERVER === 'true' || process.env.GITHUB_ACTIONS === 'true';
   if (isDevOnly(config) && !onServer) {
-    if (stages.some(s => s !== 'dev' && s !== 'secrets')) {
+    if (stages.some(s => s !== 'dev')) {
       // User explicitly passed --staging or --prod — auto-unlock
       const localPath = path.join(rootDir, 'stack.local.yml');
       if (fs.existsSync(localPath)) {
@@ -290,68 +193,31 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   // Load all plugins to check reachability
   const plugins = await loadRelevantPlugins(rootDir, config);
   const pipelinePlugins = getAllPipelinePlugins(plugins as unknown as PluginClass[]);
-  const pipelinePlugin = getPipelinePlugin(plugins as unknown as PluginClass[]);
 
-  // Check reachability for each stage
-  // Separate local vs remote — pipeline plugin handles remote
+  // Check reachability for each stage.
+  // Dev-direct: every reachable stage runs locally on the dev machine.
   const reachability: Record<string, Reachability> = {};
-  const localStages: Stage[] = [];
-  const remoteStages: Stage[] = [];
 
   for (const stage of stages) {
-    // dev and secrets always run locally — they never route via SSH
-    if (stage === 'dev' || stage === 'secrets') {
+    // dev always runs locally — it never routes via SSH
+    if (stage === 'dev') {
       reachability[stage] = { reachable: true, via: 'local' };
-      localStages.push(stage);
       continue;
     }
 
     if (pipelinePlugins.length > 0) {
       // Check all pipeline plugins — first reachable wins
       reachability[stage] = checkReachability(pipelinePlugins, stage, config);
-
-      if (reachability[stage]?.reachable) {
-        if (reachability[stage]!.via === 'local') {
-          localStages.push(stage);
-        } else {
-          remoteStages.push(stage);
-        }
-      }
     } else {
       // No pipeline plugin or no canReach method - assume all reachable locally
       reachability[stage] = { reachable: true, via: 'local' };
-      localStages.push(stage);
     }
   }
 
-  // Run local fixes for directly reachable stages
-  const result = await runLocalFixes({ ...options, targetStage }, localStages);
+  const reachableStages = stages.filter((s) => reachability[s]?.reachable);
 
-  // Remote stages: delegate to the pipeline plugin that claims each stage
-  for (const stage of remoteStages) {
-    const claimingPlugin = findPipelineForStage(pipelinePlugins, stage, config);
-    if (!claimingPlugin) continue;
-
-    const PipelineClass = claimingPlugin as unknown as PipelinePluginClass;
-    const pipeline = new PipelineClass(config);
-
-    if (typeof pipeline.fixStage !== 'function') {
-      // Pipeline doesn't have fixStage — run fixes locally instead
-      const localResult = await runLocalFixes({ ...options, stages: [stage] }, [stage]);
-      result.fixed += localResult.fixed;
-      result.manual += localResult.manual;
-      result.failed += localResult.failed;
-      result.fixes.push(...localResult.fixes);
-      continue;
-    }
-
-    const remoteResult = await pipeline.fixStage(stage, {}) as { handled: boolean; success?: boolean; error?: string };
-    if (!remoteResult.handled) continue;
-
-    // Remote fix already printed its own detailed summary inline.
-    // Don't add a duplicate entry to the local summary — the user already saw
-    // the server's output with individual fix results.
-  }
+  // Run fixes for all reachable stages via runStageChain (dev-direct: no remote delegation)
+  const result = await runChainAsFix({ ...options, targetStage }, reachableStages);
 
   // ============================================================
   // SUMMARY
@@ -361,7 +227,7 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   console.log('  SUMMARY');
   console.log('═'.repeat(60));
 
-  const allStages: Stage[] = ['dev', 'secrets', 'staging', 'prod'];
+  const allStages: Stage[] = ['dev', 'staging', 'prod'];
   let hasManualFixes = false;
 
   for (const stage of allStages) {
@@ -423,16 +289,6 @@ export async function fix(options: FixOptions = {}): Promise<FixResult> {
   } else if (result.failed > 0) {
     console.log('');
     console.log('  ❌ Fix the errors above, then re-run: npx stack fix');
-  }
-
-  // Clear ~/.aws/credentials after AWS operations (security: never leave creds on disk)
-  try {
-    const { clearAwsCredentials, isAwsConfigured } = await import('../plugins/pipelines/aws/utils/aws-helpers.js');
-    if (isAwsConfigured(config)) {
-      clearAwsCredentials();
-    }
-  } catch {
-    // AWS module may not be available — skip cleanup
   }
 
   // Exit with error if any fixes failed

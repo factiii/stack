@@ -44,15 +44,15 @@ const SECRET_METADATA: Record<string, SecretMetadata> = {
     description: 'SSH private key for accessing staging server',
     helpText: `
    Step 1: Generate a new SSH key pair:
-   ssh-keygen -t ed25519 -C "staging-deploy" -f ~/.ssh/staging_deploy
-   
+   ssh-keygen -t ed25519 -C "staging-deploy" -f ~/.ssh/staging_deploy_key
+
    Step 2: Add PUBLIC key to your staging server:
-   ssh-copy-id -i ~/.ssh/staging_deploy.pub ubuntu@YOUR_HOST
-   
+   ssh-copy-id -i ~/.ssh/staging_deploy_key.pub ubuntu@YOUR_HOST
+
    (HOST is configured in stack.yml → environments.staging.host)
-   
+
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
-   cat ~/.ssh/staging_deploy`,
+   cat ~/.ssh/staging_deploy_key`,
     validation: (value: string): ValidationResult => {
       if (!value || value.trim().length === 0) {
         return { valid: false, error: 'SSH key cannot be empty' };
@@ -72,15 +72,15 @@ const SECRET_METADATA: Record<string, SecretMetadata> = {
     description: 'SSH private key for accessing production server',
     helpText: `
    Step 1: Generate a new SSH key pair:
-   ssh-keygen -t ed25519 -C "production-deploy" -f ~/.ssh/prod_deploy
-   
+   ssh-keygen -t ed25519 -C "production-deploy" -f ~/.ssh/prod_deploy_key
+
    Step 2: Add PUBLIC key to your production server:
-   ssh-copy-id -i ~/.ssh/prod_deploy.pub ubuntu@YOUR_HOST
-   
+   ssh-copy-id -i ~/.ssh/prod_deploy_key.pub ubuntu@YOUR_HOST
+
    (HOST is configured in stack.yml → environments.production.host)
-   
+
    Step 3: Paste the PRIVATE key below (multi-line, end with blank line):
-   cat ~/.ssh/prod_deploy`,
+   cat ~/.ssh/prod_deploy_key`,
     validation: (value: string): ValidationResult => {
       if (!value || value.trim().length === 0) {
         return { valid: false, error: 'SSH key cannot be empty' };

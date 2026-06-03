@@ -89,58 +89,6 @@ import {
   SendSSHPublicKeyCommand,
 } from '@aws-sdk/client-ec2-instance-connect';
 import type { FactiiiConfig, EnvironmentConfig } from '../../../../types/index.js';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-
-// ============================================================
-// AWS CREDENTIALS FILE WRITER
-// ============================================================
-
-/**
- * Write AWS credentials and config to ~/.aws/ (replaces `aws configure` CLI)
- */
-function writeAwsCredentials(
-  accessKeyId: string,
-  secretAccessKey: string,
-  region: string
-): void {
-  const awsDir = path.join(os.homedir(), '.aws');
-  if (!fs.existsSync(awsDir)) {
-    fs.mkdirSync(awsDir, { recursive: true });
-  }
-
-  const credentialsContent = '[default]\n' +
-    'aws_access_key_id = ' + accessKeyId + '\n' +
-    'aws_secret_access_key = ' + secretAccessKey + '\n';
-  fs.writeFileSync(path.join(awsDir, 'credentials'), credentialsContent, { mode: 0o600 });
-
-  const configContent = '[default]\n' +
-    'region = ' + region + '\n' +
-    'output = json\n';
-  fs.writeFileSync(path.join(awsDir, 'config'), configContent, { mode: 0o644 });
-
-  // Also set env vars so AWS SDK picks up credentials immediately
-  // (the SDK caches its credential provider and may not re-read ~/.aws/credentials mid-process)
-  process.env.AWS_ACCESS_KEY_ID = accessKeyId;
-  process.env.AWS_SECRET_ACCESS_KEY = secretAccessKey;
-  process.env.AWS_DEFAULT_REGION = region;
-}
-
-/**
- * Read AWS region from ~/.aws/config (replaces `aws configure get region`)
- */
-function readAwsRegionFromConfig(): string | null {
-  try {
-    const configPath = path.join(os.homedir(), '.aws', 'config');
-    if (!fs.existsSync(configPath)) return null;
-    const content = fs.readFileSync(configPath, 'utf8');
-    const match = content.match(/region\s*=\s*(.+)/);
-    return match && match[1] ? match[1].trim() : null;
-  } catch {
-    return null;
-  }
-}
 
 // Module-level flag: set to true when aws-credentials-sync fails.
 // Other AWS fixes check this to skip their scans entirely.
@@ -160,40 +108,99 @@ export function didCredentialsSyncFail(): boolean {
   return _credentialsSyncFailed;
 }
 
-/**
- * Clear ~/.aws/credentials after AWS operations complete.
- * Security: we never leave credentials on disk — vault is the source of truth.
- * Only clears if the credentials file exists and contains a key.
- */
-export function clearAwsCredentials(): void {
+// ============================================================
+// IN-MEMORY CREDENTIAL CACHE
+// ============================================================
+// Stack never reads or writes ~/.aws/credentials. All AWS SDK clients
+// receive explicit `credentials` constructed from this cache, which is
+// populated once per process by loadAwsCredentials().
+
+interface LoadedCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  region: string;
+}
+
+let _loadedCreds: LoadedCredentials | null = null;
+
+export function getLoadedCredentials(): LoadedCredentials {
+  if (!_loadedCreds) {
+    throw new Error(
+      'AWS credentials not loaded. Call loadAwsCredentials(config, rootDir) first.'
+    );
+  }
+  return _loadedCreds;
+}
+
+export function setLoadedCredentials(creds: LoadedCredentials): void {
+  _loadedCreds = creds;
+  clearClientCache();
+}
+
+export function clearLoadedCredentials(): void {
+  _loadedCreds = null;
+  clearClientCache();
+}
+
+export async function verifyCredentialsWithSts(
+  accessKeyId: string,
+  secretAccessKey: string,
+  region: string
+): Promise<string | null> {
   try {
-    const credPath = path.join(os.homedir(), '.aws', 'credentials');
-    if (fs.existsSync(credPath)) {
-      fs.writeFileSync(credPath, '[default]\n', { mode: 0o600 });
-    }
-    delete process.env.AWS_ACCESS_KEY_ID;
-    delete process.env.AWS_SECRET_ACCESS_KEY;
-    delete process.env.AWS_DEFAULT_REGION;
-    clearClientCache();
+    const sts = new STSClient({
+      region,
+      credentials: { accessKeyId, secretAccessKey },
+    });
+    const result = await sts.send(new GetCallerIdentityCommand({}));
+    return result.Account ?? null;
   } catch {
-    // Best effort — don't fail the CLI over cleanup
+    return null;
   }
 }
 
 /**
- * Read access_key_id from ~/.aws/credentials (what AWS SDK actually uses).
- * This is the key that API calls authenticate with, regardless of stack.yml.
+ * Load AWS credentials from this repo's vault into the in-memory cache.
+ *
+ * - Idempotent: returns early if already loaded.
+ * - Throws when ansible vault is not configured.
+ * - Throws when vault has no AWS credentials (caller should run bootstrap fix).
+ * - Does NOT prompt the user — pure read. Mismatch resolution lives in the
+ *   aws-credentials-sync scanfix.
  */
-export function getLocalAccessKeyId(): string | null {
-  try {
-    const credPath = path.join(os.homedir(), '.aws', 'credentials');
-    if (!fs.existsSync(credPath)) return null;
-    const content = fs.readFileSync(credPath, 'utf8');
-    const match = content.match(/aws_access_key_id\s*=\s*(\S+)/);
-    return match?.[1] ?? null;
-  } catch {
-    return null;
+export async function loadAwsCredentials(
+  config: FactiiiConfig,
+  rootDir: string
+): Promise<void> {
+  if (_loadedCreds) return;
+
+  if (!config.ansible?.vault_path) {
+    throw new Error(
+      'AWS credentials cannot be loaded: ansible.vault_path is not configured in stack.yml. Run `npx stack init` first.'
+    );
   }
+
+  const awsConfig = getAwsConfig(config);
+  const region = awsConfig.region || 'us-east-1';
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+  const vault = new AnsibleVaultSecrets({
+    vault_path: config.ansible.vault_path,
+    vault_password_file: config.ansible.vault_password_file,
+    rootDir,
+  });
+
+  const accessKeyId = await vault.getSecret('AWS_ACCESS_KEY_ID');
+  const secretAccessKey = await vault.getSecret('AWS_SECRET_ACCESS_KEY');
+
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error(
+      'AWS credentials not found in vault. Run `npx stack fix --dev` to bootstrap.'
+    );
+  }
+
+  setLoadedCredentials({ accessKeyId, secretAccessKey, region });
 }
 
 // ============================================================
@@ -213,10 +220,23 @@ export function clearClientCache(): void {
   }
 }
 
-function getCachedClient<T>(ClientClass: new (config: { region: string }) => T, region: string): T {
-  const key = ClientClass.name + ':' + region;
+function getCachedClient<T>(
+  ClientClass: new (config: {
+    region: string;
+    credentials?: { accessKeyId: string; secretAccessKey: string };
+  }) => T,
+  region: string
+): T {
+  const creds = getLoadedCredentials();
+  const key = ClientClass.name + ':' + region + ':' + creds.accessKeyId;
   if (!clientCache[key]) {
-    clientCache[key] = new ClientClass({ region });
+    clientCache[key] = new ClientClass({
+      region,
+      credentials: {
+        accessKeyId: creds.accessKeyId,
+        secretAccessKey: creds.secretAccessKey,
+      },
+    });
   }
   return clientCache[key] as T;
 }
@@ -307,12 +327,10 @@ export function getAwsConfig(config: FactiiiConfig): {
   configType: string;
   accessKeyId?: string;
 } {
-  const topLevel = config.aws as Record<string, unknown> | undefined;
-
   // Start with top-level aws block values (if any)
-  let region = (topLevel?.region as string) ?? '';
-  let configType = (topLevel?.config as string) ?? '';
-  let accessKeyId = topLevel?.access_key_id as string | undefined;
+  let region = config.aws?.region ?? '';
+  let configType = config.aws?.config ?? '';
+  let accessKeyId = config.aws?.access_key_id;
 
   // Always check environments for access_key_id (may be under prod/staging, not aws block)
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -342,10 +360,71 @@ export function isOnServer(): boolean {
 }
 
 /**
+ * Confirm before running an AWS-mutating action (create/modify resource).
+ *
+ * Auto-approves and returns true in any of these contexts (where prompting
+ * is impossible or undesirable):
+ *   - STACK_AWS_AUTO_APPROVE=1
+ *   - GITHUB_ACTIONS=true / FACTIII_ON_SERVER=true
+ *   - non-interactive (no TTY)
+ *
+ * Otherwise prints the description block and prompts y/N. Default is N to
+ * stop accidental provisioning during fix runs.
+ *
+ * Description format suggestion (multi-line is OK):
+ *   "Create S3 bucket 'factiii-prod' (us-east-1, encrypted, public access blocked)"
+ */
+export async function confirmAwsAction(description: string): Promise<boolean> {
+  if (process.env.STACK_AWS_AUTO_APPROVE === '1') return true;
+  if (isOnServer()) return true;
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return true;
+
+  console.log('');
+  console.log('   ┌─ AWS action ────────────────────────────────────────────');
+  for (const line of description.split('\n')) {
+    console.log('   │ ' + line);
+  }
+  console.log('   └─────────────────────────────────────────────────────────');
+  const { confirm } = await import('../../../../utils/secret-prompts.js');
+  return confirm('   Proceed?', false);
+}
+
+/**
  * Get project name for tagging
  */
 export function getProjectName(config: FactiiiConfig): string {
   return config.name ?? 'app';
+}
+
+/**
+ * Resource name overrides — let users adopt pre-existing AWS resources whose
+ * names don't follow stack's `factiii-{project}-X` convention, without having
+ * to rename them in AWS.
+ *
+ * Sources, by precedence (override wins):
+ *   - `config.aws.<field>`
+ *   - top-level `config.<field>` (legacy spot: ecr_repository)
+ *   - convention default
+ */
+export interface ResourceNames {
+  /** null means "use the auto-resolve flow" (try simple name, then accountId-scoped). */
+  s3Bucket: string | null;
+  rdsInstanceId: string;
+  ecrRepository: string;
+  ec2SecurityGroup: string;
+  rdsSecurityGroup: string;
+}
+
+export function getResourceNames(config: FactiiiConfig): ResourceNames {
+  const project = getProjectName(config);
+  const aws = config.aws ?? {};
+  return {
+    s3Bucket: aws.s3_bucket ?? null,
+    rdsInstanceId: aws.rds_instance_id ?? ('factiii-' + project + '-db'),
+    ecrRepository: aws.ecr_repository ?? config.ecr_repository ?? project,
+    ec2SecurityGroup: aws.ec2_security_group ?? ('factiii-' + project + '-ec2'),
+    rdsSecurityGroup: aws.rds_security_group ?? ('factiii-' + project + '-rds'),
+  };
 }
 
 /**
@@ -371,30 +450,12 @@ export async function getCallerArn(region: string): Promise<string | null> {
     const sts = getSTSClient(region);
     const result = await sts.send(new GetCallerIdentityCommand({}));
     const arn = result.Arn ?? '';
-
-    // Extract the user name from the ARN (last segment after /)
     const userName = arn.includes('/') ? arn.split('/').pop() : null;
-
-    // Read access_key_id from ~/.aws/credentials
     let accessKeyId: string | null = null;
     try {
-      const credPath = path.join(os.homedir(), '.aws', 'credentials');
-      if (fs.existsSync(credPath)) {
-        const content = fs.readFileSync(credPath, 'utf8');
-        const match = content.match(/aws_access_key_id\s*=\s*(\S+)/);
-        if (match?.[1]) accessKeyId = match[1];
-      }
-    } catch { /* best effort */ }
-
-    // Also check env var
-    if (!accessKeyId && process.env.AWS_ACCESS_KEY_ID) {
-      accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-    }
-
-    // Build readable identity: "admin (AKIA...)" or just "AKIA..." or fall back to ARN
-    if (userName && accessKeyId) {
-      return userName + ' (' + accessKeyId + ')';
-    }
+      accessKeyId = getLoadedCredentials().accessKeyId;
+    } catch { /* not loaded */ }
+    if (userName && accessKeyId) return userName + ' (' + accessKeyId + ')';
     if (userName) return userName;
     if (accessKeyId) return accessKeyId;
     return arn || null;
@@ -452,9 +513,10 @@ export async function getEcrAuthToken(region: string): Promise<{
 // ============================================================
 
 /**
- * Find VPC by factiii:project tag
+ * Find VPC by factiii:project tag, or return `aws.vpc_id` override.
  */
-export async function findVpc(projectName: string, region: string): Promise<string | null> {
+export async function findVpc(projectName: string, region: string, config?: FactiiiConfig): Promise<string | null> {
+  if (config?.aws?.vpc_id) return config.aws.vpc_id;
   try {
     const ec2 = getEC2Client(region);
     const result = await ec2.send(new DescribeVpcsCommand({
@@ -467,9 +529,11 @@ export async function findVpc(projectName: string, region: string): Promise<stri
 }
 
 /**
- * Find subnet by tag and type
+ * Find subnet by tag and type, or return the corresponding override
+ * (`aws.subnet_public_id` for type=public).
  */
-export async function findSubnet(projectName: string, region: string, type: string): Promise<string | null> {
+export async function findSubnet(projectName: string, region: string, type: string, config?: FactiiiConfig): Promise<string | null> {
+  if (type === 'public' && config?.aws?.subnet_public_id) return config.aws.subnet_public_id;
   try {
     const ec2 = getEC2Client(region);
     const result = await ec2.send(new DescribeSubnetsCommand({
@@ -485,9 +549,10 @@ export async function findSubnet(projectName: string, region: string, type: stri
 }
 
 /**
- * Find all private subnets
+ * Find private subnets by tag, or return `aws.subnet_private_ids` override.
  */
-export async function findPrivateSubnets(projectName: string, region: string): Promise<string[]> {
+export async function findPrivateSubnets(projectName: string, region: string, config?: FactiiiConfig): Promise<string[]> {
+  if (config?.aws?.subnet_private_ids?.length) return config.aws.subnet_private_ids;
   try {
     const ec2 = getEC2Client(region);
     const result = await ec2.send(new DescribeSubnetsCommand({
@@ -919,7 +984,4 @@ export {
   // EC2 Instance Connect
   EC2InstanceConnectClient,
   SendSSHPublicKeyCommand,
-  // AWS credentials file utilities
-  writeAwsCredentials,
-  readAwsRegionFromConfig,
 };
