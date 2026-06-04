@@ -129,6 +129,7 @@ async function resolveVaultPassword(file: string): Promise<string> {
     }
   }
 
+  // Legacy plaintext. Trim and use as-is. Optionally offer to encrypt now.
   const plain = raw.trim();
   await maybeOfferAutoEncrypt(file, plain);
   return plain;

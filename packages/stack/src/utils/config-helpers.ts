@@ -251,6 +251,7 @@ export function loadConfig(rootDir: string): FactiiiConfig {
       for (const [key, value] of Object.entries(autoConfig)) {
         if (DANGEROUS_KEYS.has(key)) continue;
         if (!(key in config)) {
+          // stackAuto.yml provides defaults that stack.yml can override
           (config as Record<string, unknown>)[key] = value;
         } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
           // Deep merge objects (e.g., ansible section)
