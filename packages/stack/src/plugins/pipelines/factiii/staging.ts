@@ -181,7 +181,7 @@ export async function buildStagingImage(
 
     if (isOnServer) {
       // We're on the server - run commands directly
-      const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
+      const expandedRepoDir = repoDir.replace('~', os.homedir());
       const dockerfile = getDockerfilePath(expandedRepoDir);
       const imageTag = `${repoName}:staging`;
 
@@ -202,7 +202,7 @@ export async function buildStagingImage(
       // We're remote - SSH to the server and build there
       // CRITICAL: Build must happen on staging server, never locally
       const dockerfile = getDockerfilePath(
-        path.join(process.env.HOME ?? os.homedir(), '.factiii', repoName)
+        path.join(os.homedir(), '.factiii', repoName)
       );
       const imageTag = `${repoName}:staging`;
 

@@ -225,7 +225,8 @@ async function autoSetupSshKey(
         'ssh-keygen -t ed25519 -f "' + keyPath + '" -N "" -C "' + stage + '-deploy"',
         { stdio: 'pipe' }
       );
-      try { fs.chmodSync(keyPath, 0o600); } catch { /* Windows */ }
+      // Fix permissions (writeSecureKeyFile uses icacls on Windows instead of no-op chmodSync)
+      writeSecureKeyFile(keyPath, fs.readFileSync(keyPath, 'utf8'));
       console.log('   [OK] Generated: ' + keyPath);
     } catch (e) {
       console.log('   [!] ssh-keygen failed: ' + (e instanceof Error ? e.message : String(e)));
@@ -423,8 +424,8 @@ async function promptAndValidatePassword(
             'ssh-keygen -t ed25519 -f "' + keyPath + '" -N "" -C "' + stage + '-deploy"',
             { stdio: 'pipe' }
           );
-          // Fix permissions
-          try { fs.chmodSync(keyPath, 0o600); } catch { /* Windows */ }
+          // Fix permissions (writeSecureKeyFile uses icacls on Windows instead of no-op chmodSync)
+          writeSecureKeyFile(keyPath, fs.readFileSync(keyPath, 'utf8'));
           console.log('   [OK] Generated: ' + keyPath);
         } catch (e) {
           console.log('   [!] ssh-keygen failed: ' + (e instanceof Error ? e.message : String(e)));

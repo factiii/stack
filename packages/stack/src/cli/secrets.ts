@@ -357,21 +357,22 @@ export async function secrets(
     case 'write-ssh-keys': {
       const { getStackProjectName } = await import('../utils/project-identifier.js');
       const { getStackSshDir, getStackSshKeyPath } = await import('../utils/ssh-paths.js');
+      const { writeSecureKeyFile } = await import('../utils/ssh-helper.js');
       const projectName = getStackProjectName(config);
       const targetDir = getStackSshDir(projectName);
-      fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(targetDir, { recursive: true });
 
       const stagingKey = await store.getSecret('STAGING_SSH');
       const prodKey = await store.getSecret('PROD_SSH');
 
       if (stagingKey) {
         const keyPath = getStackSshKeyPath(projectName, 'staging');
-        fs.writeFileSync(keyPath, stagingKey.endsWith('\n') ? stagingKey : stagingKey + '\n', { mode: 0o600 });
+        writeSecureKeyFile(keyPath, stagingKey.endsWith('\n') ? stagingKey : stagingKey + '\n');
         console.log('[OK] Wrote STAGING_SSH to ' + keyPath);
       }
       if (prodKey) {
         const keyPath = getStackSshKeyPath(projectName, 'prod');
-        fs.writeFileSync(keyPath, prodKey.endsWith('\n') ? prodKey : prodKey + '\n', { mode: 0o600 });
+        writeSecureKeyFile(keyPath, prodKey.endsWith('\n') ? prodKey : prodKey + '\n');
         console.log('[OK] Wrote PROD_SSH to ' + keyPath);
       }
       if (!stagingKey && !prodKey) {

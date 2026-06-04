@@ -35,7 +35,7 @@ class GitHubWorkflowMonitor {
    */
   private checkGhCli(): void {
     try {
-      execSync('which gh', { stdio: 'pipe' });
+      execSync(process.platform === 'win32' ? 'where gh' : 'which gh', { stdio: 'pipe' });
 
       // Check if authenticated
       const authStatus = execSync('gh auth status', {
@@ -47,7 +47,7 @@ class GitHubWorkflowMonitor {
         throw new Error('GitHub CLI not authenticated. Run: gh auth login');
       }
     } catch {
-      throw new Error('GitHub CLI not available. Install with: brew install gh');
+      throw new Error('GitHub CLI not available. Install with: ' + (process.platform === 'win32' ? 'winget install GitHub.cli' : 'brew install gh'));
     }
   }
 

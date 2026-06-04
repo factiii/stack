@@ -10,6 +10,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { getStackConfigPath } from '../constants/config-files.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
@@ -88,7 +89,7 @@ export async function prCheck(options: PRCheckOptions = {}): Promise<PRCheckResu
   if (process.env.GITHUB_ACTIONS === 'true' || process.env.FACTIII_ON_SERVER === 'true') {
     // When SSH'd from workflow, we're run with cwd=repo (workflow does: cd $REPO_DIR && npx stack pr-check)
     const repoName = config.name ?? 'app';
-    const defaultRepoDir = path.join(process.env.HOME ?? '', '.factiii', repoName);
+    const defaultRepoDir = path.join(os.homedir(), '.factiii', repoName);
     const repoDir = fs.existsSync(getStackConfigPath(process.cwd()))
       ? process.cwd()
       : defaultRepoDir;

@@ -87,7 +87,7 @@ export class SSHDeploy {
         const result = spawnSync('ssh', [
             '-i', keyPath,
             '-o', 'StrictHostKeyChecking=no',
-            '-o', 'UserKnownHostsFile=/dev/null',
+            '-o', 'UserKnownHostsFile=' + (process.platform === 'win32' ? 'NUL' : '/dev/null'),
             '-o', 'BatchMode=yes',
             '-o', 'ConnectTimeout=30',
             this.user + '@' + this.host,

@@ -43,7 +43,10 @@ export const vaultPasswordFileLocationFix: Fix = {
     }
     const dest = path.join(rootDir, '.vault_pass');
     fs.copyFileSync(src, dest);
-    fs.chmodSync(dest, 0o600);
+    fs.writeFileSync(dest, fs.readFileSync(dest, 'utf8'), { mode: 0o600 });
+    if (process.platform === 'win32') {
+      try { require('child_process').execSync('icacls "' + dest + '" /inheritance:r /grant:r "%USERNAME%:F" 2>nul', { stdio: 'pipe', windowsHide: true }); } catch { /* best effort */ }
+    }
     console.log('   [OK] Copied ' + src + ' → ' + dest);
 
     // Rewrite stack.yml in place — string replace is sufficient for this simple value

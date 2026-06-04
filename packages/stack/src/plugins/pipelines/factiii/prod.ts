@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
@@ -258,7 +259,7 @@ export async function buildProductionImage(
     // Get dockerfile path
     let dockerfile: string;
     if (isOnServer) {
-      const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
+      const expandedRepoDir = repoDir.replace('~', os.homedir());
       dockerfile = getDockerfilePath(expandedRepoDir);
     } else {
       // For remote, we'll use a default and let the build command handle it
@@ -274,7 +275,7 @@ export async function buildProductionImage(
 
     if (isOnServer) {
       // We're on the staging server - run commands directly
-      const expandedRepoDir = repoDir.replace('~', process.env.HOME ?? '');
+      const expandedRepoDir = repoDir.replace('~', os.homedir());
       const pathEnv = '/opt/homebrew/bin:/usr/local/bin:' + (process.env.PATH ?? '');
 
       // Step 1: Ensure buildx is available (needed for cross-platform amd64 builds on ARM Mac)
@@ -370,7 +371,7 @@ export async function buildProductionImageLocally(
   const imageTag = ecrRegistry + '/' + ecrRepository + ':latest';
 
   // On Windows, build from current working directory; on Linux, use ~/.factiii/<repo>
-  const repoDir = isWindows ? process.cwd() : ((process.env.HOME ?? '') + '/.factiii/' + repoName);
+  const repoDir = isWindows ? process.cwd() : (os.homedir() + '/.factiii/' + repoName);
   const dockerfile = isWindows ? 'apps/server/Dockerfile' : getDockerfilePath(repoDir);
 
   console.log('      Image: ' + imageTag);
@@ -403,26 +404,20 @@ export async function buildProductionImageLocally(
 
     // Step 1: Build image
     console.log('   Building Docker image: ' + imageTag + '...');
-    const buildCmd = 'DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t ' + imageTag + ' -f ' + dockerfile + ' .';
+    const buildCmd = 'docker build --platform linux/amd64 -t ' + imageTag + ' -f ' + dockerfile + ' .';
     execSync(
       isWindows ? buildCmd : ('cd ' + repoDir + ' && ' + buildCmd),
-      { stdio: 'inherit', shell: shellOption, cwd: isWindows ? repoDir : undefined }
+      { stdio: 'inherit', shell: shellOption, cwd: isWindows ? repoDir : undefined, env: { ...process.env, DOCKER_BUILDKIT: '1' } }
     );
 
     // Step 2: Login to ECR (uses AWS SDK token, no CLI needed)
+    // On Windows, use default shell (cmd.exe); on Mac/Linux use bash for pipe
     console.log('   Logging in to ECR...');
-    if (isWindows) {
-      // On Windows, use echo pipe through cmd.exe for --password-stdin
-      execSync(
-        'echo ' + ecrAuth.password + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry,
-        { stdio: 'inherit', shell: 'cmd.exe' }
-      );
-    } else {
-      execSync(
-        'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry,
-        { stdio: 'inherit', shell: '/bin/bash' }
-      );
-    }
+    const shellOpt = isWindows ? undefined : '/bin/bash';
+    execSync(
+      'echo ' + JSON.stringify(ecrAuth.password) + ' | docker login --username ' + ecrAuth.username + ' --password-stdin ' + ecrRegistry,
+      { stdio: 'inherit', shell: shellOpt }
+    );
 
     // Step 3: Push to ECR
     console.log('   Pushing image to ECR: ' + imageTag + '...');
