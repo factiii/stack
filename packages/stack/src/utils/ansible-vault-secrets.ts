@@ -367,7 +367,7 @@ export class AnsibleVaultSecrets {
   async setSecret(name: string, value: string): Promise<SetSecretResult> {
     try {
       const vaultPath = resolveVaultPath(this.config);
-      this.ensureVaultExists(vaultPath);
+      await this.ensureVaultExists(vaultPath);
 
       const data = await this.getDecryptedFull();
       data[name] = value;
@@ -403,7 +403,7 @@ export class AnsibleVaultSecrets {
   async deleteSecret(name: string): Promise<SetSecretResult> {
     try {
       const vaultPath = resolveVaultPath(this.config);
-      this.ensureVaultExists(vaultPath);
+      await this.ensureVaultExists(vaultPath);
 
       const data = await this.getDecryptedFull();
       if (!(name in data)) {
@@ -429,7 +429,7 @@ export class AnsibleVaultSecrets {
   ): Promise<SetSecretResult> {
     try {
       const vaultPath = resolveVaultPath(this.config);
-      this.ensureVaultExists(vaultPath);
+      await this.ensureVaultExists(vaultPath);
 
       const data = await this.getDecryptedFull();
       const envKey = stage + '_envs';

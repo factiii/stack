@@ -37,8 +37,8 @@ async function readVaultSecret(secretName: string, config: FactiiiConfig, rootDi
   if (!store) return null;
   try {
     const result = await store.getSecret(secretName);
-    if (result.success && typeof result.value === 'string') {
-      return result.value;
+    if (typeof result === 'string') {
+      return result;
     }
   } catch {
     // Vault read failed
