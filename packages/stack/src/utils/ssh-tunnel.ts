@@ -140,7 +140,7 @@ export function closeTunnel(handle: TunnelHandle): void {
   if (cached !== handle) return;
   tunnelsByStage.delete(handle.stage);
   try {
-    execSync('ssh -S ' + JSON.stringify(handle.socket) + ' -O exit ' + handle.user + '@' + handle.host, {
+    execSync('ssh -S ' + JSON.stringify(handle.socket) + ' -O exit ' + JSON.stringify(handle.user + '@' + handle.host), {
       stdio: 'pipe', timeout: 5000,
     });
   } catch { /* master already gone */ }

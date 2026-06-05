@@ -352,7 +352,6 @@ export async function deployProd(
     let accountId = await getAwsAccountId(region);
     if (!accountId && config.ansible?.vault_path) {
       try {
-        const { AnsibleVaultSecrets } = await import('../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,

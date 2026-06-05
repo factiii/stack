@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { extractEnvironments, getDefaultVaultPath } from '../../../../utils/config-helpers.js';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 
 /**
  * Load required env var names from @factiii/auth's stack-plugin contract.
@@ -57,7 +58,6 @@ export const validateFixes: Fix[] = [
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible?.vault_path ?? getDefaultVaultPath(config),
           vault_password_file: config.ansible?.vault_password_file,
@@ -106,7 +106,6 @@ export const validateFixes: Fix[] = [
     },
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible?.vault_path ?? getDefaultVaultPath(config),
           vault_password_file: config.ansible?.vault_password_file,

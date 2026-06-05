@@ -28,10 +28,15 @@ let _sshRootDir: string | undefined;
 
 /**
  * Execute a command on a remote server via SSH
- * Uses module-level stage/config for password auth fallback
+ * Uses module-level stage/config for password auth fallback.
+ * Prefixes Homebrew shellenv so brew/node/pnpm are in PATH for
+ * non-interactive SSH sessions on macOS (Apple Silicon + Intel).
  */
 async function sshExecCommand(envConfig: EnvironmentConfig, command: string): Promise<string> {
-  return await sshExec(envConfig, command, _sshStage, _sshConfig, _sshRootDir);
+  const brewPrefix =
+    'if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)" >/dev/null 2>&1; ' +
+    'elif [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)" >/dev/null 2>&1; fi; ';
+  return await sshExec(envConfig, brewPrefix + command, _sshStage, _sshConfig, _sshRootDir);
 }
 
 /**
@@ -1061,12 +1066,18 @@ export async function deployStaging(
 
     } else {
       // We're remote - SSH to the server
-      // Step 1: Regenerate unified docker-compose.yml
+      // Step 1: Regenerate unified docker-compose.yml on the remote server
       console.log('   🔄 Regenerating unified docker-compose.yml...');
-      const repos = scanRepos();
-      const configs = loadConfigs(repos);
-      generateDockerCompose(configs);
-      generateNginx(configs);
+      await sshExecCommand(envConfig,
+        'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" && ' +
+        'cd ~/.factiii && node -e "' +
+        "const{scanRepos,loadConfigs,generateDockerCompose,generateNginx}=require('" + config.name + "/node_modules/@factiii/stack/dist/scripts/index.js');" +
+        'const r=scanRepos();const c=loadConfigs(r);generateDockerCompose(c);generateNginx(c);' +
+        'console.log(\\"   [OK] Generated docker-compose.yml + nginx.conf\\")' +
+        '" 2>&1 || (' +
+        'cd ~/.factiii/' + config.name + ' && npx -y @factiii/stack@latest generate-all 2>&1 || ' +
+        'echo "   [!] generate-all not available, using existing docker-compose.yml"' +
+        ')');
 
       // Step 1.5: Add postgres service for staging if DATABASE_URL is configured
       console.log('   🔄 Adding postgres service for staging...');

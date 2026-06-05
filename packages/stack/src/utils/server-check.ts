@@ -4,7 +4,7 @@
  * Utilities for checking server connectivity and software.
  */
 
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import { writeSecureKeyFile } from './ssh-helper.js';
 
@@ -36,10 +36,15 @@ function sshCommand(
   try {
     writeSecureKeyFile(keyPath, sshKey);
 
-    const result = execSync(
-      `ssh -i ${keyPath} -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${user}@${host} "${command}"`,
-      { encoding: 'utf8', stdio: 'pipe' }
-    );
+    const sshResult = spawnSync('ssh', [
+      '-i', keyPath,
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'ConnectTimeout=10',
+      user + '@' + host,
+      command,
+    ], { encoding: 'utf8', stdio: 'pipe' });
+    if (sshResult.status !== 0) throw new Error(sshResult.stderr || 'SSH failed');
+    const result = sshResult.stdout;
 
     fs.unlinkSync(keyPath);
     return { success: true, output: result.trim() };

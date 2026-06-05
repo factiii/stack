@@ -134,9 +134,9 @@ export function getPRNumber(): number | null {
 
   // Try gh CLI
   try {
-    const out = execSync('gh pr view --json number 2>/dev/null || true', {
+    const out = execSync('gh pr view --json number', {
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'ignore'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     const parsed = JSON.parse(out);
     return parsed.number ?? null;

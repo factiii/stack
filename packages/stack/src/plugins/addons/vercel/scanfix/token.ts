@@ -7,6 +7,7 @@
 import type { Fix } from '../../../../types/index.js';
 import type { FactiiiConfig } from '../../../../types/index.js';
 import { getDefaultVaultPath } from '../../../../utils/config-helpers.js';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 
 export const fixes: Fix[] = [
   {
@@ -20,7 +21,6 @@ export const fixes: Fix[] = [
       if (config.vercel === undefined) return false;
 
       // Check if VERCEL_TOKEN exists in vault
-      const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
       const vault = new AnsibleVaultSecrets({
         vault_path: (config.ansible?.vault_path as string) || getDefaultVaultPath(config),
         vault_password_file: config.ansible?.vault_password_file as string | undefined,
@@ -46,7 +46,6 @@ export const fixes: Fix[] = [
       console.log('');
 
       const { promptForSecret } = await import('../../../../utils/secret-prompts.js');
-      const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
 
       const vault = new AnsibleVaultSecrets({
         vault_path: (config.ansible?.vault_path as string) || getDefaultVaultPath(config),

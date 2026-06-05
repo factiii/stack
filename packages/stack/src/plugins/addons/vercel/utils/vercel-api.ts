@@ -12,6 +12,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import type { FactiiiConfig, DeployResult } from '../../../../types/index.js';
 import { getDefaultVaultPath } from '../../../../utils/config-helpers.js';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 
 interface VercelProject {
   id: string;
@@ -43,7 +44,6 @@ export async function getVercelToken(config: FactiiiConfig, rootDir: string): Pr
   }
 
   // Read from Ansible Vault
-  const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
   const vault = new AnsibleVaultSecrets({
     vault_path: (config.ansible?.vault_path as string) || getDefaultVaultPath(config),
     vault_password_file: config.ansible?.vault_password_file as string | undefined,

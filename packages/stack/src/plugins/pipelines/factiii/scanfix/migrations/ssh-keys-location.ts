@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as os from 'os';
 import type { FactiiiConfig, Fix } from '../../../../../types/index.js';
 import { getStackProjectName } from '../../../../../utils/project-identifier.js';
+import { writeSecureKeyFile } from '../../../../../utils/ssh-helper.js';
 
 const STAGES: Array<'staging' | 'prod'> = ['staging', 'prod'];
 
@@ -72,12 +73,12 @@ export const sshKeysLocationFix: Fix = {
       if (fs.existsSync(suffixed)) {
         fs.renameSync(suffixed, target);
         if (fs.existsSync(suffixed + '.pub')) fs.renameSync(suffixed + '.pub', target + '.pub');
-        fs.chmodSync(target, 0o600);
+        writeSecureKeyFile(target, fs.readFileSync(target, 'utf8'));
         console.log('   [OK] Moved ' + suffixed + ' -> ' + target);
       } else if (fs.existsSync(unsuffixed)) {
         fs.copyFileSync(unsuffixed, target);
         if (fs.existsSync(unsuffixed + '.pub')) fs.copyFileSync(unsuffixed + '.pub', target + '.pub');
-        fs.chmodSync(target, 0o600);
+        writeSecureKeyFile(target, fs.readFileSync(target, 'utf8'));
         console.log('   [OK] Copied ' + unsuffixed + ' -> ' + target);
         console.log('        Original kept in place - delete it once all stack repos have migrated.');
       }

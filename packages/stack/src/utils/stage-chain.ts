@@ -134,6 +134,7 @@ export async function runStageChain(fixes: Fix[], options: StageChainOptions): P
 
     // Remote stage — open tunnel before running the DAG.
     let tunnelHandle: TunnelHandle | null = null;
+    let tunnelError: string | null = null;
     if (REMOTE_STAGES.has(stage)) {
       try {
         const envs = extractEnvironments(options.config);
@@ -150,13 +151,19 @@ export async function runStageChain(fixes: Fix[], options: StageChainOptions): P
         const keyPath = findSshKeyForStage(stage, options.config.name);
         tunnelHandle = openTunnel(stage, envConfig, keyPath ?? null);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        const skipResult = buildSkipResult(stageFixes, 'tunnel open failed: ' + msg);
-        byStage.set(stage, skipResult);
-        options.onStageComplete?.(stage, skipResult);
-        firstFailedStage = stage;
-        continue;
+        tunnelError = e instanceof Error ? e.message : String(e);
       }
+    }
+
+    if (tunnelError) {
+      if (tunnelHandle) {
+        try { closeTunnel(tunnelHandle); } catch { /* best effort */ }
+      }
+      const skipResult = buildSkipResult(stageFixes, 'tunnel open failed: ' + tunnelError);
+      byStage.set(stage, skipResult);
+      options.onStageComplete?.(stage, skipResult);
+      firstFailedStage = stage;
+      continue;
     }
 
     try {

@@ -15,6 +15,7 @@
 import { execSync } from 'child_process';
 import type { Fix, FactiiiConfig, ServerOS } from '../../../../types/index.js';
 import { getDefaultVaultPath } from '../../../../utils/config-helpers.js';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 
 // ============================================================
 // Helpers
@@ -65,7 +66,6 @@ function isMac(): boolean {
 
 async function getAuthKeyFromVault(config: FactiiiConfig): Promise<string | null> {
   try {
-    const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
     const vault = new AnsibleVaultSecrets({
       vault_path: config.ansible?.vault_path ?? getDefaultVaultPath(config),
       vault_password_file: config.ansible?.vault_password_file,

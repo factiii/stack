@@ -17,7 +17,7 @@ import yaml from 'js-yaml';
 import type { EnvironmentConfig, FactiiiConfig, Stage } from '../types/index.js';
 import { extractEnvironments, getStageFromEnvironment } from './config-helpers.js';
 import { promptSingleLine } from './secret-prompts.js';
-import { AnsibleVaultSecrets } from './ansible-vault-secrets.js';
+import { AnsibleVaultSecrets, getVaultPasswordString } from './ansible-vault-secrets.js';
 import { getStackSshDir, getStackSshKeyPath } from './ssh-paths.js';
 import { getStackProjectName } from './project-identifier.js';
 
@@ -124,8 +124,6 @@ async function getSshPasswordFromVault(stage: string, config: FactiiiConfig, roo
     // Decrypt vault using pure Node.js (no CLI)
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { decryptSync: (data: string) => string } };
-    const { getVaultPasswordString } = await import('./ansible-vault-secrets.js');
-
     const password = await getVaultPasswordString({
       vault_path: config.ansible.vault_path,
       vault_password_file: config.ansible.vault_password_file,
@@ -225,7 +223,8 @@ async function autoSetupSshKey(
         'ssh-keygen -t ed25519 -f "' + keyPath + '" -N "" -C "' + stage + '-deploy"',
         { stdio: 'pipe' }
       );
-      try { fs.chmodSync(keyPath, 0o600); } catch { /* Windows */ }
+      // Fix permissions (writeSecureKeyFile uses icacls on Windows instead of no-op chmodSync)
+      writeSecureKeyFile(keyPath, fs.readFileSync(keyPath, 'utf8'));
       console.log('   [OK] Generated: ' + keyPath);
     } catch (e) {
       console.log('   [!] ssh-keygen failed: ' + (e instanceof Error ? e.message : String(e)));
@@ -242,7 +241,7 @@ async function autoSetupSshKey(
     console.log('');
     try {
       const pubKeyContent = fs.readFileSync(pubKeyPath, 'utf8').trim();
-      const addKeyCmd = 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo "' + pubKeyContent + '" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && sort -u -o ~/.ssh/authorized_keys ~/.ssh/authorized_keys';
+      const addKeyCmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys << 'SSHPUBKEYEOF'\n" + pubKeyContent + "\nSSHPUBKEYEOF\nchmod 600 ~/.ssh/authorized_keys && sort -u -o ~/.ssh/authorized_keys ~/.ssh/authorized_keys";
       const copyResult = spawnSync('ssh', [
         '-o', 'StrictHostKeyChecking=no',
         '-o', 'ConnectTimeout=10',
@@ -423,8 +422,8 @@ async function promptAndValidatePassword(
             'ssh-keygen -t ed25519 -f "' + keyPath + '" -N "" -C "' + stage + '-deploy"',
             { stdio: 'pipe' }
           );
-          // Fix permissions
-          try { fs.chmodSync(keyPath, 0o600); } catch { /* Windows */ }
+          // Fix permissions (writeSecureKeyFile uses icacls on Windows instead of no-op chmodSync)
+          writeSecureKeyFile(keyPath, fs.readFileSync(keyPath, 'utf8'));
           console.log('   [OK] Generated: ' + keyPath);
         } catch (e) {
           console.log('   [!] ssh-keygen failed: ' + (e instanceof Error ? e.message : String(e)));

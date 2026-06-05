@@ -44,6 +44,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync, spawnSync } from 'child_process';
 import type {
@@ -533,7 +534,7 @@ class FactiiiPipeline {
           // Check if running on the server already (FACTIII_ON_SERVER or GITHUB_ACTIONS)
           if (process.env.FACTIII_ON_SERVER || process.env.GITHUB_ACTIONS) {
             // Run seed directly on host (not inside Docker) — needs access to host filesystem
-            const serverDir = process.env.HOME + '/.factiii/' + config.name + '/apps/server';
+            const serverDir = os.homedir() + '/.factiii/' + config.name + '/apps/server';
             console.log('  Seeding from: ' + serverDir);
             execSync('cd ' + serverDir + ' && pnpm seed', { stdio: 'inherit' });
             return { success: true, message: 'Database seeded successfully' };
@@ -611,6 +612,15 @@ class FactiiiPipeline {
         { flags: '-o, --output <file>', description: 'Save logs to a file' },
         { flags: '--since <time>', description: 'Show logs since timestamp or relative (e.g. 1h, 30m, 2024-01-01)' },
       ],
+      remoteCmd: (stage, options, config) => {
+        const serviceName = (options.service as string) ?? config.name + '-' + stage;
+        const followFlag = options.follow ? '-f' : '';
+        const lines = (options.lines as string) ?? '30';
+        const timestampFlag = options.timestamps ? '--timestamps' : '';
+        const sinceFlag = options.since ? '--since ' + String(options.since) : '';
+        const grepPart = options.grep ? ' 2>&1 | grep ' + JSON.stringify(String(options.grep)) : '';
+        return 'docker logs ' + followFlag + ' ' + timestampFlag + ' ' + sinceFlag + ' --tail ' + lines + ' ' + serviceName + grepPart;
+      },
       execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
         const serviceName = (options.service as string) ?? config.name + '-' + stage;
         const followFlag = options.follow ? '-f' : '';
@@ -687,8 +697,12 @@ class FactiiiPipeline {
       options: [
         { flags: '-s, --service <name>', description: 'Service to restart (default: app container)' },
       ],
+      remoteCmd: (stage, options, config) => {
+        const serviceName = (options.service as string) ?? config.name + '-' + stage;
+        return 'docker compose -f ~/.factiii/docker-compose.yml restart ' + serviceName;
+      },
       execute: async (stage, options, config, _rootDir): Promise<CommandResult> => {
-        const factiiiDir = process.env.HOME + '/.factiii';
+        const factiiiDir = os.homedir() + '/.factiii';
         const serviceName = (options.service as string) ?? config.name + '-' + stage;
 
         try {
@@ -802,8 +816,11 @@ class FactiiiPipeline {
       category: 'ops',
       stages: ['staging', 'prod'],
       prodSafety: 'safe',
+      remoteCmd: () => {
+        return 'docker compose -f ~/.factiii/docker-compose.yml ps';
+      },
       execute: async (_stage, _options, _config, _rootDir): Promise<CommandResult> => {
-        const factiiiDir = process.env.HOME + '/.factiii';
+        const factiiiDir = os.homedir() + '/.factiii';
 
         try {
           execSync(
@@ -899,7 +916,7 @@ class FactiiiPipeline {
 
         // Check container status
         try {
-          execSync('docker ps | grep ' + containerName, { stdio: 'pipe' });
+          execSync('docker ps --filter name=' + containerName + ' --format "{{.Names}}" | findstr ' + containerName + ' || docker ps --filter name=' + containerName + ' | grep ' + containerName, { stdio: 'pipe', shell: process.platform === 'win32' ? undefined : '/bin/sh' });
           results.push('Container: Running');
         } catch {
           results.push('Container: NOT RUNNING');
@@ -908,7 +925,7 @@ class FactiiiPipeline {
         // Check database connectivity (run inside container)
         try {
           execSync(
-            'docker exec ' + containerName + ' npx prisma db execute --stdin <<< "SELECT 1"',
+            'echo "SELECT 1" | docker exec -i ' + containerName + ' npx prisma db execute --stdin',
             { stdio: 'pipe' }
           );
           results.push('Database: Connected');

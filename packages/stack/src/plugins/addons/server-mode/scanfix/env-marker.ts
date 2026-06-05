@@ -15,6 +15,7 @@
 
 import { execSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import type { Fix, FactiiiConfig } from '../../../../types/index.js';
 
 const MARKER_PATH = '/etc/factiii/environment';
@@ -39,8 +40,8 @@ function getCurrentMarker(): string | null {
 function hasPromptMarker(): boolean {
   try {
     const profilePaths = [
-      process.env.HOME + '/.bashrc',
-      process.env.HOME + '/.zshrc',
+      os.homedir() + '/.bashrc',
+      os.homedir() + '/.zshrc',
     ];
     for (const p of profilePaths) {
       try {
@@ -89,8 +90,8 @@ function writePromptColor(stage: string): boolean {
     // Detect shell and write to the right rc file
     const shell = process.env.SHELL || '/bin/bash';
     const rcFile = shell.includes('zsh')
-      ? process.env.HOME + '/.zshrc'
-      : process.env.HOME + '/.bashrc';
+      ? os.homedir() + '/.zshrc'
+      : os.homedir() + '/.bashrc';
 
     fs.appendFileSync(rcFile, snippet);
     console.log('   Added [' + label + '] prompt indicator to ' + rcFile);

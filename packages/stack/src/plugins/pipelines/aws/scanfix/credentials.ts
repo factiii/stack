@@ -17,6 +17,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsAccountId,
@@ -66,7 +67,7 @@ function getBootstrapPolicy(): string {
 /**
  * Auto-bootstrap AWS account using SDK + CLI for credential setup
  */
-async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
+async function bootstrapAwsAccount(config: FactiiiConfig, rootDir: string): Promise<boolean> {
   const awsConfig = getAwsConfig(config);
   const region = awsConfig.region || 'us-east-1';
 
@@ -123,6 +124,23 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
 
   if (await findIamUser(userName, region)) {
     console.log('   [OK] IAM user ' + userName + ' already exists');
+    // Store credentials in vault before returning (previously skipped this path)
+    console.log('   DEBUG: ansible.vault_path=' + (config.ansible?.vault_path ?? 'UNDEFINED') + ' rootDir=' + rootDir);
+    if (config.ansible?.vault_path) {
+      try {
+
+        const vault = new AnsibleVaultSecrets({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+          rootDir,
+        });
+        await vault.setSecret('AWS_SECRET_ACCESS_KEY', inputSecretKey);
+        await vault.setSecret('AWS_ACCESS_KEY_ID', inputAccessKeyId);
+        console.log('   [OK] Stored AWS credentials in Ansible Vault');
+      } catch {
+        console.log('   TIP: Store the secret key in Ansible Vault: npx stack deploy --secrets set AWS_SECRET_ACCESS_KEY');
+      }
+    }
     return true;
   }
 
@@ -193,10 +211,11 @@ async function bootstrapAwsAccount(config: FactiiiConfig): Promise<boolean> {
     // Auto-store in Ansible Vault if configured
     if (config.ansible?.vault_path) {
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
+          rootDir,
         });
         const keyResult2 = await vault.setSecret('AWS_SECRET_ACCESS_KEY', newSecretKey);
         const idResult = await vault.setSecret('AWS_ACCESS_KEY_ID', newAccessKeyId);
@@ -249,7 +268,6 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
   // Try to sync from vault
   if (config.ansible?.vault_path) {
     try {
-      const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
       const vault = new AnsibleVaultSecrets({
         vault_path: config.ansible.vault_path,
         vault_password_file: config.ansible.vault_password_file,
@@ -453,7 +471,7 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
               setCredentialsSyncFailed();
               return true;
             }
-            const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+    
             const vault = new AnsibleVaultSecrets({
               vault_path: vaultPath,
               vault_password_file: config.ansible.vault_password_file,
@@ -520,7 +538,7 @@ export const credentialsFixes: Fix[] = [
       // Try to silently sync from vault so downstream scans can authenticate
       if (config.ansible?.vault_path) {
         try {
-          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+  
           const vault = new AnsibleVaultSecrets({
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,
@@ -581,8 +599,8 @@ export const credentialsFixes: Fix[] = [
       const accountId = await getAwsAccountId(awsConfig.region);
       return !accountId;
     },
-    fix: async (config: FactiiiConfig, _rootDir: string): Promise<boolean> => {
-      return bootstrapAwsAccount(config);
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
+      return bootstrapAwsAccount(config, rootDir);
     },
     manualFix: [
       '============================================================',
@@ -655,7 +673,7 @@ export const credentialsFixes: Fix[] = [
 
       if (config.ansible?.vault_path) {
         try {
-          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+  
           const vault = new AnsibleVaultSecrets({
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,
@@ -691,7 +709,7 @@ export const credentialsFixes: Fix[] = [
       }
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -772,7 +790,7 @@ export const credentialsFixes: Fix[] = [
       // Try to restore admin credentials from vault
       if (config.ansible?.vault_path) {
         try {
-          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+  
           const vault = new AnsibleVaultSecrets({
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,
@@ -838,7 +856,7 @@ export const credentialsFixes: Fix[] = [
       // Store in vault for future use
       if (config.ansible?.vault_path) {
         try {
-          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+  
           const vault = new AnsibleVaultSecrets({
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,

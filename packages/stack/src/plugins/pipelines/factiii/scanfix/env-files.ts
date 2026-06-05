@@ -14,6 +14,7 @@ import * as readline from 'readline';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { parseEnvFile, compareEnvKeys, findMatchingValues } from '../../../../utils/env-validator.js';
 import { extractEnvironments, hasEnvironments } from '../../../../utils/config-helpers.js';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 
 /**
  * Values that are commonly identical across environments and shouldn't trigger warnings
@@ -294,7 +295,6 @@ export const envFileFixes: Fix[] = [
       if (!fs.existsSync(path.join(rootDir, '.env.staging'))) return false;
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -320,7 +320,6 @@ export const envFileFixes: Fix[] = [
       console.log('   Importing into Ansible Vault as staging_envs...');
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -359,7 +358,6 @@ export const envFileFixes: Fix[] = [
       if (!fs.existsSync(path.join(rootDir, '.env.prod'))) return false;
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -385,7 +383,6 @@ export const envFileFixes: Fix[] = [
       console.log('   Importing into Ansible Vault as prod_envs...');
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -441,7 +438,6 @@ export const envFileFixes: Fix[] = [
       }
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -472,7 +468,6 @@ export const envFileFixes: Fix[] = [
       }
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -542,7 +537,6 @@ export const envFileFixes: Fix[] = [
       }
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -573,7 +567,6 @@ export const envFileFixes: Fix[] = [
       }
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,

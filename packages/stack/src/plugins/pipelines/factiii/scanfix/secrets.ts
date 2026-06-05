@@ -419,8 +419,8 @@ async function autoGenerateAndDeploySshKey(
         'ssh-keygen -t ed25519 -f "' + keyPath + '" -N "" -C "' + stage + '-deploy"',
         { stdio: 'pipe' }
       );
-      // Fix permissions
-      try { fs.chmodSync(keyPath, 0o600); } catch { /* Windows */ }
+      // Fix permissions (writeSecureKeyFile uses icacls on Windows instead of no-op chmodSync)
+      writeSecureKeyFile(keyPath, fs.readFileSync(keyPath, 'utf8'));
       console.log('      [OK] Generated: ' + keyPath);
     } catch (e) {
       console.log('      [!] ssh-keygen failed: ' + (e instanceof Error ? e.message : String(e)));
@@ -445,8 +445,13 @@ async function autoGenerateAndDeploySshKey(
     // Regenerate .pub file if missing (needed for EC2 Instance Connect)
     if (!fs.existsSync(pubKeyPath)) {
       try {
-        execSync('ssh-keygen -y -f "' + keyPath + '" > "' + pubKeyPath + '"', { stdio: 'pipe' });
-        console.log('      [OK] Regenerated public key: ' + pubKeyPath);
+        const pubKeyResult = spawnSync('ssh-keygen', ['-y', '-f', keyPath], { encoding: 'utf8', stdio: 'pipe' });
+        if (pubKeyResult.status === 0 && pubKeyResult.stdout) {
+          fs.writeFileSync(pubKeyPath, pubKeyResult.stdout);
+          console.log('      [OK] Regenerated public key: ' + pubKeyPath);
+        } else {
+          console.log('      [!] Could not regenerate .pub file');
+        }
       } catch {
         console.log('      [!] Could not regenerate .pub file');
       }
@@ -849,7 +854,7 @@ export const secretsFixes: Fix[] = [
               if (!fs.existsSync(localKeyPath)) {
                 try {
                   execSync('ssh-keygen -t ed25519 -f "' + localKeyPath + '" -N "" -C "prod-deploy"', { stdio: 'pipe' });
-                  try { fs.chmodSync(localKeyPath, 0o600); } catch { /* Windows */ }
+                  writeSecureKeyFile(localKeyPath, fs.readFileSync(localKeyPath, 'utf8'));
                 } catch {
                   return false;
                 }
@@ -895,7 +900,7 @@ export const secretsFixes: Fix[] = [
               console.log('      [1/4] Generating SSH key...');
               try {
                 execSync('ssh-keygen -t ed25519 -f "' + localKeyPath + '" -N "" -C "prod-deploy"', { stdio: 'pipe' });
-                try { fs.chmodSync(localKeyPath, 0o600); } catch { /* Windows */ }
+                writeSecureKeyFile(localKeyPath, fs.readFileSync(localKeyPath, 'utf8'));
                 console.log('      [OK] Generated: ' + localKeyPath);
               } catch (e) {
                 console.log('      [!] ssh-keygen failed: ' + (e instanceof Error ? e.message : String(e)));
@@ -911,7 +916,9 @@ export const secretsFixes: Fix[] = [
               // Regenerate .pub if missing
               if (!fs.existsSync(localPubPath)) {
                 try {
-                  execSync('ssh-keygen -y -f "' + localKeyPath + '" > "' + localPubPath + '"', { stdio: 'pipe' });
+                  const pubResult = spawnSync('ssh-keygen', ['-y', '-f', localKeyPath], { encoding: 'utf8', stdio: 'pipe' });
+                  if (pubResult.status === 0 && pubResult.stdout) { fs.writeFileSync(localPubPath, pubResult.stdout); }
+                  else { throw new Error('ssh-keygen failed'); }
                 } catch {
                   console.log('      [!] Could not regenerate .pub file');
                   return false;
@@ -1309,7 +1316,9 @@ export const secretsFixes: Fix[] = [
 
             const pubKeyPath = keyPath + '.pub';
             try {
-              execSync('ssh-keygen -y -f "' + keyPath + '" > "' + pubKeyPath + '"', { stdio: 'pipe' });
+              const kgResult = spawnSync('ssh-keygen', ['-y', '-f', keyPath], { encoding: 'utf8', stdio: 'pipe' });
+              if (kgResult.status === 0 && kgResult.stdout) { fs.writeFileSync(pubKeyPath, kgResult.stdout); }
+              else { throw new Error('ssh-keygen failed'); }
             } catch {
               console.log('      [!] Could not generate public key from private key');
               return true;
@@ -1382,7 +1391,9 @@ export const secretsFixes: Fix[] = [
             // Regenerate .pub file for EC2 Instance Connect
             const pubKeyPath = keyPath + '.pub';
             try {
-              execSync('ssh-keygen -y -f "' + keyPath + '" > "' + pubKeyPath + '"', { stdio: 'pipe' });
+              const kgResult = spawnSync('ssh-keygen', ['-y', '-f', keyPath], { encoding: 'utf8', stdio: 'pipe' });
+              if (kgResult.status === 0 && kgResult.stdout) { fs.writeFileSync(pubKeyPath, kgResult.stdout); }
+              else { throw new Error('ssh-keygen failed'); }
             } catch {
               console.log('      [!] Could not generate public key from private key');
               return true; // Key is on disk, just not authorized yet

@@ -16,7 +16,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { AnsibleVaultSecrets } from '../utils/ansible-vault-secrets.js';
+import { AnsibleVaultSecrets, getVaultPasswordString } from '../utils/ansible-vault-secrets.js';
 import { promptForSecret, promptForEnvSecret } from '../utils/secret-prompts.js';
 import { deploySecrets } from './deploy-secrets.js';
 import { loadConfig } from '../utils/config-helpers.js';
@@ -357,21 +357,22 @@ export async function secrets(
     case 'write-ssh-keys': {
       const { getStackProjectName } = await import('../utils/project-identifier.js');
       const { getStackSshDir, getStackSshKeyPath } = await import('../utils/ssh-paths.js');
+      const { writeSecureKeyFile } = await import('../utils/ssh-helper.js');
       const projectName = getStackProjectName(config);
       const targetDir = getStackSshDir(projectName);
-      fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(targetDir, { recursive: true });
 
       const stagingKey = await store.getSecret('STAGING_SSH');
       const prodKey = await store.getSecret('PROD_SSH');
 
       if (stagingKey) {
         const keyPath = getStackSshKeyPath(projectName, 'staging');
-        fs.writeFileSync(keyPath, stagingKey.endsWith('\n') ? stagingKey : stagingKey + '\n', { mode: 0o600 });
+        writeSecureKeyFile(keyPath, stagingKey.endsWith('\n') ? stagingKey : stagingKey + '\n');
         console.log('[OK] Wrote STAGING_SSH to ' + keyPath);
       }
       if (prodKey) {
         const keyPath = getStackSshKeyPath(projectName, 'prod');
-        fs.writeFileSync(keyPath, prodKey.endsWith('\n') ? prodKey : prodKey + '\n', { mode: 0o600 });
+        writeSecureKeyFile(keyPath, prodKey.endsWith('\n') ? prodKey : prodKey + '\n');
         console.log('[OK] Wrote PROD_SSH to ' + keyPath);
       }
       if (!stagingKey && !prodKey) {
@@ -381,17 +382,21 @@ export async function secrets(
     }
 
     case 'export-vault': {
-      const vaultPassFile = (config.ansible?.vault_password_file ?? '~/.vault_pass').replace(/^~/, os.homedir());
-
-      if (!fs.existsSync(vaultPassFile)) {
-        console.log('[ERROR] Vault password file not found: ' + vaultPassFile);
-        console.log('Run: npx stack init  (or npx stack fix --dev) to create one');
+      let vaultPassword: string;
+      try {
+        vaultPassword = await getVaultPasswordString({
+          vault_path: config.ansible?.vault_path ?? '',
+          vault_password_file: config.ansible?.vault_password_file,
+          rootDir,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log('[ERROR] ' + msg);
         return;
       }
 
-      const vaultPassword = fs.readFileSync(vaultPassFile, 'utf8').replace(/^﻿/, '').trim();
       if (!vaultPassword) {
-        console.log('[ERROR] Vault password file is empty: ' + vaultPassFile);
+        console.log('[ERROR] Vault password is empty');
         return;
       }
 
@@ -402,8 +407,12 @@ export async function secrets(
 
       const defaultOutPath = path.join(process.cwd(), 'vault-key.export');
       const outPath = secretName
-        ? (path.isAbsolute(secretName) ? secretName : path.join(process.cwd(), secretName))
+        ? path.resolve(process.cwd(), secretName)
         : defaultOutPath;
+      if (!outPath.startsWith(process.cwd() + path.sep) && outPath !== defaultOutPath) {
+        console.log('[ERROR] Export path must be within the current directory');
+        return;
+      }
 
       fs.writeFileSync(outPath, vaultPassword + '\n', { encoding: 'utf8', mode: 0o600 });
       console.log('[OK] Vault key exported to: ' + outPath);
@@ -426,7 +435,11 @@ export async function secrets(
         return;
       }
 
-      const importPath = path.isAbsolute(secretName) ? secretName : path.join(process.cwd(), secretName);
+      const importPath = path.resolve(process.cwd(), secretName);
+      if (!importPath.startsWith(process.cwd() + path.sep) && importPath !== path.resolve(process.cwd(), secretName)) {
+        console.log('[ERROR] Import path must be within the current directory');
+        return;
+      }
 
       if (!fs.existsSync(importPath)) {
         console.log('[ERROR] File not found: ' + importPath);

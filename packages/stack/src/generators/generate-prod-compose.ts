@@ -25,7 +25,8 @@ export function generateProdCompose(
   config: FactiiiConfig,
   opts: GenerateProdComposeOptions,
 ): string {
-  const repoName = config.name ?? 'app';
+  const rawName = config.name ?? 'app';
+  const repoName = rawName.replace(/[^a-zA-Z0-9_-]/g, '');
   const serviceName = repoName + '-' + opts.stage;
   const dbName = repoName.replace(/[^a-zA-Z0-9]/g, '') + '-' + opts.stage;
   const envFile = './' + repoName + '/.env.' + opts.stage;

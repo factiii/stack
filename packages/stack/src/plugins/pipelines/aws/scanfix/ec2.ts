@@ -8,6 +8,7 @@
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 import { writeSshKeyToDisk } from '../../factiii/scanfix/secrets.js';
 import {
   getAwsConfig,
@@ -76,7 +77,6 @@ export const ec2Fixes: Fix[] = [
         // Auto-store in Ansible Vault
         if (config.ansible?.vault_path) {
           try {
-            const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
             const vault = new AnsibleVaultSecrets({
               vault_path: config.ansible.vault_path,
               vault_password_file: config.ansible.vault_password_file,

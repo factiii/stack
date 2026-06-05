@@ -11,6 +11,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import yaml from 'js-yaml';
 
@@ -61,7 +62,7 @@ interface DockerCompose {
  * Uses FACTIII_DIR env var if set, otherwise ~/.factiii
  */
 function getFactiiiDir(): string {
-  return process.env.FACTIII_DIR ?? path.join(process.env.HOME ?? '/home/ubuntu', '.factiii');
+  return process.env.FACTIII_DIR ?? path.join(os.homedir(), '.factiii');
 }
 
 /**

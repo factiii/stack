@@ -89,6 +89,7 @@ import {
   SendSSHPublicKeyCommand,
 } from '@aws-sdk/client-ec2-instance-connect';
 import type { FactiiiConfig, EnvironmentConfig } from '../../../../types/index.js';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 
 // Module-level flag: set to true when aws-credentials-sync fails.
 // Other AWS fixes check this to skip their scans entirely.
@@ -183,8 +184,6 @@ export async function loadAwsCredentials(
   const awsConfig = getAwsConfig(config);
   const region = awsConfig.region || 'us-east-1';
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
   const vault = new AnsibleVaultSecrets({
     vault_path: config.ansible.vault_path,
     vault_password_file: config.ansible.vault_password_file,
