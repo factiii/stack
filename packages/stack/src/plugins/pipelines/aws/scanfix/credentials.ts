@@ -17,6 +17,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
   getAwsAccountId,
@@ -127,7 +128,7 @@ async function bootstrapAwsAccount(config: FactiiiConfig, rootDir: string): Prom
     console.log('   DEBUG: ansible.vault_path=' + (config.ansible?.vault_path ?? 'UNDEFINED') + ' rootDir=' + rootDir);
     if (config.ansible?.vault_path) {
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -210,7 +211,7 @@ async function bootstrapAwsAccount(config: FactiiiConfig, rootDir: string): Prom
     // Auto-store in Ansible Vault if configured
     if (config.ansible?.vault_path) {
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -267,7 +268,6 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
   // Try to sync from vault
   if (config.ansible?.vault_path) {
     try {
-      const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
       const vault = new AnsibleVaultSecrets({
         vault_path: config.ansible.vault_path,
         vault_password_file: config.ansible.vault_password_file,
@@ -471,7 +471,7 @@ async function _syncCredentials(config: FactiiiConfig, rootDir: string): Promise
               setCredentialsSyncFailed();
               return true;
             }
-            const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+    
             const vault = new AnsibleVaultSecrets({
               vault_path: vaultPath,
               vault_password_file: config.ansible.vault_password_file,
@@ -538,7 +538,7 @@ export const credentialsFixes: Fix[] = [
       // Try to silently sync from vault so downstream scans can authenticate
       if (config.ansible?.vault_path) {
         try {
-          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+  
           const vault = new AnsibleVaultSecrets({
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,
@@ -673,7 +673,7 @@ export const credentialsFixes: Fix[] = [
 
       if (config.ansible?.vault_path) {
         try {
-          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+  
           const vault = new AnsibleVaultSecrets({
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,
@@ -709,7 +709,7 @@ export const credentialsFixes: Fix[] = [
       }
 
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,
@@ -790,7 +790,7 @@ export const credentialsFixes: Fix[] = [
       // Try to restore admin credentials from vault
       if (config.ansible?.vault_path) {
         try {
-          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+  
           const vault = new AnsibleVaultSecrets({
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,
@@ -856,7 +856,7 @@ export const credentialsFixes: Fix[] = [
       // Store in vault for future use
       if (config.ansible?.vault_path) {
         try {
-          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
+  
           const vault = new AnsibleVaultSecrets({
             vault_path: config.ansible.vault_path,
             vault_password_file: config.ansible.vault_password_file,

@@ -8,6 +8,7 @@
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 import {
   getAwsConfig,
   getProjectName,
@@ -222,7 +223,6 @@ async function _ensureIamAccessInner(config: FactiiiConfig, region: string): Pro
 
   if (hasVault) {
     try {
-      const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
       const vault = new AnsibleVaultSecrets({
         vault_path: config.ansible!.vault_path!,
         vault_password_file: config.ansible!.vault_password_file,
@@ -239,7 +239,6 @@ async function _ensureIamAccessInner(config: FactiiiConfig, region: string): Pro
 
     if (swap) {
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible!.vault_path!,
           vault_password_file: config.ansible!.vault_password_file,
@@ -370,7 +369,6 @@ export const iamFixes: Fix[] = [
         // Auto-store in Ansible Vault (never print secret key to terminal)
         if (config.ansible?.vault_path && accessKeyId && secretKey) {
           try {
-            const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
             const vault = new AnsibleVaultSecrets({
               vault_path: config.ansible.vault_path,
               vault_password_file: config.ansible.vault_password_file,
@@ -493,7 +491,6 @@ export const iamFixes: Fix[] = [
         // Auto-store in Ansible Vault (never print secret key to terminal)
         if (config.ansible?.vault_path && accessKeyId && secretKey) {
           try {
-            const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
             const vault = new AnsibleVaultSecrets({
               vault_path: config.ansible.vault_path,
               vault_password_file: config.ansible.vault_password_file,

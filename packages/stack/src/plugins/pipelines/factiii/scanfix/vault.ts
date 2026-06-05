@@ -16,6 +16,7 @@ import * as path from 'path';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { getDefaultVaultPath, hasEnvironments } from '../../../../utils/config-helpers.js';
 import { promptSingleLine } from '../../../../utils/secret-prompts.js';
+import { AnsibleVaultSecrets, getVaultPasswordString } from '../../../../utils/ansible-vault-secrets.js';
 
 export const vaultFixes: Fix[] = [
   {
@@ -55,7 +56,6 @@ export const vaultFixes: Fix[] = [
     fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       if (!config.ansible?.vault_password_file) return false; // scan already gated on this
       try {
-        const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
         const vault = new AnsibleVaultSecrets({
           vault_path: config.ansible?.vault_path ?? getDefaultVaultPath(config),
           vault_password_file: config.ansible.vault_password_file,
@@ -92,7 +92,6 @@ export const vaultFixes: Fix[] = [
 
       // Try to decrypt — if it fails with integrity check, password is wrong
       try {
-        const { getVaultPasswordString } = await import('../../../../utils/ansible-vault-secrets.js');
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { decryptSync: (data: string) => string } };
 
@@ -186,7 +185,6 @@ export const vaultFixes: Fix[] = [
             console.log('   ansible.vault_password_file not configured in stack.yml');
             return false;
           }
-          const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
           const vault = new AnsibleVaultSecrets({
             vault_path: vaultPath,
             vault_password_file: config.ansible.vault_password_file,

@@ -17,7 +17,7 @@ import yaml from 'js-yaml';
 import type { EnvironmentConfig, FactiiiConfig, Stage } from '../types/index.js';
 import { extractEnvironments, getStageFromEnvironment } from './config-helpers.js';
 import { promptSingleLine } from './secret-prompts.js';
-import { AnsibleVaultSecrets } from './ansible-vault-secrets.js';
+import { AnsibleVaultSecrets, getVaultPasswordString } from './ansible-vault-secrets.js';
 import { getStackSshDir, getStackSshKeyPath } from './ssh-paths.js';
 import { getStackProjectName } from './project-identifier.js';
 
@@ -124,8 +124,6 @@ async function getSshPasswordFromVault(stage: string, config: FactiiiConfig, roo
     // Decrypt vault using pure Node.js (no CLI)
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { decryptSync: (data: string) => string } };
-    const { getVaultPasswordString } = await import('./ansible-vault-secrets.js');
-
     const password = await getVaultPasswordString({
       vault_path: config.ansible.vault_path,
       vault_password_file: config.ansible.vault_password_file,

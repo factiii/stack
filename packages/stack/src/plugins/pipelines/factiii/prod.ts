@@ -11,6 +11,7 @@ import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
 import { getStackAutoPath } from '../../../constants/config-files.js';
+import { AnsibleVaultSecrets } from '../../../utils/ansible-vault-secrets.js';
 import { sshExec } from '../../../utils/ssh-helper.js';
 import type {
   FactiiiConfig,
@@ -95,7 +96,6 @@ async function syncAwsCredsFromVault(config: FactiiiConfig, region: string, root
     const configKeyId = config.prod?.access_key_id;
     if (!configKeyId) return;
 
-    const { AnsibleVaultSecrets } = await import('../../../utils/ansible-vault-secrets.js');
     const store = new AnsibleVaultSecrets({
       vault_path: config.ansible.vault_path,
       vault_password_file: config.ansible.vault_password_file,

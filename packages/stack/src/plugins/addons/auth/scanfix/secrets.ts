@@ -12,6 +12,7 @@
 import * as crypto from 'crypto';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { getDefaultVaultPath } from '../../../../utils/config-helpers.js';
+import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 
 /**
  * Load secret name constants from @factiii/auth's stack-plugin contract.
@@ -72,7 +73,6 @@ function isOAuthEnabled(config: FactiiiConfig, provider: 'google' | 'apple'): bo
  * Get Ansible Vault store
  */
 async function getVault(config: FactiiiConfig, rootDir: string) {
-  const { AnsibleVaultSecrets } = await import('../../../../utils/ansible-vault-secrets.js');
   return new AnsibleVaultSecrets({
     vault_path: config.ansible?.vault_path ?? getDefaultVaultPath(config),
     vault_password_file: config.ansible?.vault_password_file,

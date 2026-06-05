@@ -22,6 +22,7 @@ import { deploySecrets } from './deploy-secrets.js';
 import { loadRelevantPlugins } from '../plugins/index.js';
 import type { FactiiiConfig, DeployOptions, DeployResult, Fix, Stage, ServerOS } from '../types/index.js';
 import { extractEnvironments, getStageFromEnvironment, loadConfig } from '../utils/config-helpers.js';
+import { AnsibleVaultSecrets } from '../utils/ansible-vault-secrets.js';
 
 /**
  * Pipeline plugin class interface
@@ -88,12 +89,12 @@ function printRollbackInstructions(stage: Stage, environment: string, config: Fa
 
   console.log('\nRECOVERY OPTIONS:\n');
   console.log('  1. View logs on server:');
-  console.log('     ssh -i ~/.ssh/' + stage + '_deploy_key ' + user + '@' + domain + ' "docker logs --tail 50 \\$(docker ps -lq)"');
+  console.log('     ssh -i ~/.ssh/factiii/<project>/' + stage + '_deploy_key ' + user + '@' + domain + ' "docker logs --tail 50 \\$(docker ps -lq)"');
   console.log('\n  2. Rollback to previous commit:');
   console.log('     git log --oneline -5              # find working commit');
   console.log('     npx stack deploy --' + stage + ' --commit <hash>');
   console.log('\n  3. Manual server access:');
-  console.log('     ssh -i ~/.ssh/' + stage + '_deploy_key ' + user + '@' + domain);
+  console.log('     ssh -i ~/.ssh/factiii/<project>/' + stage + '_deploy_key ' + user + '@' + domain);
   console.log('\n  4. Full reset:');
   console.log('     npx stack undeploy --' + stage);
   console.log('     npx stack deploy --' + stage + '\n');
@@ -235,7 +236,6 @@ export async function deploy(environment: string, options: DeployOptions = {}): 
         ? path.resolve(rootDir, config.ansible.vault_password_file)
         : undefined;
       if (fs.existsSync(vaultPath) && (!vaultPassFile || fs.existsSync(vaultPassFile))) {
-        const { AnsibleVaultSecrets } = await import('../utils/ansible-vault-secrets.js');
         const store = new AnsibleVaultSecrets({
           vault_path: config.ansible.vault_path,
           vault_password_file: config.ansible.vault_password_file,

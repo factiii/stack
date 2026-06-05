@@ -16,7 +16,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { AnsibleVaultSecrets } from '../utils/ansible-vault-secrets.js';
+import { AnsibleVaultSecrets, getVaultPasswordString } from '../utils/ansible-vault-secrets.js';
 import { promptForSecret, promptForEnvSecret } from '../utils/secret-prompts.js';
 import { deploySecrets } from './deploy-secrets.js';
 import { loadConfig } from '../utils/config-helpers.js';
@@ -382,8 +382,6 @@ export async function secrets(
     }
 
     case 'export-vault': {
-      const { getVaultPasswordString } = await import('../utils/ansible-vault-secrets.js');
-
       let vaultPassword: string;
       try {
         vaultPassword = await getVaultPasswordString({
