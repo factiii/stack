@@ -16,7 +16,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { AnsibleVaultSecrets, getVaultPasswordString } from '../utils/ansible-vault-secrets.js';
+import { AnsibleVaultSecrets, getVaultPasswordString, type VaultContent } from '../utils/ansible-vault-secrets.js';
 import { promptForSecret, promptForEnvSecret } from '../utils/secret-prompts.js';
 import { deploySecrets } from './deploy-secrets.js';
 import { loadConfig } from '../utils/config-helpers.js';
@@ -382,6 +382,10 @@ export async function secrets(
     }
 
     case 'export-vault': {
+      const { getVaultPasswordString } = await import('../utils/ansible-vault-secrets.js');
+      const { wrapExportBundle } = await import('../utils/vault-key.js');
+      const { promptSingleLine: promptExport } = await import('../utils/secret-prompts.js');
+
       let vaultPassword: string;
       try {
         vaultPassword = await getVaultPasswordString({
@@ -394,77 +398,230 @@ export async function secrets(
         console.log('[ERROR] ' + msg);
         return;
       }
-
       if (!vaultPassword) {
         console.log('[ERROR] Vault password is empty');
         return;
       }
 
-      console.log('\nEXPORT VAULT KEY');
-      console.log('');
-      console.log('This exports your vault password for team onboarding.');
-      console.log('The vault is already protected by your per-operation passphrase.\n');
+      let allSecrets: Record<string, unknown>;
+      try {
+        allSecrets = await store.getDecryptedFull();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log('[ERROR] Failed to read vault secrets: ' + msg);
+        return;
+      }
 
-      const defaultOutPath = path.join(process.cwd(), 'vault-key.export');
+      const secretKeys = Object.keys(allSecrets).filter(k => {
+        const v = allSecrets[k];
+        return v !== undefined && v !== null && (typeof v === 'string' ? v.trim().length > 0 : Object.keys(v as Record<string, unknown>).length > 0);
+      });
+
+      console.log('\nEXPORT VAULT BUNDLE');
+      console.log('');
+      console.log('This exports ALL vault secrets + vault key as a single encrypted file.');
+      console.log('');
+      console.log('Secrets to export:');
+      for (const key of secretKeys) {
+        const val = allSecrets[key];
+        if (typeof val === 'object') {
+          console.log('  [OK] ' + key + ' (' + Object.keys(val as Record<string, unknown>).length + ' entries)');
+        } else {
+          console.log('  [OK] ' + key);
+        }
+      }
+      if (secretKeys.length === 0) {
+        console.log('  (no secrets found — only vault key will be exported)');
+      }
+      console.log('');
+
+      let exportPassphrase = '';
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const a = await promptExport('   Export passphrase: ', { hidden: true });
+        const b = await promptExport('   Confirm passphrase: ', { hidden: true });
+        if (!a || a.length < 8) {
+          console.log('   Passphrase must be at least 8 characters');
+          continue;
+        }
+        if (a !== b) {
+          console.log('   Passphrases did not match — try again');
+          continue;
+        }
+        exportPassphrase = a;
+        break;
+      }
+      if (!exportPassphrase) {
+        console.log('[ERROR] No valid passphrase provided. Export aborted.');
+        return;
+      }
+
+      const bundle = JSON.stringify({
+        version: 1,
+        vaultKey: vaultPassword,
+        secrets: allSecrets,
+      });
+
+      const encrypted = await wrapExportBundle(bundle, exportPassphrase);
+
+      const defaultOutPath = path.join(process.cwd(), 'vault-export.enc');
       const outPath = secretName
         ? path.resolve(process.cwd(), secretName)
         : defaultOutPath;
+
       if (!outPath.startsWith(process.cwd() + path.sep) && outPath !== defaultOutPath) {
         console.log('[ERROR] Export path must be within the current directory');
         return;
       }
 
-      fs.writeFileSync(outPath, vaultPassword + '\n', { encoding: 'utf8', mode: 0o600 });
-      console.log('[OK] Vault key exported to: ' + outPath);
+      fs.writeFileSync(outPath, encrypted, { encoding: 'utf8', mode: 0o600 });
+
+      console.log('[OK] Vault bundle exported to: ' + outPath);
+      console.log('     Contains: vault key + ' + secretKeys.length + ' secrets');
       console.log('');
       console.log('Share this file with your teammate, then they run:');
       console.log('  npx stack secrets import-vault ' + path.basename(outPath));
       console.log('');
-      console.log('IMPORTANT: Do not commit this file to git.');
+      console.log('WARNING: Delete this file after sharing. Do NOT commit to git.');
       break;
     }
 
     case 'import-vault': {
-      const { confirm: confirmImport } = await import('../utils/secret-prompts.js');
+      const { promptSingleLine: promptImport, confirm: confirmImport } = await import('../utils/secret-prompts.js');
+      const { isExportBundle, unwrapExportBundle, wrapPassword } = await import('../utils/vault-key.js');
 
       if (!secretName) {
         console.log('[ERROR] Export file path required');
         console.log('Usage: npx stack secrets import-vault <file>');
         console.log('');
-        console.log('Example: npx stack secrets import-vault vault-key.export');
+        console.log('Example: npx stack secrets import-vault vault-export.enc');
         return;
       }
 
       const importPath = path.resolve(process.cwd(), secretName);
-      if (!importPath.startsWith(process.cwd() + path.sep) && importPath !== path.resolve(process.cwd(), secretName)) {
-        console.log('[ERROR] Import path must be within the current directory');
-        return;
-      }
-
       if (!fs.existsSync(importPath)) {
         console.log('[ERROR] File not found: ' + importPath);
         return;
       }
 
-      const vaultPass = fs.readFileSync(importPath, 'utf8').replace(/^﻿/, '').trim();
+      const rawContents = fs.readFileSync(importPath, 'utf8').replace(/^﻿/, '');
+
+      // --- STACKEXPORT1 full bundle ---
+      if (isExportBundle(rawContents)) {
+        console.log('\nIMPORT VAULT BUNDLE');
+        console.log('');
+        console.log('Detected STACKEXPORT1 encrypted bundle.');
+        console.log('');
+
+        let bundleJson = '';
+        let passphrase = '';
+        for (let attempt = 0; attempt < 3; attempt++) {
+          passphrase = await promptImport('   Passphrase: ', { hidden: true });
+          if (!passphrase) {
+            console.log('   Passphrase required');
+            continue;
+          }
+          try {
+            bundleJson = await unwrapExportBundle(rawContents, passphrase);
+            break;
+          } catch {
+            console.log('   Wrong passphrase — try again (' + (attempt + 1) + '/3)');
+            passphrase = '';
+          }
+        }
+        if (!bundleJson) {
+          console.log('[ERROR] Failed to decrypt bundle after 3 attempts');
+          return;
+        }
+
+        let bundle: { version: number; vaultKey: string; secrets: Record<string, unknown> };
+        try {
+          bundle = JSON.parse(bundleJson);
+        } catch {
+          console.log('[ERROR] Bundle contents are not valid JSON — file may be corrupt');
+          return;
+        }
+
+        if (!bundle.vaultKey || typeof bundle.vaultKey !== 'string') {
+          console.log('[ERROR] Bundle does not contain a vault key');
+          return;
+        }
+
+        const destPath = (config.ansible?.vault_password_file ?? '~/.vault_pass').replace(/^~/, os.homedir());
+        if (fs.existsSync(destPath)) {
+          const overwrite = await confirmImport(
+            '   Vault password file already exists at ' + destPath + '. Overwrite?',
+            false
+          );
+          if (!overwrite) {
+            console.log('   Aborted — no changes made');
+            return;
+          }
+        }
+
+        const destDir = path.dirname(destPath);
+        if (!fs.existsSync(destDir)) {
+          fs.mkdirSync(destDir, { recursive: true });
+        }
+
+        const wrappedKey = await wrapPassword(bundle.vaultKey, passphrase);
+        fs.writeFileSync(destPath, wrappedKey, { mode: 0o600 });
+        console.log('[OK] Vault key saved to: ' + destPath + ' (encrypted with your passphrase)');
+
+        if (bundle.secrets && Object.keys(bundle.secrets).length > 0) {
+          console.log('');
+          console.log('Restoring secrets to vault...');
+          const secretKeys = Object.keys(bundle.secrets);
+          for (const key of secretKeys) {
+            const val = bundle.secrets[key];
+            if (typeof val === 'object') {
+              console.log('  - ' + key + ' (' + Object.keys(val as Record<string, unknown>).length + ' entries)');
+            } else {
+              console.log('  - ' + key);
+            }
+          }
+
+          const result = await store.saveVault(bundle.secrets as VaultContent);
+          if (result.success) {
+            console.log('[OK] All secrets restored to vault');
+          } else {
+            console.log('[ERROR] Failed to save secrets: ' + result.error);
+            return;
+          }
+        } else {
+          console.log('[OK] Bundle contained no secrets (vault key only)');
+        }
+
+        console.log('');
+        console.log('Import complete. Every stack command will prompt for this passphrase.');
+        console.log('');
+        console.log('Next steps:');
+        console.log('  npx stack secrets list    — verify secrets are readable');
+        console.log('  npx stack scan            — continue setup');
+        break;
+      }
+
+      // --- Legacy plaintext import (backward compatibility) ---
+      const vaultPass = rawContents.trim();
       if (!vaultPass) {
         console.log('[ERROR] Vault key file is empty');
         return;
       }
 
-      console.log('\nIMPORT VAULT KEY');
+      console.log('\nIMPORT VAULT KEY (legacy plaintext format)');
       console.log('');
       console.log('This will save the vault key to your local machine.\n');
 
       const destPath = (config.ansible?.vault_password_file ?? '~/.vault_pass').replace(/^~/, os.homedir());
-
       if (fs.existsSync(destPath)) {
         const existing = fs.readFileSync(destPath, 'utf8').replace(/^﻿/, '').trim();
         if (existing === vaultPass) {
           console.log('[OK] Vault password already matches — no changes needed');
           return;
         }
-        const overwrite = await confirmImport('   Vault password file already exists at ' + destPath + '. Overwrite?', false);
+        const overwrite = await confirmImport(
+          '   Vault password file already exists at ' + destPath + '. Overwrite?',
+          false
+        );
         if (!overwrite) {
           console.log('   Aborted — no changes made');
           return;
@@ -475,6 +632,7 @@ export async function secrets(
       if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir, { recursive: true });
       }
+
       fs.writeFileSync(destPath, vaultPass + '\n', { mode: 0o600 });
       console.log('');
       console.log('[OK] Vault password saved to: ' + destPath);

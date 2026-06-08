@@ -36,6 +36,8 @@ const KEY_BYTES = 32;
 // N=2^17 ≈ 250ms on M-series, ~256MB peak. Bump maxmem so node doesn't refuse.
 const SCRYPT_OPTS: crypto.ScryptOptions = { N: 1 << 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 
+export const STACK_EXPORT_HEADER = 'STACKEXPORT1';
+
 export function isWrapped(contents: string): boolean {
   // First non-empty line must be the header. Tolerates BOM and leading whitespace.
   const firstLine = contents.replace(/^﻿/, '').trimStart().split('\n', 1)[0]?.trim() ?? '';
@@ -83,6 +85,50 @@ export async function unwrapPassword(fileContents: string, passphrase: string): 
   const ciphertext = blob.subarray(SALT_BYTES + NONCE_BYTES + TAG_BYTES);
 
   const kek = await scryptAsync(passphrase.normalize('NFKC'), Buffer.from(salt), KEY_BYTES, SCRYPT_OPTS);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', kek, nonce);
+  decipher.setAuthTag(tag);
+  let plaintext: Buffer;
+  try {
+    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  } finally {
+    kek.fill(0);
+  }
+  return plaintext.toString('utf8');
+}
+
+export function isExportBundle(contents: string): boolean {
+  const firstLine = contents.replace(/^﻿/, '').trimStart().split('\n', 1)[0]?.trim() ?? '';
+  return firstLine === STACK_EXPORT_HEADER;
+}
+
+export async function wrapExportBundle(plaintext: string, passphrase: string): Promise<string> {
+  if (!passphrase) throw new Error('Passphrase cannot be empty');
+  const salt = crypto.randomBytes(SALT_BYTES);
+  const nonce = crypto.randomBytes(NONCE_BYTES);
+  const kek = (await scryptAsync(passphrase.normalize('NFKC'), salt, KEY_BYTES, SCRYPT_OPTS)) as Buffer;
+  const cipher = crypto.createCipheriv('aes-256-gcm', kek, nonce);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const blob = Buffer.concat([salt, nonce, tag, ciphertext]);
+  kek.fill(0);
+  return STACK_EXPORT_HEADER + '\n' + blob.toString('base64') + '\n';
+}
+
+export async function unwrapExportBundle(fileContents: string, passphrase: string): Promise<string> {
+  if (!isExportBundle(fileContents)) {
+    throw new Error('Not a STACKEXPORT1 bundle');
+  }
+  const lines = fileContents.replace(/^﻿/, '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 2) throw new Error('Export bundle is missing the ciphertext line');
+  const blob = Buffer.from(lines[1] as string, 'base64');
+  if (blob.length < SALT_BYTES + NONCE_BYTES + TAG_BYTES + 1) {
+    throw new Error('Export bundle is truncated');
+  }
+  const salt = blob.subarray(0, SALT_BYTES);
+  const nonce = blob.subarray(SALT_BYTES, SALT_BYTES + NONCE_BYTES);
+  const tag = blob.subarray(SALT_BYTES + NONCE_BYTES, SALT_BYTES + NONCE_BYTES + TAG_BYTES);
+  const ciphertext = blob.subarray(SALT_BYTES + NONCE_BYTES + TAG_BYTES);
+  const kek = (await scryptAsync(passphrase.normalize('NFKC'), Buffer.from(salt), KEY_BYTES, SCRYPT_OPTS)) as Buffer;
   const decipher = crypto.createDecipheriv('aes-256-gcm', kek, nonce);
   decipher.setAuthTag(tag);
   let plaintext: Buffer;
