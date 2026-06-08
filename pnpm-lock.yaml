@@ -171,7 +171,7 @@ importers:
         specifier: ^3.750.0
         version: 3.996.0
       '@factiii/auth':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../auth
       '@octokit/rest':
         specifier: ^20.0.2

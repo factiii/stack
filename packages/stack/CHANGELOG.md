@@ -1,5 +1,29 @@
 # @factiii/stack
 
+## 0.12.0
+
+### Minor Changes
+
+- ecbd72f: Dev-direct plugin execution architecture
+  - Single execution context: every `npx stack` invocation runs on dev. Staging/prod scanfixes reach the server through a per-stage SSH tunnel that `runStageChain` opens and closes around each remote stage's DAG.
+  - New `serverExec(stage, cmd)` — single command-routing primitive: local `execSync` for dev, `tunnelExec` for staging/prod via the cached tunnel handle.
+  - `Stage` union narrowed to `'dev' | 'staging' | 'prod'`. The legacy `secrets` stage folds into `dev` (vault unlocking, key extraction, .env writing become `stage: 'dev'` fixes ordered with `requires` chains). `--secrets` flag removed from `scan` and `fix`; `deploy --secrets <action>` for vault management is unchanged.
+  - `ReachVia` narrowed to `'local'` only. `canReach()` returns `{ reachable: true, via: 'local' }` or `{ reachable: false, reason }` — no more `via: 'ssh' | 'workflow' | 'api' | 'github-api'`.
+  - `runStageChain` owns SSH tunnel lifecycle. The `ssh-tunnel-<stage>` scanfix and `injectStageTunnelEdges` helper are deleted.
+  - `scan.ts` / `fix.ts` / `deploy.ts` delegate stage execution to `runStageChain`. The multi-pass loop and `pipeline.scanStage` / `pipeline.fixStage` delegation paths are gone.
+  - `npx stack deploy --<stage>` now runs the upstream-stage fix chain (`applyFixes: true`) before touching deployment artifacts. `deploy --prod` requires staging to be reachable.
+  - Lock-in tests for `STAGE_ORDER` and `ReachVia` prevent silent drift; `STANDARDS.md` rewritten to match.
+
+### Patch Changes
+
+- e43c5e2: fix: publish `@factiii/auth` as a real semver range and unblock publishing.
+  - Declare the `@factiii/auth` dependency as `workspace:^` instead of `workspace:*` so the published manifest ships `^x.y.z` rather than a pinned exact version. Previously the bare workspace protocol could leak into the published manifest, forcing consumers to add a `pnpm.overrides` entry to resolve `@factiii/auth`.
+  - Fix the `prepublish-check` guard, which read the on-disk `package.json` and so failed on the `workspace:` protocol on _every_ publish — including correct `pnpm publish` runs (pnpm only resolves the protocol inside the packed tarball, not on disk). The check now skips the workspace assertion when the publisher is pnpm (via `npm_config_user_agent`) and still guards against an accidental `npm publish`.
+
+- 1b0a05e: Cross-platform fixes, vault extraction bug fix, static imports refactor
+- Updated dependencies [5a53023]
+  - @factiii/auth@0.12.0
+
 ## 0.11.1
 
 ### Patch Changes
