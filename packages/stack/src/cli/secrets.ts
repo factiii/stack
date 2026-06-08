@@ -394,77 +394,82 @@ export async function secrets(
         console.log('[ERROR] ' + msg);
         return;
       }
-
       if (!vaultPassword) {
         console.log('[ERROR] Vault password is empty');
         return;
       }
 
-      console.log('\nEXPORT VAULT KEY');
       console.log('');
-      console.log('This exports your vault password for team onboarding.');
-      console.log('The vault is already protected by your per-operation passphrase.\n');
-
-      const defaultOutPath = path.join(process.cwd(), 'vault-key.export');
-      const outPath = secretName
-        ? path.resolve(process.cwd(), secretName)
-        : defaultOutPath;
-      if (!outPath.startsWith(process.cwd() + path.sep) && outPath !== defaultOutPath) {
-        console.log('[ERROR] Export path must be within the current directory');
-        return;
-      }
-
-      fs.writeFileSync(outPath, vaultPassword + '\n', { encoding: 'utf8', mode: 0o600 });
-      console.log('[OK] Vault key exported to: ' + outPath);
+      console.log('VAULT KEY EXPORT');
       console.log('');
-      console.log('Share this file with your teammate, then they run:');
-      console.log('  npx stack secrets import-vault ' + path.basename(outPath));
+      console.log('Copy this vault key and send it to your teammate via a secure channel');
+      console.log('(Slack DM, Signal, etc). They will run:');
       console.log('');
-      console.log('IMPORTANT: Do not commit this file to git.');
+      console.log('  npx stack deploy --secrets import-vault');
+      console.log('');
+      console.log('--- BEGIN VAULT KEY ---');
+      console.log(vaultPassword);
+      console.log('--- END VAULT KEY ---');
+      console.log('');
+      console.log('The key above is the ONLY thing needed. The encrypted vault file');
+      console.log('(' + (config.ansible?.vault_path ?? 'group_vars/all/vault-*.yml') + ') is already in the repo.');
       break;
     }
 
     case 'import-vault': {
-      const { confirm: confirmImport } = await import('../utils/secret-prompts.js');
+      const { promptSingleLine: promptImport, confirm: confirmImport } = await import('../utils/secret-prompts.js');
+      const { wrapPassword } = await import('../utils/vault-key.js');
 
-      if (!secretName) {
-        console.log('[ERROR] Export file path required');
-        console.log('Usage: npx stack secrets import-vault <file>');
+      let vaultKey = secretName ?? '';
+      if (!vaultKey) {
         console.log('');
-        console.log('Example: npx stack secrets import-vault vault-key.export');
+        console.log('IMPORT VAULT KEY');
+        console.log('');
+        console.log('Paste the vault key your teammate shared with you.');
+        console.log('(The string between --- BEGIN VAULT KEY --- and --- END VAULT KEY ---)');
+        console.log('');
+        vaultKey = await promptImport('   Vault key: ', { hidden: true });
+      }
+
+      vaultKey = vaultKey.trim();
+      if (!vaultKey) {
+        console.log('[ERROR] Vault key cannot be empty');
         return;
       }
 
-      const importPath = path.resolve(process.cwd(), secretName);
-      if (!importPath.startsWith(process.cwd() + path.sep) && importPath !== path.resolve(process.cwd(), secretName)) {
-        console.log('[ERROR] Import path must be within the current directory');
-        return;
-      }
-
-      if (!fs.existsSync(importPath)) {
-        console.log('[ERROR] File not found: ' + importPath);
-        return;
-      }
-
-      const vaultPass = fs.readFileSync(importPath, 'utf8').replace(/^﻿/, '').trim();
-      if (!vaultPass) {
-        console.log('[ERROR] Vault key file is empty');
-        return;
-      }
-
-      console.log('\nIMPORT VAULT KEY');
       console.log('');
-      console.log('This will save the vault key to your local machine.\n');
+      console.log('Choose a passphrase to protect this vault key on your machine.');
+      console.log('This is personal to you — other team members will have their own.');
+      console.log('You will be asked for this passphrase each time you run a vault command.');
+      console.log('');
+
+      let passphrase = '';
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const a = await promptImport('   New passphrase (min 8 chars): ', { hidden: true });
+        if (!a || a.length < 8) {
+          console.log('   Passphrase must be at least 8 characters');
+          continue;
+        }
+        const b = await promptImport('   Confirm passphrase:           ', { hidden: true });
+        if (a !== b) {
+          console.log('   Passphrases did not match — try again');
+          continue;
+        }
+        passphrase = a;
+        break;
+      }
+      if (!passphrase) {
+        console.log('[ERROR] No valid passphrase provided. Import aborted.');
+        return;
+      }
 
       const destPath = (config.ansible?.vault_password_file ?? '~/.vault_pass').replace(/^~/, os.homedir());
 
       if (fs.existsSync(destPath)) {
-        const existing = fs.readFileSync(destPath, 'utf8').replace(/^﻿/, '').trim();
-        if (existing === vaultPass) {
-          console.log('[OK] Vault password already matches — no changes needed');
-          return;
-        }
-        const overwrite = await confirmImport('   Vault password file already exists at ' + destPath + '. Overwrite?', false);
+        const overwrite = await confirmImport(
+          '   ' + destPath + ' already exists. Overwrite?',
+          false
+        );
         if (!overwrite) {
           console.log('   Aborted — no changes made');
           return;
@@ -475,13 +480,19 @@ export async function secrets(
       if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir, { recursive: true });
       }
-      fs.writeFileSync(destPath, vaultPass + '\n', { mode: 0o600 });
+
+      const wrapped = await wrapPassword(vaultKey, passphrase);
+      fs.writeFileSync(destPath, wrapped, { mode: 0o600 });
+
       console.log('');
-      console.log('[OK] Vault password saved to: ' + destPath);
+      console.log('[OK] Vault key saved to ' + destPath + ' (encrypted with your passphrase)');
       console.log('');
-      console.log('You can now access the shared vault. Run:');
-      console.log('  npx stack secrets list    — to verify secrets are readable');
-      console.log('  npx stack scan            — to continue setup');
+      console.log('The raw vault key was NOT written to disk — only the encrypted version.');
+      console.log('Every vault command will prompt for your passphrase.');
+      console.log('');
+      console.log('Next steps:');
+      console.log('  npx stack secrets list    — verify vault access works');
+      console.log('  npx stack scan            — continue setup');
       break;
     }
   }

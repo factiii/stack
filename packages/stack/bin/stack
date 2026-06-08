@@ -120,8 +120,8 @@ program
         console.log('  delete-env <name> Delete environment variable from a stage');
         console.log('  deploy            Deploy secrets to staging/prod servers');
         console.log('  write-ssh-keys    Write SSH keys to ~/.ssh/ (for workflows)');
-        console.log('  export-vault [f]  Export vault password as encrypted file');
-        console.log('  import-vault <f>  Import vault password from exported file');
+        console.log('  export-vault      Show vault key on screen for sharing');
+        console.log('  import-vault [key] Import vault key and encrypt with personal passphrase');
         console.log('');
         console.log('Examples:');
         console.log('  npx stack deploy --secrets list');
@@ -132,7 +132,7 @@ program
         console.log('  npx stack deploy --secrets delete-env DATABASE_URL --staging');
         console.log('  npx stack deploy --secrets deploy --staging');
         console.log('  npx stack deploy --secrets export-vault');
-        console.log('  npx stack deploy --secrets import-vault vault-key.export');
+        console.log('  npx stack deploy --secrets import-vault');
         console.log('');
         return;
       }
@@ -297,8 +297,8 @@ program.addHelpText('after', '\n' +
   '  delete-env <name> --<stage>        Delete environment variable from a stage\n' +
   '  deploy --<stage>                   Push secrets to server\n' +
   '  write-ssh-keys                     Write SSH keys to ~/.ssh/\n' +
-  '  export-vault [file]                Export vault password as encrypted file for sharing\n' +
-  '  import-vault <file>                Import vault password from exported file\n' +
+  '  export-vault                       Show vault key on screen for sharing\n' +
+  '  import-vault [key]                 Import vault key and encrypt with personal passphrase\n' +
   '\n' +
   'DATABASE — npx stack db <command> --<stage>\n' +
   '  seed --staging                     Run db:seed script to populate initial data\n' +
