@@ -328,7 +328,7 @@ export class AnsibleVaultSecrets {
   /**
    * Get decrypted vault content as full structure (supports nested objects)
    */
-  public async getDecryptedFull(): Promise<VaultContent> {
+  private async getDecryptedFull(): Promise<VaultContent> {
     const vaultPath = resolveVaultPath(this.config);
     if (!fs.existsSync(vaultPath)) return {};
     const content = await vaultView(vaultPath, this.config);
@@ -338,7 +338,7 @@ export class AnsibleVaultSecrets {
   /**
    * Save vault content (full structure)
    */
-  public async saveVault(data: VaultContent): Promise<SetSecretResult> {
+  private async saveVault(data: VaultContent): Promise<SetSecretResult> {
     try {
       const vaultPath = resolveVaultPath(this.config);
       await this.ensureVaultExists(vaultPath);
