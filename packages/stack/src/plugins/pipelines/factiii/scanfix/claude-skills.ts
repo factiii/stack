@@ -198,14 +198,14 @@ The list of buckets *is* the test scope. A repo with only \`packages/stack\` and
 
 const PROD_CHECK_SKILL_CONTENT = `---
 name: prod-check
-description: Pre-production verification for any factiii-pipeline repo. Runs a security audit, quality gates (lint, types, tests, build), diffs the current branch against origin/production for schema/migration/env/secret/API changes, and commits the resulting fixes. TRIGGER when the user asks to check a branch against production, prepare a production push, run pre-merge checks, or audit dependencies before release.
+description: Pre-production verification for any factiii-pipeline repo. Runs a security audit, quality gates (lint, types, tests, build), diffs the current branch against origin/main for schema/migration/env/secret/API changes, and commits the resulting fixes. TRIGGER when the user asks to check a branch against production, prepare a production push, run pre-merge checks, or audit dependencies before release.
 ---
 
 # prod-check
 
 Pre-production verification workflow for **factiii-pipeline repos**. Runs in four phases: **sync & audit**, **fix locally**, **diff against production**, then **commit**. Report at the end groups findings as **BLOCKING** vs **INFORMATIONAL**.
 
-The whole point: nothing should reach \`origin/production\` that hasn't passed local quality gates and been reviewed for schema, secret, and API-breaking changes.
+The whole point: nothing should reach \`origin/main\` that hasn't passed local quality gates and been reviewed for schema, secret, and API-breaking changes.
 
 This skill is installed once globally in \`~/.claude/skills/\` and is shared by every factiii-pipeline repo on your machine. Repo layouts vary — **detect what exists before running step-specific commands**. Skip steps that don't apply (e.g. no \`apps/mobile\` → no Expo doctor; no Prisma schema → no migration diff). Never invent paths.
 
@@ -233,7 +233,7 @@ If a repo has only a server, run only server steps. If it has no Prisma, skip sc
 
 Audit runs **before** tests and build so that quality gates execute against the final dependency tree. The quick \`pnpm audit\` is cheap; pay for it before paying for tests.
 
-1. **Sync** — \`git fetch origin production\` and confirm the working tree is clean (\`git status\`). Stash or commit anything dirty before continuing; uncommitted state contaminates the diff in Phase 3.
+1. **Sync** — \`git fetch origin main\` and confirm the working tree is clean (\`git status\`). Stash or commit anything dirty before continuing; uncommitted state contaminates the diff in Phase 3.
 2. **Quick audit gate** — \`pnpm audit\` against the current lockfile. **Always run** — even when \`pnpm-lock.yaml\` is unchanged. New CVEs get disclosed against packages already pinned in the lockfile, so a clean diff doesn't mean a clean audit. If clean and (where present) \`.specs/audit.md\` is current, Phase 1 is done — move to Phase 2.
 3. **Full triage** — only if the quick audit surfaced findings. Run the process below **now** (not after tests/build), so Phase 2 executes against the corrected deps and you don't have to re-test.
 
@@ -271,14 +271,14 @@ If any step surfaces failures you can fix safely, fix them. If failures need use
 
 ## Phase 3 — Diff against production
 
-Only run after Phase 2 is fully green. Use \`origin/production\` as the base (refresh with \`git fetch origin production\` if Phases 1–2 took a while). For every path-based check below, only run it if the path exists in this repo.
+Only run after Phase 2 is fully green. \`main\` is the production branch and work lands straight on it, so the base is \`origin/main\` — \`git diff origin/main...HEAD\` is exactly the local commits you're about to push to production (refresh with \`git fetch origin main\` if Phases 1–2 took a while). For every path-based check below, only run it if the path exists in this repo.
 
-1. **Overall diffstat** — \`git diff --stat origin/production...HEAD\` for orientation.
-2. **Schema & migrations** — only if \`apps/server/prisma/schema.prisma\` exists. \`git diff origin/production...HEAD -- apps/server/prisma/schema.prisma 'apps/server/prisma/migrations/**'\`.
+1. **Overall diffstat** — \`git diff --stat origin/main...HEAD\` for orientation.
+2. **Schema & migrations** — only if \`apps/server/prisma/schema.prisma\` exists. \`git diff origin/main...HEAD -- apps/server/prisma/schema.prisma 'apps/server/prisma/migrations/**'\`.
    - Comment-only schema changes = informational.
    - Field/model/index changes = blocking unless paired with a migration.
    - **New migration files = blocking action**: they need to be applied to prod DB during deploy. Call this out explicitly with the migration name(s).
-3. **Secrets scan** — always. Search the diff for committed credentials. Patterns to grep: \`AKIA[0-9A-Z]{16}\` (AWS access key), \`-----BEGIN .* PRIVATE KEY-----\`, \`sk_live_\`, \`sk_test_\`, \`xox[baprs]-\`, \`ghp_\`, \`Bearer [A-Za-z0-9_\\-]{20,}\`, raw \`password\\s*[:=]\`, \`client_secret\`. Run against \`git diff origin/production...HEAD\`. Anything matching is **BLOCKING** — instruct the user to rotate the credential in its provider before merging, since git history is forever.
+3. **Secrets scan** — always. Search the diff for committed credentials. Patterns to grep: \`AKIA[0-9A-Z]{16}\` (AWS access key), \`-----BEGIN .* PRIVATE KEY-----\`, \`sk_live_\`, \`sk_test_\`, \`xox[baprs]-\`, \`ghp_\`, \`Bearer [A-Za-z0-9_\\-]{20,}\`, raw \`password\\s*[:=]\`, \`client_secret\`. Run against \`git diff origin/main...HEAD\`. Anything matching is **BLOCKING** — instruct the user to rotate the credential in its provider before merging, since git history is forever.
 4. **Env / infra surface** — diff whichever of these exist and flag any change:
    - \`stack.yml\`, \`stackAuto.yml\`, \`docker-compose*.yml\`
    - \`.github/workflows/**\`

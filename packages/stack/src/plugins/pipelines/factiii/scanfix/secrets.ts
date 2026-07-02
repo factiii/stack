@@ -6,10 +6,12 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { execSync, spawnSync } from 'child_process';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 import { promptForSecret, promptSingleLine, confirm } from '../../../../utils/secret-prompts.js';
+import { wrapPassword } from '../../../../utils/vault-key.js';
 import { extractEnvironments, hasEnvironments } from '../../../../utils/config-helpers.js';
 import { findSshKeyForStage, writeSecureKeyFile } from '../../../../utils/ssh-helper.js';
 import { getStackSshKeyPath, getStackSshDir } from '../../../../utils/ssh-paths.js';
@@ -564,27 +566,62 @@ export const secretsFixes: Fix[] = [
       const passwordFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
       return !fs.existsSync(passwordFile);
     },
-    fix: async (config: FactiiiConfig): Promise<boolean> => {
+    fix: async (config: FactiiiConfig, rootDir: string): Promise<boolean> => {
       if (!config.ansible?.vault_password_file) {
         console.log('   ansible.vault_password_file not configured in stack.yml');
         return false;
       }
       const passwordFile = config.ansible.vault_password_file.replace(/^~/, os.homedir());
 
-      console.log('');
-      console.log('   Creating Ansible Vault password file: ' + passwordFile);
-      console.log('   This password encrypts all your secrets (SSH keys, API tokens, etc.)');
-      console.log('   Choose a strong password and save it somewhere safe.');
-      console.log('');
+      // Two DISTINCT secrets — never conflate them:
+      //   - VAULT KEY: the strong secret that ansible-encrypts the vault file.
+      //     Shared across the team out-of-band. NEVER stored in the clear.
+      //   - PERSONAL PASSWORD: local-only; encrypts the vault key at rest in
+      //     ~/.vault_pass (STACKVAULT1 wrap). Each developer chooses their own.
+      // We generate (fresh) or import (existing vault) the key, then wrap it
+      // with the personal password. The password is NOT the key.
+      const vaultPath = config.ansible?.vault_path ?? '';
+      const fullVaultPath = vaultPath
+        ? (path.isAbsolute(vaultPath) ? vaultPath : path.join(rootDir, vaultPath))
+        : '';
+      const vaultExists = !!fullVaultPath && fs.existsSync(fullVaultPath);
 
-      const password = await promptSingleLine('   Vault password: ', { hidden: true });
-      if (!password || password.length < 4) {
-        console.log('   Password too short (min 4 characters)');
-        return false;
+      let vaultKey: string;
+      if (vaultExists) {
+        // An encrypted vault already exists; a freshly generated key could not
+        // decrypt it. Import the SHARED vault key (teammate's export-vault).
+        console.log('');
+        console.log('   An encrypted vault already exists (' + vaultPath + ').');
+        console.log('   Paste the SHARED VAULT KEY that decrypts it — not a password you invent.');
+        console.log('   A teammate reveals it with: npx stack deploy --secrets export-vault');
+        console.log('');
+        vaultKey = (await promptSingleLine('   Vault key: ', { hidden: true })).trim();
+        if (!vaultKey) {
+          console.log('   Vault key cannot be empty');
+          return false;
+        }
+      } else {
+        // Fresh setup — generate a strong random vault key. The user never types
+        // it, so it can never equal their personal password.
+        vaultKey = crypto.randomBytes(32).toString('base64');
+        console.log('');
+        console.log('   Generated a new strong vault key (random, 256-bit).');
+        console.log('   It encrypts all your secrets. Back it up after setup with:');
+        console.log('     npx stack deploy --secrets export-vault');
+        console.log('');
       }
 
+      // Personal password — encrypts the vault key on THIS machine only.
+      console.log('   Choose a personal password to protect the vault key on this machine.');
+      console.log('   It is local to you (teammates pick their own) and is asked for on vault commands.');
+      console.log('');
+      const userPassword = await promptSingleLine('   Personal password (min 8 chars): ', { hidden: true });
+      if (!userPassword || userPassword.length < 8) {
+        console.log('   Password too short (min 8 characters)');
+        return false;
+      }
       const confirmPass = await promptSingleLine('   Confirm password: ', { hidden: true });
-      if (password !== confirmPass) {
+      if (userPassword !== confirmPass) {
         console.log('   Passwords do not match');
         return false;
       }
@@ -595,14 +632,20 @@ export const secretsFixes: Fix[] = [
         fs.mkdirSync(parentDir, { recursive: true });
       }
 
-      fs.writeFileSync(passwordFile, password + '\n', { mode: 0o600 });
-      console.log('   [OK] Created ' + passwordFile);
+      // Persist ONLY the wrapped (encrypted) vault key — never the raw key.
+      const wrapped = await wrapPassword(vaultKey, userPassword);
+      fs.writeFileSync(passwordFile, wrapped, { mode: 0o600 });
+      console.log('   [OK] Created ' + passwordFile + ' (vault key encrypted with your personal password)');
+      if (!vaultExists) {
+        console.log('   [!] Save your vault key now so teammates/servers can use it:');
+        console.log('       npx stack deploy --secrets export-vault');
+      }
       return true;
     },
     manualFix:
-      'Create the vault password file:\n' +
-      '      macOS/Linux: echo "your-vault-password" > <repo>/.vault_pass && chmod 600 <repo>/.vault_pass\n' +
-      '      Windows:     echo your-vault-password > <repo>\\.vault_pass',
+      'Run `npx stack fix --dev` to generate (or import) a vault key and encrypt it with your personal password.\n' +
+      '      Joining an existing vault? Import the shared key: npx stack deploy --secrets import-vault\n' +
+      '      (Do not hand-write a plaintext .vault_pass — the vault key must never be stored in the clear.)',
   },
   {
     id: 'missing-staging-ssh',

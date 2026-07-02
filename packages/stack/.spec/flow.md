@@ -25,7 +25,7 @@ Rule: `fix` handles config/secrets/infrastructure. `deploy` handles deployment a
 
 ## Workflow Versioning
 
-Generated GitHub workflow files (`stack-ci.yml`, `stack-cicd-prod.yml`) are versioned independently from the `@factiii/stack` package via `WORKFLOW_VERSION` in `src/plugins/pipelines/factiii/utils/workflows.ts`. The outdated-workflows scanner compares this constant against the version comment in existing workflow files. Only bump `WORKFLOW_VERSION` when the workflow templates change — not on every package release.
+Generated GitHub workflow files (`stack-ci.yml`) are versioned independently from the `@factiii/stack` package via `WORKFLOW_VERSION` in `src/plugins/pipelines/factiii/utils/workflows.ts`. The outdated-workflows scanner compares this constant against the version comment in existing workflow files. Only bump `WORKFLOW_VERSION` when the workflow templates change — not on every package release.
 
 ## Multi-Pass Fix
 

@@ -83,7 +83,8 @@ export const workflowFixes: Fix[] = [
       // List of workflows we currently generate (CI testing only)
       const validWorkflows = [
         'stack-ci.yml',
-        'stack-cicd-prod.yml',
+        'stack-pr-staging.yml',
+        'stack-prod.yml',
       ];
 
       // Find all stack-*.yml and factiii-*.yml files (clean up legacy too)
@@ -102,7 +103,8 @@ export const workflowFixes: Fix[] = [
 
       const validWorkflows = [
         'stack-ci.yml',
-        'stack-cicd-prod.yml',
+        'stack-pr-staging.yml',
+        'stack-prod.yml',
       ];
 
       const files = fs.readdirSync(workflowsDir);
