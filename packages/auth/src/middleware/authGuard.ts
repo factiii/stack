@@ -165,7 +165,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
             throw new TRPCError({ code: 'UNAUTHORIZED', message: 'ACTIVE_SESSION_SWITCHED' });
           }
 
-          await revokeSession(ctx, payload.id, !session ? 'Session not found' : 'Session revoked', undefined, path);
+          await revokeSession(ctx, payload.id, !session ? 'Session not found' : 'Session already revoked', undefined, path);
           throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Unauthorized' });
         }
 
@@ -177,8 +177,8 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
             ctx,
             session.id,
             session.userId !== payload.userId
-              ? 'Session revoked: Token userId mismatch'
-              : 'Session revoked: Token predates session',
+              ? 'Token userId mismatch'
+              : 'Token predates session',
             undefined,
             path
           );
@@ -186,7 +186,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
         }
 
         if (session.user.status === 'BANNED') {
-          await revokeSession(ctx, session.id, 'Session revoked: User banned', undefined, path);
+          await revokeSession(ctx, session.id, 'User banned', undefined, path);
           throw new TRPCError({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
         }
 
@@ -215,7 +215,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
         if (meta?.adminRequired) {
           const admin = await database.admin.findByUserId(session.userId);
           if (!admin || admin.ip !== ctx.ip) {
-            await revokeSession(ctx, session.id, 'Session revoked: Admin not found or IP mismatch', undefined, path);
+            await revokeSession(ctx, session.id, 'Admin not found or IP mismatch', undefined, path);
             throw new TRPCError({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
           }
         }
@@ -291,8 +291,8 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
             ctx,
             null,
             isTokenInvalidError(err)
-              ? 'Session revoked: Token invalid'
-              : 'Session revoked: Token expired',
+              ? 'Token invalid'
+              : 'Token expired',
             errorStack,
             path,
           );
@@ -309,7 +309,10 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
     if (!meta?.authRequired) {
       return next({ ctx: { ...ctx, userId: 0 } });
     }
-    await revokeSession(ctx, null, 'Session revoked: No token sent', undefined, path);
+    // A missing token is just an anonymous/logged-out request hitting an
+    // authRequired procedure — there is no session to revoke and nothing to
+    // audit. Clear any stale cookies and reject without logging a SECURITY error.
+    clearAuthCookies(ctx.res, cookieSettings, storageKeys);
     throw new TRPCError({ message: 'Unauthorized', code: 'UNAUTHORIZED' });
   });
 
