@@ -85,7 +85,9 @@ export function createTrpcBuilder(config: ResolvedAuthConfig) {
               .logError({
                 type: errorType,
                 description: error.message,
-                stack: error.stack || 'No stack trace',
+                // Prepend the procedure path — minified stacks alone are not
+                // attributable to a procedure.
+                stack: `Path: ${opts.path ?? 'unknown'}\n\n${error.stack || 'No stack trace'}`,
                 ip: opts.ctx?.ip,
                 userId: opts.ctx?.userId ?? null,
               })
