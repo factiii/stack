@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { type BaseProcedure } from '../types/trpc';
 import type { ResolvedAuthConfig } from '../utilities/config';
-import { isUserInBundle } from '../utilities/issueCookies';
+import { revokeDeviceSessionsForUser } from '../utilities/issueCookies';
 import { createSessionWithTokenAndCookie } from '../utilities/session';
 
 /** Factory for magic link authentication procedures. */
@@ -54,12 +54,9 @@ export class MagicLinkProcedureFactory {
           });
         }
 
-        if (await isUserInBundle(this.config, ctx.headers.cookie, magicLink.userId)) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'You are already signed in as this account on this device.',
-          });
-        }
+        // The link proves control of the address, so a session this device
+        // already holds for the same account is stale, not a reason to refuse.
+        await revokeDeviceSessionsForUser(this.config, ctx.headers.cookie, magicLink.userId);
 
         // Mark as used (single-use)
         await db.markUsed(magicLink.id);
