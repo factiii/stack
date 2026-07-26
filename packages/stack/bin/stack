@@ -3,6 +3,18 @@
 const { program } = require('commander');
 const path = require('path');
 
+// Agent mode: strip global AI/script flags from argv BEFORE commander parses,
+// so they can appear anywhere on the line and commander never rejects them.
+const { initAgentMode, emitResult, handleTopLevelError } = require('../dist/utils/agent-mode');
+const _globalFlags = { json: false, nonInteractive: false, quiet: false };
+process.argv = process.argv.filter((a) => {
+  if (a === '--json') { _globalFlags.json = true; return false; }
+  if (a === '--non-interactive') { _globalFlags.nonInteractive = true; return false; }
+  if (a === '--quiet') { _globalFlags.quiet = true; return false; }
+  return true;
+});
+initAgentMode(_globalFlags);
+
 // Import plugin command registration
 const { registerPluginCommands } = require('../dist/cli/plugin-commands');
 
@@ -54,7 +66,8 @@ program
   .option('--prod', 'Scan production environment only')
   .option('--commit <hash>', 'Commit hash to verify (for deployment verification)')
   .action(async (options) => {
-    await scan(options);
+    const result = await scan(options);
+    emitResult('scan', true, result);
   });
 
 // Fix command
@@ -67,7 +80,9 @@ program
   .option('--token <token>', 'GitHub token (or set GITHUB_TOKEN env var)')
   .option('--continue-on-error', 'Continue even if some fixes fail')
   .action(async (options) => {
-    await fix(options);
+    const result = await fix(options);
+    const ok = result && typeof result.success === 'boolean' ? result.success : true;
+    emitResult('fix', ok, result);
   });
 
 // PR Check command (validates builds before merge)
@@ -77,6 +92,7 @@ program
   .option('--staging', 'Run on staging server')
   .action(async (options) => {
     const result = await prCheck(options);
+    emitResult('pr-check', !!result.success, result);
     if (!result.success) {
       process.exit(1);
     }
@@ -159,6 +175,7 @@ program
     }
 
     const result = await deploy(environment, options);
+    emitResult('deploy', !!result.success, result);
     if (!result.success) {
       process.exit(1);
     }
@@ -319,6 +336,16 @@ program.addHelpText('after', '\n' +
   '  restore --staging -i backup.sql    Restore database from SQL dump (DESTRUCTIVE)\n' +
   '  health --prod                      Check container and database connectivity\n' +
   '\n' +
+  'AGENT / SCRIPTING MODE (global flags — usable on any command, any position)\n' +
+  '  --json              Emit ONE machine-readable JSON result on stdout; logs go to stderr.\n' +
+  '                      Shape: {"ok":bool,"command":str,"result":...} or {"ok":false,"error":{code,message,hint}}\n' +
+  '  --non-interactive   Never prompt; a required value throws NEEDS_INPUT instead of hanging.\n' +
+  '                      (auto-on when stdin is not a TTY, e.g. CI / piped / agent)\n' +
+  '  --quiet             Suppress progress logs (warnings/errors still shown).\n' +
+  '  Env equivalents: STACK_JSON=1, STACK_NONINTERACTIVE=1, STACK_QUIET=1\n' +
+  '  Exit codes: 0 ok | 1 failed | 2 needs-input | 3 unreachable | 4 validation\n' +
+  '  Plan/apply loop: `stack scan --json` lists the fixes that would run; `stack fix --json` applies them.\n' +
+  '\n' +
   'STAGES\n' +
   '  --dev         Local development environment\n' +
   '  --secrets     Ansible Vault secrets (SSH keys, credentials)\n' +
@@ -336,4 +363,9 @@ program.addHelpText('after', '\n' +
   '  npx stack ops logs --staging -f    Follow staging container logs\n'
 );
 
-program.parse();
+program.parseAsync(process.argv).catch((err) => {
+  // Map any uncaught error (incl. typed StackError) to a stable exit code,
+  // and emit a structured error envelope on stdout when --json is set.
+  const cmd = process.argv[2] || 'stack';
+  handleTopLevelError(cmd, err);
+});

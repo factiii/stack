@@ -2,6 +2,16 @@
 
 Infrastructure management CLI for deploying full-stack applications with plugin-based configuration.
 
+> **⚠️ `@factiii/stack` is unmaintained as of 2026-07.**
+>
+> The code and its published versions remain available, but the package is no
+> longer actively developed and issues and PRs are not being triaged. Deployment
+> is now handled by self-maintained scripts and AI agent skills in the consuming
+> repos, which proved simpler and more adaptable than a plugin framework.
+>
+> `@factiii/auth` (`packages/auth/`) is still maintained — see
+> [packages/auth/README.md](packages/auth/README.md).
+
 ## Quick Start
 
 ```bash
