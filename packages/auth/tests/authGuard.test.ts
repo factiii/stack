@@ -13,7 +13,13 @@ const SECRET = 'test-secret-key';
  * middleware function via a fake tRPC builder, then invoke it directly
  * with a mock context/meta/next.
  */
-function buildGuard(sessionLookup: (id: number) => Promise<SessionWithUser | null>) {
+function buildGuard(
+  sessionLookup: (id: number) => Promise<SessionWithUser | null>,
+  opts: {
+    logError?: ReturnType<typeof vi.fn>;
+    adminFindByUserId?: ReturnType<typeof vi.fn>;
+  } = {}
+) {
   let middlewareFn: (opts: Record<string, unknown>) => Promise<unknown>;
 
   const fakeT = {
@@ -50,9 +56,10 @@ function buildGuard(sessionLookup: (id: number) => Promise<SessionWithUser | nul
         hasRemainingUsers: vi.fn(),
         delete: vi.fn(),
       },
-      admin: { findByUserId: vi.fn() },
+      admin: { findByUserId: opts.adminFindByUserId ?? vi.fn() },
     },
     secrets: { jwt: SECRET },
+    ...(opts.logError ? { hooks: { logError: opts.logError } } : {}),
   };
 
   createAuthGuard(config as AuthConfig, fakeT as any);
@@ -187,5 +194,89 @@ describe('authGuard session integrity checks', () => {
         ctx: expect.objectContaining({ userId: 5 }),
       }),
     );
+  });
+});
+
+describe('authGuard anonymous (no token) requests', () => {
+  // Regression: tokenless requests to authRequired procedures were logged as
+  // CRITICAL SECURITY "Session revoked: No token sent" (1,600+ noise events in
+  // factiii prod). A missing token is normal logged-out traffic — reject
+  // without logging.
+  it('rejects authRequired without logging a SECURITY error', async () => {
+    const logError = vi.fn();
+    const guard = buildGuard(async () => null, { logError });
+    const ctx = makeCtx();
+    const next = vi.fn();
+
+    await expect(
+      guard({ ctx, meta: { authRequired: true }, next, path: 'sessions.accounts' }),
+    ).rejects.toThrow(TRPCError);
+
+    expect(logError).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+    // Stale cookies are still cleared on the rejection
+    expect(ctx.res.setHeader).toHaveBeenCalled();
+  });
+
+  it('passes through as anonymous (userId 0) when auth is not required', async () => {
+    const logError = vi.fn();
+    const guard = buildGuard(async () => null, { logError });
+    const ctx = makeCtx();
+    const next = vi.fn(({ ctx: newCtx }) => ({ ctx: newCtx }));
+
+    await guard({ ctx, meta: undefined, next, path: 'pool.status' });
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({ ctx: expect.objectContaining({ userId: 0 }) }),
+    );
+    expect(logError).not.toHaveBeenCalled();
+  });
+});
+
+describe('revocation log descriptions', () => {
+  // Regression: call sites passed pre-prefixed reasons and revokeSession
+  // prefixes again, producing "Session revoked: Session revoked: ..." in the
+  // admin error log.
+  it('logs a single "Session revoked:" prefix when the session is missing', async () => {
+    const logError = vi.fn();
+    const guard = buildGuard(async () => null, { logError });
+    const token = createAuthToken(
+      { id: 1, userId: 5, verifiedHumanAt: null },
+      { secret: SECRET, expiresIn: 3600 },
+    );
+    const ctx = makeCtx(token);
+
+    await expect(
+      guard({ ctx, meta: { authRequired: true }, next: vi.fn(), path: 'posts.feed' }),
+    ).rejects.toThrow(TRPCError);
+
+    expect(logError).toHaveBeenCalledTimes(1);
+    const { description, type } = logError.mock.calls[0][0];
+    expect(type).toBe('SECURITY');
+    expect(description).toBe('Session revoked: Session not found');
+    expect(description).not.toMatch(/Session revoked: Session revoked/);
+  });
+
+  it('logs a single prefix on admin IP mismatch', async () => {
+    const logError = vi.fn();
+    const adminFindByUserId = vi.fn(async () => ({ id: 1, ip: '10.0.0.1' }));
+    const guard = buildGuard(
+      async () => makeSession({ id: 1, userId: 5, issuedAt: new Date(Date.now() - 1000) }),
+      { logError, adminFindByUserId },
+    );
+    const token = createAuthToken(
+      { id: 1, userId: 5, verifiedHumanAt: null },
+      { secret: SECRET, expiresIn: 3600 },
+    );
+    const ctx = makeCtx(token); // ctx.ip is 127.0.0.1 — mismatch
+
+    await expect(
+      guard({ ctx, meta: { authRequired: true, adminRequired: true }, next: vi.fn(), path: 'admin.errors' }),
+    ).rejects.toThrow(TRPCError);
+
+    expect(logError).toHaveBeenCalledTimes(1);
+    const { description } = logError.mock.calls[0][0];
+    expect(description).toBe('Session revoked: Admin not found or IP mismatch');
+    expect(description).not.toMatch(/Session revoked: Session revoked/);
   });
 });
