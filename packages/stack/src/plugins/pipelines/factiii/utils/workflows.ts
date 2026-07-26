@@ -11,7 +11,7 @@ import * as path from 'path';
 
 // Bump this only when workflow templates actually change.
 // This decouples workflow regeneration from every @factiii/stack release.
-export const WORKFLOW_VERSION = '1';
+export const WORKFLOW_VERSION = '2';
 
 /**
  * Generate GitHub workflow files in the target repository
@@ -27,13 +27,16 @@ export async function generateWorkflows(rootDir: string): Promise<void> {
     fs.mkdirSync(workflowsDir, { recursive: true });
   }
 
-  // CI workflows (testing only - no SSH, no deployment):
-  //   - stack-ci.yml: Build + test on push/PR to main
-  //   - stack-cicd-prod.yml: Build + test on push to prod
-  // Deployment is handled via SSH from dev machine, not workflows.
+  // Generated workflows (main IS the production branch):
+  //   - stack-ci.yml:         Build + test on push/PR to main (GitHub-hosted, fast gate)
+  //   - stack-pr-staging.yml: PR opened/updated → deploy staging (self-hosted staging runner)
+  //   - stack-prod.yml:       PR merged to main → deploy prod (self-hosted staging runner)
+  // The deploy workflows are thin: they just call `npx stack deploy --<stage>`.
+  // They only run on repos that have a self-hosted runner labeled for the stage.
   const workflows = [
     'stack-ci.yml',
-    'stack-cicd-prod.yml',
+    'stack-pr-staging.yml',
+    'stack-prod.yml',
   ];
 
   for (const workflow of workflows) {
