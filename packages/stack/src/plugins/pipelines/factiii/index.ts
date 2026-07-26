@@ -440,16 +440,44 @@ class FactiiiPipeline {
         };
       }
 
-      console.log('\n🔐 Change Ansible Vault password');
+      console.log('\n🔐 Rotate Ansible Vault key');
       console.log('   Vault file: ' + vaultPath + '\n');
 
-      const newPassword = await promptSingleLine('   New vault password: ', { hidden: true });
-      const confirmPassword = await promptSingleLine('   Confirm new password: ', { hidden: true });
+      // Lazy-load helpers to avoid circular imports / heavy top-level deps.
+      const { getVaultPasswordString } = await import('../../../utils/ansible-vault-secrets.js');
+      const { wrapPassword } = await import('../../../utils/vault-key.js');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const cryptoMod = require('crypto') as typeof import('crypto');
 
-      if (!newPassword || newPassword.trim().length === 0) {
-        return { success: false, error: 'New password cannot be empty.' };
+      // Resolve the CURRENT vault key. getVaultPasswordString unwraps a
+      // STACKVAULT1-wrapped ~/.vault_pass (prompting for the personal password
+      // or reading STACK_VAULT_PASSPHRASE) — never reads the file raw.
+      let oldKey: string;
+      try {
+        oldKey = await getVaultPasswordString({
+          vault_path: config.ansible.vault_path,
+          vault_password_file: config.ansible.vault_password_file,
+          rootDir,
+        });
+      } catch (e) {
+        return {
+          success: false,
+          error: 'Could not unlock the current vault: ' + (e instanceof Error ? e.message : String(e)),
+        };
       }
-      if (newPassword !== confirmPassword) {
+
+      // Generate a NEW strong random vault key (the shared secret). The user
+      // never types it, so it can never collapse into their personal password.
+      const newKey = cryptoMod.randomBytes(32).toString('base64');
+
+      // Personal password that encrypts the new key at rest on THIS machine.
+      console.log('   Choose a personal password to protect the new vault key locally.');
+      const personalPassword = await promptSingleLine('   Personal password (min 8 chars): ', { hidden: true });
+      if (!personalPassword || personalPassword.length < 8) {
+        return { success: false, error: 'Personal password must be at least 8 characters.' };
+      }
+      const confirmPassword = await promptSingleLine('   Confirm password: ', { hidden: true });
+      if (personalPassword !== confirmPassword) {
         return { success: false, error: 'Passwords do not match.' };
       }
 
@@ -457,12 +485,9 @@ class FactiiiPipeline {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { Vault } = require('ansible-vault') as { Vault: new (opts: { password: string }) => { encryptSync: (data: string) => string; decryptSync: (data: string) => string } };
 
-        // Read vault content
+        // Decrypt the vault with the OLD key, re-encrypt with the NEW key.
         const vaultContent = fs.readFileSync(vaultPath, 'utf8');
-
-        // Read old password and decrypt
-        const oldPassword = fs.readFileSync(passwordFile, 'utf8').trim();
-        const oldVault = new Vault({ password: oldPassword });
+        const oldVault = new Vault({ password: oldKey });
 
         console.log('\nRekeying vault...');
         let decrypted: string;
@@ -471,26 +496,27 @@ class FactiiiPipeline {
         } catch (decErr) {
           return {
             success: false,
-            error: 'Failed to decrypt vault with current password: ' + (decErr instanceof Error ? decErr.message : String(decErr)),
+            error: 'Failed to decrypt vault with current key: ' + (decErr instanceof Error ? decErr.message : String(decErr)),
           };
         }
 
-        // Re-encrypt with new password
-        const newVault = new Vault({ password: newPassword.trim() });
+        const newVault = new Vault({ password: newKey });
         const reEncrypted = newVault.encryptSync(decrypted);
         fs.writeFileSync(vaultPath, reEncrypted + '\n', 'utf8');
 
-        // Overwrite the configured password file with the new password
-        fs.writeFileSync(passwordFile, newPassword.trim() + '\n', {
-          encoding: 'utf8',
-          mode: 0o600,
-        });
+        // Store ONLY the wrapped new key (encrypted with the personal
+        // password) — the raw key is never written to disk.
+        const wrapped = await wrapPassword(newKey, personalPassword);
+        fs.writeFileSync(passwordFile, wrapped, { mode: 0o600 });
 
-        console.log('\n✅ Vault password updated successfully.');
-        console.log('   Updated vault file: ' + vaultPath);
-        console.log('   Updated password file: ' + passwordFile + '\n');
+        console.log('\n✅ Vault key rotated successfully.');
+        console.log('   Re-encrypted vault file: ' + vaultPath);
+        console.log('   Wrote new wrapped key to: ' + passwordFile + '\n');
+        console.log('   ⚠️  Propagate the new key to every other machine/runner using this vault:');
+        console.log('       npx stack deploy --secrets export-vault   # reveal it to copy');
+        console.log('       then import-vault on each machine, and update ANSIBLE_VAULT_PASSWORD where set.\n');
 
-        return { success: true, message: 'Vault password updated successfully.' };
+        return { success: true, message: 'Vault key rotated successfully.' };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         return {
