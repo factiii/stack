@@ -4,7 +4,7 @@ import type { SchemaExtensions } from '../types/hooks';
 import { type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities';
 import type { ResolvedAuthConfig } from '../utilities/config';
-import { issueAuthCookies, isUserInBundle } from '../utilities/issueCookies';
+import { issueAuthCookies, revokeDeviceSessionsForUser } from '../utilities/issueCookies';
 import { createOAuthVerifier, type OAuthProvider, type OAuthResult } from '../utilities/oauth';
 import { type CreatedSchemas, type OAuthSchemaInput } from '../validators';
 
@@ -109,12 +109,9 @@ export class OAuthLoginProcedureFactory<TExtensions extends SchemaExtensions = {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Your account has been banned.' });
       }
 
-      if (await isUserInBundle(this.config, ctx.headers.cookie, user.id)) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'You are already signed in as this account on this device.',
-        });
-      }
+      // The provider has vouched for this identity, so a session this device
+      // already holds for the same account is stale, not a reason to refuse.
+      await revokeDeviceSessionsForUser(this.config, ctx.headers.cookie, user.id);
 
       const extraSessionData = this.config.hooks?.getSessionData
         ? await this.config.hooks.getSessionData(typedInput)

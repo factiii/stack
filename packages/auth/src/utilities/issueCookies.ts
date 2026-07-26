@@ -87,6 +87,60 @@ export async function isUserInBundle(
   return rows.some((r) => !r.revokedAt && r.userId === userId);
 }
 
+/**
+ * Retire the sessions this device already holds for `userId`, so a fresh
+ * sign-in can replace them.
+ *
+ * Sign-in paths call this where they used to throw "You are already signed in
+ * as this account on this device." That throw fired *after* the password and
+ * 2FA had both verified, which made it unrecoverable: no credential and no
+ * TOTP code could get past it, and a client whose view of the session had
+ * drifted from the cookie had no way back in short of clearing cookies. The
+ * caller has proven who they are, so the correct answer is to re-issue, not to
+ * refuse.
+ *
+ * Revoking rather than reusing the old session keeps `issueAuthCookies` honest:
+ * at `maxAccounts: 1` it drops the previous bundle entry, so without this the
+ * old row would linger un-revoked in the database, reachable by nothing.
+ *
+ * Returns the revoked session ids. Hook errors are swallowed per session — a
+ * flaky `onSessionRevoked` listener must not leave the login half-done.
+ */
+export async function revokeDeviceSessionsForUser(
+  config: ResolvedAuthConfig,
+  cookieHeader: string | undefined,
+  userId: number
+): Promise<number[]> {
+  const existing = readExistingBundle(cookieHeader, config);
+  if (!existing || existing.length === 0) return [];
+
+  const rows = await config.database.session.findManyByIds(existing);
+  const revoked: number[] = [];
+
+  for (const row of rows) {
+    // Skip sessions belonging to other accounts in the bundle: at
+    // maxAccounts > 1 they are bystanders and must survive this sign-in.
+    if (row.revokedAt || row.userId !== userId) continue;
+
+    await config.database.session.revoke(row.id);
+    revoked.push(row.id);
+
+    if (config.hooks?.onSessionRevoked) {
+      try {
+        await config.hooks.onSessionRevoked(
+          row.id,
+          row.socketId,
+          'Replaced by a new sign-in on this device'
+        );
+      } catch {
+        // Deliberately ignored — see the doc comment above.
+      }
+    }
+  }
+
+  return revoked;
+}
+
 /** Returns session ids from the request cookie. */
 function readExistingBundle(
   cookieHeader: string | undefined,

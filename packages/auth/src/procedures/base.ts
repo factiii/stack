@@ -6,7 +6,7 @@ import { detectBrowser } from '../utilities/browser';
 import { isTwoFaEnabled, verifyTwoFaChallenge } from './twoFa/verifyChallenge';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
-import { issueAuthCookies, isUserInBundle } from '../utilities/issueCookies';
+import { issueAuthCookies, revokeDeviceSessionsForUser } from '../utilities/issueCookies';
 import { createAuthToken } from '../utilities/jwt';
 import { comparePassword, hashPassword } from '../utilities/password';
 import type { SchemaExtensions } from '../types/hooks';
@@ -210,12 +210,10 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         }
       }
 
-      if (await isUserInBundle(this.config, ctx.headers.cookie, user.id)) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'You are already signed in as this account on this device.',
-        });
-      }
+      // Credentials and 2FA have both passed by here, so a session this device
+      // already holds for the same account is stale, not a reason to refuse.
+      // Retire it and issue a fresh one.
+      await revokeDeviceSessionsForUser(this.config, ctx.headers.cookie, user.id);
 
       const extraSessionData = this.config.hooks?.getSessionData
         ? await this.config.hooks.getSessionData(typedInput)
