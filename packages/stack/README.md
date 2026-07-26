@@ -2,6 +2,14 @@
 
 Infrastructure management CLI. Scan, fix, and deploy Node.js apps to AWS with Docker, Nginx, and GitHub Actions.
 
+> **⚠️ Unmaintained as of 2026-07.**
+>
+> Published versions stay on npm and the source stays in this repo, but the
+> package is no longer actively developed and issues and PRs are not being
+> triaged. Deployment moved to self-maintained scripts and AI agent skills in
+> the consuming repos, which proved simpler and more adaptable than a plugin
+> framework. Expect no further releases; pin a version if you depend on it.
+
 ## Install
 
 ```bash
