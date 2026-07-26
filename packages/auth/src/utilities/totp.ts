@@ -7,6 +7,11 @@ import { TOTP } from 'totp-generator';
 const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 /**
+ * Length of one TOTP time step in milliseconds (totp-generator's default period)
+ */
+const TOTP_PERIOD_MS = 30_000;
+
+/**
  * Generate a random TOTP secret
  * @param length - Length of the secret (default: 16)
  * @returns Base32 encoded secret
@@ -47,11 +52,23 @@ export async function generateTotpCode(secret: string) {
  * @param window - Number of time steps to check before/after current (default: 1)
  * @returns True if code is valid
  */
-export async function verifyTotp(code: string, secret: string) {
+export async function verifyTotp(code: string, secret: string, window = 1) {
   const cleanSecret = cleanBase32String(secret);
   const normalizedCode = code.replace(/\s/g, '');
-  const { otp } = await TOTP.generate(cleanSecret);
-  return otp === normalizedCode;
+  const steps = Math.max(0, Math.floor(window));
+
+  // RFC 6238 §5.2: accept one step either side of now. Without it, a client
+  // clock a few seconds off — or a user who types a code as it rolls over —
+  // fails every attempt, which is indistinguishable from a wrong code. The
+  // tradeoff is 2*window+1 codes valid at once, so callers must rate-limit
+  // attempts (RFC 6238 §5.2 requires throttling).
+  for (let step = -steps; step <= steps; step++) {
+    const { otp } = await TOTP.generate(cleanSecret, {
+      timestamp: Date.now() + step * TOTP_PERIOD_MS,
+    });
+    if (otp === normalizedCode) return true;
+  }
+  return false;
 }
 
 /**

@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { TOTP } from 'totp-generator';
 import {
   generateTotpSecret,
   cleanBase32String,
@@ -65,6 +66,63 @@ describe('generateTotpCode / verifyTotp', () => {
     const code = await generateTotpCode(secret);
     const spaced = code.slice(0, 3) + ' ' + code.slice(3);
     expect(await verifyTotp(spaced, secret)).toBe(true);
+  });
+});
+
+describe('verifyTotp drift window', () => {
+  // Pinned mid-step so a real step boundary can never land between generating
+  // a code and verifying it, which would flip these assertions at random.
+  const NOW = new Date('2026-01-01T00:00:15.000Z');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const codeAtOffset = async (secret: string, offsetMs: number) => {
+    const { otp } = await TOTP.generate(cleanBase32String(secret), {
+      timestamp: NOW.getTime() + offsetMs,
+    });
+    return otp;
+  };
+
+  it('accepts a code from the previous time step', async () => {
+    const secret = generateTotpSecret();
+    expect(await verifyTotp(await codeAtOffset(secret, -30_000), secret)).toBe(true);
+  });
+
+  it('accepts a code from the next time step', async () => {
+    const secret = generateTotpSecret();
+    expect(await verifyTotp(await codeAtOffset(secret, 30_000), secret)).toBe(true);
+  });
+
+  it('rejects a code two steps in the past', async () => {
+    const secret = generateTotpSecret();
+    expect(await verifyTotp(await codeAtOffset(secret, -60_000), secret)).toBe(false);
+  });
+
+  it('rejects a code two steps in the future', async () => {
+    const secret = generateTotpSecret();
+    expect(await verifyTotp(await codeAtOffset(secret, 60_000), secret)).toBe(false);
+  });
+
+  it('window 0 accepts only the current step', async () => {
+    const secret = generateTotpSecret();
+    const current = await codeAtOffset(secret, 0);
+    const previous = await codeAtOffset(secret, -30_000);
+    expect(await verifyTotp(current, secret, 0)).toBe(true);
+    expect(await verifyTotp(previous, secret, 0)).toBe(false);
+  });
+
+  it('a wider window accepts further drift', async () => {
+    const secret = generateTotpSecret();
+    const farOff = await codeAtOffset(secret, -60_000);
+    expect(await verifyTotp(farOff, secret)).toBe(false);
+    expect(await verifyTotp(farOff, secret, 2)).toBe(true);
   });
 });
 
