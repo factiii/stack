@@ -7,6 +7,8 @@
 import * as readline from 'readline';
 
 import type { FactiiiConfig } from '../types/index.js';
+import { isNonInteractive } from './agent-mode.js';
+import { StackError } from './stack-error.js';
 
 interface ValidationResult {
   valid: boolean;
@@ -191,6 +193,15 @@ export function promptSingleLine(
 ): Promise<string> {
   const hidden = options?.hidden === true;
 
+  // Agent/script safety: never block on stdin when non-interactive — fail with
+  // a typed error naming what was being asked for, instead of hanging forever.
+  if (isNonInteractive()) {
+    throw StackError.needsInput(
+      'Input required but running non-interactively: ' + prompt.trim(),
+      'Supply it via a flag/env var (e.g. --value, STACK_VAULT_PASSPHRASE, ANSIBLE_VAULT_PASSWORD), or run in an interactive terminal without --non-interactive.'
+    );
+  }
+
   return new Promise((resolve) => {
     const rl = readline.createInterface({
       input: process.stdin,
@@ -227,6 +238,13 @@ export function promptSingleLine(
  * User sees "[hidden] Pasting..." while entering, then a confirmation line count.
  */
 export function promptMultiLine(prompt: string): Promise<string> {
+  if (isNonInteractive()) {
+    throw StackError.needsInput(
+      'Multi-line input required but running non-interactively' + (prompt ? ': ' + prompt.trim() : ''),
+      'Set the secret non-interactively (e.g. `npx stack deploy --secrets set <NAME> --value ...`) or run in an interactive terminal.'
+    );
+  }
+
   return new Promise((resolve) => {
     if (prompt) console.log(prompt);
     console.log('   [hidden] Paste your key, then press Enter on a blank line to finish:');
@@ -329,6 +347,15 @@ export async function confirm(
   message: string,
   defaultYes: boolean = true
 ): Promise<boolean> {
+  // Non-interactive: auto-answer with the default rather than hang. Destructive
+  // operations are separately gated behind --force, so this stays safe.
+  if (isNonInteractive()) {
+    process.stderr.write(
+      '   [non-interactive] ' + message + ' → ' + (defaultYes ? 'yes' : 'no') + ' (default)\n'
+    );
+    return defaultYes;
+  }
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
