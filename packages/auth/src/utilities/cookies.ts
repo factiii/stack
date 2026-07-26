@@ -116,6 +116,16 @@ function buildCookieString(
     .join('; ');
 }
 
+/**
+ * Domain for the non-httpOnly client cookie. Falls back to the shared `domain`,
+ * so omitting `clientDomain` keeps the previous single-domain behavior.
+ * Every client-cookie write AND clear must go through this — see
+ * `clearAuthCookies`.
+ */
+function clientCookieDomain(settings: Partial<CookieSettings>): string | undefined {
+  return settings.clientDomain ?? settings.domain;
+}
+
 // ── Single-cookie functions (backward compat) ───────────────────────────────
 
 /**
@@ -198,14 +208,16 @@ export function setAuthCookies(
     return;
   }
 
-  // Client cookie — forced non-httpOnly so JS can read it
+  // Client cookie — forced non-httpOnly so JS can read it, and scoped by
+  // clientDomain so it can reach a sibling host without widening the auth
+  // cookie above (see CookieSettings.clientDomain).
   const clientSettings = { ...settings, httpOnly: false };
   const clientValue = signClientCookie(clientPayload, secret);
   const clientCookie = buildCookieString(
     storageKeys.clientToken,
     clientValue,
     clientSettings,
-    settings.domain,
+    clientCookieDomain(settings),
     expiresDate,
   );
 
@@ -244,7 +256,7 @@ export function setClientCookie(
     storageKeys.clientToken,
     clientValue,
     clientSettings,
-    settings.domain,
+    clientCookieDomain(settings),
     expiresDate,
   );
 
@@ -274,13 +286,16 @@ export function clearAuthCookies(
     return;
   }
 
-  // Client cookie clear — force non-httpOnly to match the original cookie attributes
+  // Client cookie clear — force non-httpOnly and reuse clientCookieDomain to
+  // match the attributes it was set with. A cookie scoped to `.example.com` is
+  // a different cookie than a host-only one and would survive a host-only
+  // clear, leaving a stale hint that outlives logout.
   const clientSettings = { ...settings, httpOnly: false };
   const clientCookie = buildCookieString(
     storageKeys.clientToken,
     'destroy',
     clientSettings,
-    settings.domain,
+    clientCookieDomain(settings),
     expiredDate,
   );
 

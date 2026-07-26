@@ -139,7 +139,20 @@ Both take optional `{ clientToken, cookie }` — `clientToken` for a custom `sto
 
 The signature is **not** verified — that would need the JWT secret, which must never reach the browser. Treat the result as a presence hint, not proof of identity: a forged cookie buys one `users.me` probe that 401s.
 
-Requires the API and client to share a host. `cookieSettings.domain` is unset by default, making the cookie host-only, so an `api.example.com` / `example.com` split can't see it — and it looks fine in local dev where both sit on `localhost` (cookies ignore port). Setting `domain` broadcasts the httpOnly session JWT to every subdomain too, so prefer same-host or a path-based API proxy.
+### Split-host deployments
+
+`cookieSettings.domain` is unset by default, making both cookies host-only — so an app on `example.com` cannot see a cookie set by `api.example.com`, and local dev hides it because both sit on `localhost` (cookies ignore port). Set `clientDomain` to scope the client cookie to the parent domain and leave `domain` unset so the session JWT stays host-only on the API:
+
+```typescript
+cookieSettings: {
+  clientDomain: '.example.com', // presence hint: readable on example.com
+  // domain: unset            → httpOnly session JWT stays on api.example.com
+}
+```
+
+Do **not** reach for `domain` to solve this — it applies to both cookies and would broadcast the httpOnly session JWT to every subdomain.
+
+`clientDomain` widens who can read the client cookie's payload (`userId`, `updatedAt`, plus anything you add in `getClientCookiePayload`) to every subdomain of the value you set, so keep that payload non-sensitive. The httpOnly token is unaffected.
 
 ## Procedures
 

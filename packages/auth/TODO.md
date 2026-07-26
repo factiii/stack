@@ -16,6 +16,31 @@ fine because both sit on `localhost` (cookies ignore port). Setting `domain` is
 not a workaround: `setAuthCookies` passes one `settings.domain` to both cookies,
 which would broadcast the httpOnly session JWT to every subdomain.
 
+That caveat was load-bearing, not a footnote: it made the export unusable for the
+consumer that motivated it. Fixed by `clientDomain` below.
+
+## ~~Client cookie needs its own domain~~ — done (`cookieSettings.clientDomain`)
+
+**Was.** `hasClientSession()` shipped in 0.15.0 but could not be adopted on a
+split-host deployment, which is the topology it was written for. Chop-Shop runs
+the app on `greasemoto.com` and the API on `api.greasemoto.com`; the `auth-client`
+cookie was host-only on the API host, so `document.cookie` on the app host never
+saw it. Evaluated on the 0.13.0 → 0.15.0 bump (2026-07-26) and rejected at the
+time, since swapping in the packaged reader would have rendered every logged-in
+user logged out in prod while passing in dev. Net effect of that release for that
+app: nothing changed.
+
+**Fixed in 0.16.0.** `CookieSettings.clientDomain` scopes the non-httpOnly client
+cookie independently of `domain`, defaulting to `domain` when unset so existing
+consumers are unaffected. Routed through one `clientCookieDomain()` helper used
+by all three client-cookie paths — `setAuthCookies`, `setClientCookie`,
+`clearAuthCookies` — because a cookie scoped to `.example.com` is a distinct
+cookie from a host-only one, and a host-only clear would leave the hint alive
+past logout. Covered by `tests/cookies.test.ts` ("clientDomain scopes only the
+client cookie"), which pins that the auth and client cookies carry *different*
+`Domain=` attributes: if they ever match, the feature has either broken or
+started leaking the JWT.
+
 ## `isUserInBundle` rejects logins that already proved identity
 
 **Problem.** At `maxAccounts: 1`, `isUserInBundle` throws
@@ -44,3 +69,9 @@ cookie.
 magic link), or should it be opt-in via config (e.g.
 `features.reloginBehavior: 'throw' | 'reissue'`) so existing consumers keep the
 current semantics?
+
+One data point for that call: Chop-Shop already implements the reissue semantics
+client-side, by matching on the error message and adopting the session. Matching
+on prose is brittle, and every other consumer that hits this has to invent the
+same thing — an argument for fixing it server-side rather than shipping the
+behavior as opt-in.
