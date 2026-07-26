@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { parseAuthCookie, setAuthCookies, DEFAULT_STORAGE_KEYS } from '../src/utilities/cookies';
+import {
+  parseAuthCookie,
+  setAuthCookies,
+  clearAuthCookies,
+  DEFAULT_STORAGE_KEYS,
+} from '../src/utilities/cookies';
 
 describe('parseAuthCookie', () => {
   it('parses auth token from cookie header', () => {
@@ -75,5 +80,84 @@ describe('setAuthCookies domain scoping', () => {
     for (const cookie of cookies) {
       expect(cookie).not.toContain('Domain=');
     }
+  });
+});
+
+describe('clientDomain scopes only the client cookie', () => {
+  // The whole point of clientDomain: an app on example.com reading a presence
+  // hint set by api.example.com, WITHOUT the httpOnly session JWT becoming
+  // readable to every subdomain. If these two ever carry the same Domain, the
+  // feature has either stopped working or started leaking the JWT.
+  const payload = { userId: 1, updatedAt: '2026-01-01T00:00:00.000Z' };
+
+  function headers(
+    fn: 'set' | 'clear',
+    settings: Record<string, unknown>,
+  ): { auth: string; client: string } {
+    const calls: unknown[] = [];
+    const res = {
+      setHeader: (_name: string, value: unknown) => calls.push(value),
+      appendHeader: (_name: string, value: unknown) => calls.push(value),
+    };
+    if (fn === 'set') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setAuthCookies(res as any, 'tok', payload, 'secret', settings, {
+        authToken: 'ft-auth',
+        clientToken: 'ft-client',
+      });
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      clearAuthCookies(res as any, settings, {
+        authToken: 'ft-auth',
+        clientToken: 'ft-client',
+      });
+    }
+    const cookies = calls[0] as string[];
+    return {
+      auth: cookies.find((c) => c.startsWith('ft-auth=')) as string,
+      client: cookies.find((c) => c.startsWith('ft-client=')) as string,
+    };
+  }
+
+  it('scopes the client cookie to clientDomain while the auth cookie stays host-only', () => {
+    const { auth, client } = headers('set', { clientDomain: '.example.com' });
+    expect(client).toContain('Domain=.example.com');
+    expect(auth).not.toContain('Domain=');
+  });
+
+  it('keeps the auth cookie on domain when both are set', () => {
+    const { auth, client } = headers('set', {
+      domain: 'api.example.com',
+      clientDomain: '.example.com',
+    });
+    expect(auth).toContain('Domain=api.example.com');
+    expect(client).toContain('Domain=.example.com');
+  });
+
+  it('falls back to domain for the client cookie when clientDomain is unset', () => {
+    const { auth, client } = headers('set', { domain: 'factiii.com' });
+    expect(auth).toContain('Domain=factiii.com');
+    expect(client).toContain('Domain=factiii.com');
+  });
+
+  it('clears the client cookie with the same Domain it was set with', () => {
+    // A cookie scoped to `.example.com` is a distinct cookie from a host-only
+    // one: clearing without the Domain leaves the hint alive past logout, so
+    // the app reports a session that no longer exists.
+    const settings = { clientDomain: '.example.com' };
+    const set = headers('set', settings);
+    const cleared = headers('clear', settings);
+    expect(cleared.client).toContain('Domain=.example.com');
+    expect(cleared.client).toContain('ft-client=destroy');
+    expect(cleared.auth).not.toContain('Domain=');
+    // Same scope on the way out as on the way in.
+    expect(cleared.client.includes('Domain=.example.com')).toBe(
+      set.client.includes('Domain=.example.com'),
+    );
+  });
+
+  it('keeps the client cookie non-httpOnly when scoped', () => {
+    const { client } = headers('set', { clientDomain: '.example.com' });
+    expect(client).not.toContain('HttpOnly');
   });
 });
