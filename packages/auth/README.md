@@ -121,6 +121,26 @@ No migration needed. Drop-in security improvement.
 
 Rolling-window JWT. A single token is stored in an HTTP cookie. Calling `refresh` re-issues it with a fresh expiry (default: 30 days), sliding the session forward for active users.
 
+## Browser Session Detection
+
+`@factiii/auth/browser` is a Node-free entry point for client bundles. It answers "does this browser hold a session?" from the client-readable `auth-client` cookie, so the app can decide whether to run its `users.me` probe — no separate `localStorage` marker with a different lifetime than the cookie.
+
+```typescript
+import { hasClientSession, readClientSession } from '@factiii/auth/browser';
+
+if (hasClientSession()) {
+  await trpc.users.me.query();
+}
+
+const session = readClientSession(); // { userId, updatedAt, ...custom } | null
+```
+
+Both take optional `{ clientToken, cookie }` — `clientToken` for a custom `storageKeys.clientToken`, `cookie` to pass a cookie string during SSR instead of reading `document.cookie` (no `document` means `false`/`null`).
+
+The signature is **not** verified — that would need the JWT secret, which must never reach the browser. Treat the result as a presence hint, not proof of identity: a forged cookie buys one `users.me` probe that 401s.
+
+Requires the API and client to share a host. `cookieSettings.domain` is unset by default, making the cookie host-only, so an `api.example.com` / `example.com` split can't see it — and it looks fine in local dev where both sit on `localhost` (cookies ignore port). Setting `domain` broadcasts the httpOnly session JWT to every subdomain too, so prefer same-host or a path-based API proxy.
+
 ## Procedures
 
 Auth procedures: `register`, `login`, `logout`, `refresh`, `changePassword`, `resetPassword`, `oAuthLogin`, `enableTwofa`, `disableTwofa`, `sendVerificationEmail`, `verifyEmail`, and more.
