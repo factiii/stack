@@ -9,7 +9,17 @@ export type {
   TwoFaMode,
 } from './types/config';
 export type { ResolvedAuthConfig } from './utilities/config';
-export type { AuthHooks } from './types/hooks';
+export type { AuthHooks, PasskeyRegisterInput } from './types/hooks';
+export type {
+  AuthenticationResponseJSON,
+  PasskeyChallengeType,
+  PasskeyCredential,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
+  StoredPasskeyCredential,
+  WebAuthnConfig,
+} from './types/passkey';
 export type { TrpcBuilder, TrpcContext } from './types/trpc';
 export type { CreateHTTPContextOptions } from '@trpc/server/adapters/standalone';
 export {

@@ -62,6 +62,16 @@ export function buildTwoFaResetProcedures(
       throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid credentials.' });
     }
 
+    // The reset OTP is delivered by email, so an account without one cannot use
+    // this recovery path at all.
+    if (!user.email) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          'This account has no email address. Add one in settings to reset 2FA by email.',
+      });
+    }
+
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + config.tokenSettings.otpValidityMs);
 

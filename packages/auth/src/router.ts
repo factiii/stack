@@ -8,6 +8,7 @@ import { EmailVerificationProcedureFactory } from './procedures/emailVerificatio
 import { MagicLinkProcedureFactory } from './procedures/magicLink';
 import { MultiAccountProcedureFactory } from './procedures/multiAccount';
 import { OAuthLoginProcedureFactory } from './procedures/oauth';
+import { PasskeyProcedureFactory } from './procedures/passkey';
 import {
   DeviceTwoFaProcedureFactory,
   StandardTwoFaProcedureFactory,
@@ -76,6 +77,10 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
       this.config,
       this.authProcedure
     ).createMultiAccountProcedures();
+    const passkeyRoutes = new PasskeyProcedureFactory<TExtensions>(
+      this.config,
+      this.procedure
+    );
 
     return {
       base: baseRoutes.createBaseProcedures(this.schemas),
@@ -84,6 +89,9 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
       emailVerification: emailVerificationRoutes.createEmailVerificationProcedures(),
       magicLink: magicLinkRoutes,
       multiAccount: multiAccountRoutes,
+      // Nested sub-router → client.auth.passkey.*. Gated at runtime by
+      // features.passkey (like oauth), so the shape is always present.
+      passkey: this.t.router(passkeyRoutes.createPasskeyProcedures(this.schemas)),
     };
   }
 }
@@ -125,6 +133,7 @@ function buildStandardAuthRouter<TExtensions extends SchemaExtensions = {}>(
     ...shared.emailVerification,
     ...shared.magicLink,
     ...shared.multiAccount,
+    passkey: shared.passkey,
   });
 
   const router = scaffold.t.router({ auth: authRouter });
@@ -163,6 +172,7 @@ function buildDeviceAuthRouter<TExtensions extends SchemaExtensions = {}>(
     ...shared.emailVerification,
     ...shared.magicLink,
     ...shared.multiAccount,
+    passkey: shared.passkey,
   });
 
   const router = scaffold.t.router({ auth: authRouter });

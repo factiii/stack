@@ -167,6 +167,16 @@ export type LoginSchemaInput<TExtensions extends SchemaExtensions = {}> = LoginI
 export type OAuthSchemaInput<TExtensions extends SchemaExtensions = {}> = OAuthLoginInput &
   (TExtensions['oauth'] extends AnyZodObject ? z.infer<TExtensions['oauth']> : {});
 
+export type PasskeyRegisterMetaInput<TExtensions extends SchemaExtensions = {}> = Omit<
+  SignupSchemaInput<TExtensions>,
+  'username' | 'email' | 'password'
+>;
+
+export type PasskeyAuthMetaInput<TExtensions extends SchemaExtensions = {}> = Omit<
+  LoginSchemaInput<TExtensions>,
+  'username' | 'password' | 'code'
+>;
+
 /** Create schemas with optional extensions merged in */
 export function createSchemas<TExtensions extends SchemaExtensions = {}>(
   extensions?: TExtensions
