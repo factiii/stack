@@ -10,12 +10,16 @@ import {
 import { TRPCError } from '@trpc/server';
 import { z, type AnyZodObject } from 'zod';
 
-import type { PasskeyRegisterInput, SchemaExtensions } from '../types/hooks';
+import type { SchemaExtensions } from '../types/hooks';
 import { type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { issueAuthCookies, isUserInBundle } from '../utilities/issueCookies';
-import { type CreatedSchemas } from '../validators';
+import {
+  type CreatedSchemas,
+  type PasskeyAuthMetaInput,
+  type PasskeyRegisterMetaInput,
+} from '../validators';
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const isObject = (v: unknown): boolean => typeof v === 'object' && v !== null;
@@ -121,10 +125,10 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
 
     return this.procedure.input(schema).mutation(async ({ ctx, input }) => {
       const { webauthn, hooks } = this.checkConfig();
-      const typedInput = input as {
+      const typedInput = input as PasskeyRegisterMetaInput<TExtensions> & {
         flowId: string;
         response: RegistrationResponseJSON;
-      } & Record<string, unknown>;
+      };
 
       const challenge = await hooks.consumePasskeyChallenge!(typedInput.flowId);
       if (!challenge || challenge.type !== 'REGISTER' || !challenge.username) {
@@ -164,7 +168,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
           deviceType: credentialDeviceType,
           backedUp: credentialBackedUp,
         },
-      } as PasskeyRegisterInput<TExtensions>);
+      });
 
       return this.mintSession(ctx, userId, typedInput);
     });
@@ -204,10 +208,10 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
 
     return this.procedure.input(schema).mutation(async ({ ctx, input }) => {
       const { webauthn, hooks } = this.checkConfig();
-      const typedInput = input as {
+      const typedInput = input as PasskeyAuthMetaInput<TExtensions> & {
         flowId: string;
         response: AuthenticationResponseJSON;
-      } & Record<string, unknown>;
+      };
 
       const challenge = await hooks.consumePasskeyChallenge!(typedInput.flowId);
       if (!challenge || challenge.type !== 'AUTH') {
@@ -254,7 +258,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
   private async mintSession(
     ctx: Parameters<Parameters<BaseProcedure['mutation']>[0]>[0]['ctx'],
     userId: number,
-    input: Record<string, unknown>
+    input: PasskeyRegisterMetaInput<TExtensions> | PasskeyAuthMetaInput<TExtensions>
   ) {
     const userAgent = ctx.headers['user-agent'];
     if (!userAgent) {
@@ -274,7 +278,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
     }
 
     const extraSessionData = this.config.hooks?.getSessionData
-      ? await this.config.hooks.getSessionData(input as never)
+      ? await this.config.hooks.getSessionData(input)
       : {};
 
     const session = await this.config.database.session.create({
@@ -288,7 +292,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
       await this.config.hooks.onUserLogin(user.id, session.id);
     }
     if (this.config.hooks?.onSessionCreated) {
-      await this.config.hooks.onSessionCreated(session.id, input as never);
+      await this.config.hooks.onSessionCreated(session.id, input);
     }
 
     await issueAuthCookies(this.config, {

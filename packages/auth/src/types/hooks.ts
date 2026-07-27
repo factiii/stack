@@ -34,6 +34,22 @@ type ExtendedOAuthInput<TExtensions extends SchemaExtensions> = BaseOAuthInput &
     ? z.infer<TExtensions['oauth']>
     : Record<string, unknown>);
 
+type ExtendedPasskeyRegisterInput<TExtensions extends SchemaExtensions> = Omit<
+  ExtendedSignupInput<TExtensions>,
+  'username' | 'email' | 'password'
+>;
+type ExtendedPasskeyAuthInput<TExtensions extends SchemaExtensions> = Omit<
+  ExtendedLoginInput<TExtensions>,
+  'username' | 'password' | 'code'
+>;
+
+type SessionSourceInput<TExtensions extends SchemaExtensions> =
+  | ExtendedSignupInput<TExtensions>
+  | ExtendedLoginInput<TExtensions>
+  | ExtendedOAuthInput<TExtensions>
+  | ExtendedPasskeyRegisterInput<TExtensions>
+  | ExtendedPasskeyAuthInput<TExtensions>;
+
 /** Input to `createPasskeyUser`. No email/password: passkey accounts have neither. */
 export type PasskeyRegisterInput<TExtensions extends SchemaExtensions> = {
   username: string;
@@ -92,10 +108,7 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
    * Return an object with extra fields to include in session.create
    */
   getSessionData?: (
-    input:
-      | ExtendedSignupInput<TExtensions>
-      | ExtendedLoginInput<TExtensions>
-      | ExtendedOAuthInput<TExtensions>
+    input: SessionSourceInput<TExtensions>
   ) => Promise<Record<string, unknown>>;
 
   /**
@@ -103,10 +116,7 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
    */
   onSessionCreated?: (
     sessionId: number,
-    input:
-      | ExtendedSignupInput<TExtensions>
-      | ExtendedLoginInput<TExtensions>
-      | ExtendedOAuthInput<TExtensions>
+    input: SessionSourceInput<TExtensions>
   ) => Promise<void>;
 
   /**
