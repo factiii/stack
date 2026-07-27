@@ -228,6 +228,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
                 // So a client holding this user's vault locally can answer the
                 // challenge itself instead of waiting on another device.
                 userId: user.id,
+                requires2FA: true,
               };
             }
           }
