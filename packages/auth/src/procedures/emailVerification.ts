@@ -42,6 +42,12 @@ export class EmailVerificationProcedureFactory {
         return { message: 'Email is already verified', emailSent: false };
       }
 
+      // Email is optional on username-first accounts, so there may be nothing to
+      // send to. Bail before flipping the user to PENDING against no address.
+      if (!user.email) {
+        return { message: 'No email on file', emailSent: false };
+      }
+
       const otp = randomUUID();
 
       await this.config.database.user.update(userId, {

@@ -134,10 +134,12 @@ export class StandardTwoFaProcedureFactory {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found.' });
       }
 
-      if (user.oauthProvider) {
+      // Same rule as the device flow: no password means nothing to guard.
+      if (!user.password) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: '2FA is not available for social login accounts.',
+          message:
+            'Two-factor authentication is only available on accounts with a password.',
         });
       }
 

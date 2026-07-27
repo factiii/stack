@@ -120,10 +120,14 @@ export class DeviceTwoFaProcedureFactory {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found.' });
       }
 
-      if (user.oauthProvider) {
+      // 2FA gates the password login, so it is meaningless without a password:
+      // the gate would sit on a path the user can't take, and disableTwofa
+      // (password-gated) could never turn it back off.
+      if (!user.password) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: '2FA is not available for social login accounts.',
+          message:
+            'Two-factor authentication is only available on accounts with a password.',
         });
       }
 

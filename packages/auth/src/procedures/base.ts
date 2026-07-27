@@ -178,9 +178,24 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
       }
 
       if (!user.password) {
+        // Passwordless account — tell the user exactly which method to use.
+        if (user.oauthProvider) {
+          const provider =
+            user.oauthProvider.charAt(0).toUpperCase() +
+            user.oauthProvider.slice(1).toLowerCase();
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: `This account uses ${provider} sign-in. Please continue with ${provider}.`,
+          });
+        }
+        const hasPasskey = this.config.hooks?.userHasPasskey
+          ? await this.config.hooks.userHasPasskey(user.id)
+          : false;
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: `This account uses ${user.oauthProvider?.toLowerCase() || 'social login'}. Please use that method.`,
+          message: hasPasskey
+            ? 'This account uses a passkey. Please sign in with your passkey.'
+            : 'This account has no password. Please sign in with the method you used to sign up.',
         });
       }
 
@@ -194,6 +209,28 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
 
       if (isTwoFaEnabled(this.config, user) && this.config.features?.twoFa) {
         if (!code) {
+          // Push another device to approve instead of asking for a code. Falls
+          // back to the typed-code flow when the hook is absent.
+          if (this.config.hooks?.onLoginApprovalRequired) {
+            const pending = await this.config.hooks.onLoginApprovalRequired(
+              user.id,
+              {
+                ip: ctx.ip,
+                browserName: detectBrowser(userAgent),
+                input: typedInput,
+              }
+            );
+            if (pending) {
+              return {
+                success: false,
+                pendingLogin: true,
+                pendingLoginId: pending.pendingLoginId,
+                // So a client holding this user's vault locally can answer the
+                // challenge itself instead of waiting on another device.
+                userId: user.id,
+              };
+            }
+          }
           return {
             success: false,
             requires2FA: true,
@@ -429,6 +466,15 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'This account uses social login. Please use that method.',
+        });
+      }
+
+      // Username-first consumers allow accounts with no email, which have no
+      // way to receive the link.
+      if (!user.email) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'This account has no email address to send a reset link to.',
         });
       }
 

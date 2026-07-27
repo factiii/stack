@@ -1,6 +1,11 @@
 import { type z, type AnyZodObject } from 'zod';
 
 import { type loginSchema, type oAuthLoginSchema, type signupSchema } from '../validators';
+import type {
+  PasskeyChallengeType,
+  PasskeyCredential,
+  StoredPasskeyCredential,
+} from './passkey';
 
 /**
  * Schema extensions for adding custom fields to auth inputs
@@ -28,6 +33,14 @@ type ExtendedOAuthInput<TExtensions extends SchemaExtensions> = BaseOAuthInput &
   (TExtensions['oauth'] extends AnyZodObject
     ? z.infer<TExtensions['oauth']>
     : Record<string, unknown>);
+
+/** Input to `createPasskeyUser`. No email/password: passkey accounts have neither. */
+export type PasskeyRegisterInput<TExtensions extends SchemaExtensions> = {
+  username: string;
+  credential: PasskeyCredential;
+} & (TExtensions['signup'] extends AnyZodObject
+  ? z.infer<TExtensions['signup']>
+  : Record<string, unknown>);
 
 /**
  * Lifecycle hooks for extending auth behavior with business logic
@@ -60,6 +73,19 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
    * Use this to update activity status, send notifications, etc.
    */
   onUserLogin?: (userId: number, sessionId: number) => Promise<void>;
+
+  /**
+   * A 2FA login with no code supplied. Return a `pendingLoginId` to push another
+   * device for approval, or null to fall back to the typed-code flow.
+   */
+  onLoginApprovalRequired?: (
+    userId: number,
+    context: {
+      ip?: string;
+      browserName: string;
+      input: ExtendedLoginInput<TExtensions>;
+    }
+  ) => Promise<{ pendingLoginId: string } | null>;
 
   /**
    * Called to get additional data for session creation
@@ -137,6 +163,37 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
    * Called after biometric verification
    */
   onBiometricVerified?: (userId: number) => Promise<void>;
+
+  // ── Passkey (WebAuthn) hooks — required when features.passkey is enabled ──
+  // The package runs the ceremony and mints the session; the consumer owns all
+  // storage (challenge, credential) and user creation.
+
+  /** Persist a short-lived challenge; return a `flowId` the client echoes back on verify. */
+  storePasskeyChallenge?: (data: {
+    challenge: string;
+    type: PasskeyChallengeType;
+    username: string | null;
+    expiresAt: Date;
+  }) => Promise<{ flowId: string }>;
+
+  /** Look up + delete a challenge by flowId. Return null if missing/expired. */
+  consumePasskeyChallenge?: (
+    flowId: string
+  ) => Promise<{ challenge: string; type: PasskeyChallengeType; username: string | null } | null>;
+
+  /** Create the user and persist the verified credential; return the new userId. */
+  createPasskeyUser?: (input: PasskeyRegisterInput<TExtensions>) => Promise<{ userId: number }>;
+
+  /** Resolve a stored credential for an authentication ceremony. Null if unknown. */
+  resolvePasskeyCredential?: (
+    credentialId: string
+  ) => Promise<StoredPasskeyCredential | null>;
+
+  /** Persist the updated signature counter after a successful authentication. */
+  onPasskeyAuthenticated?: (credentialId: string, newCounter: number) => Promise<void>;
+
+  /** Whether a user has any passkey — used to label the login method accurately. */
+  userHasPasskey?: (userId: number) => Promise<boolean>;
 
   /**
    * Called to log errors (e.g., server errors, auth errors)

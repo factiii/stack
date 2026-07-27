@@ -12,7 +12,8 @@
 export interface AuthUser {
   id: number;
   status: string;
-  email: string;
+  /** Nullable: username-first consumers collect an email later, or never. */
+  email: string | null;
   username: string;
   password: string | null;
   /**

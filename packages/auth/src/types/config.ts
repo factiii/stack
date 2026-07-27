@@ -4,6 +4,7 @@ import type { DeviceAuthAdapter } from '../adapters/deviceAuth';
 import { type CookieSettings } from '../types';
 import type { OAuthKeys } from '../utilities/oauth';
 import { type AuthHooks, type SchemaExtensions } from './hooks';
+import type { WebAuthnConfig } from './passkey';
 
 /**
  * Which 2FA flow this consumer uses.
@@ -59,6 +60,8 @@ export interface AuthFeatures {
   otpLogin?: boolean;
   /** Enable magic link authentication */
   magicLink?: boolean;
+  /** Enable WebAuthn passkey registration + authentication */
+  passkey?: boolean;
 }
 
 export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
@@ -165,4 +168,9 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
 
   /** Max sessions per device. Default 1 (single-account). >1 enables multi-account. */
   maxAccounts?: number;
+
+  /**
+   * WebAuthn Relying Party configuration (required when features.passkey is enabled).
+   */
+  webauthn?: WebAuthnConfig;
 }

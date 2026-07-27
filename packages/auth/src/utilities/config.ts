@@ -73,6 +73,7 @@ export type ResolvedAuthConfig = Required<
     | 'magicLink'
     | 'deviceAuth'
     | 'maxAccounts'
+    | 'webauthn'
   >
 > &
   AuthConfig & {
