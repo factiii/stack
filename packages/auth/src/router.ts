@@ -67,7 +67,8 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
     );
     const oAuthLoginRoutes = new OAuthLoginProcedureFactory<TExtensions>(
       this.config,
-      this.procedure
+      this.procedure,
+      this.authProcedure
     );
     const magicLinkRoutes = new MagicLinkProcedureFactory(
       this.config,
@@ -79,7 +80,8 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
     ).createMultiAccountProcedures();
     const passkeyRoutes = new PasskeyProcedureFactory<TExtensions>(
       this.config,
-      this.procedure
+      this.procedure,
+      this.authProcedure
     );
 
     return {

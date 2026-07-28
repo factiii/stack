@@ -122,20 +122,6 @@ export function createDrizzleAdapter(
         return (rows[0] as unknown as AuthUser | undefined) ?? null;
       },
 
-      async findByEmailOrOAuthId(email: string, oauthId: string): Promise<AuthUser | null> {
-        const rows = await db
-          .select()
-          .from(users)
-          .where(
-            or(
-              sql`lower(${users.email}) = lower(${email})`,
-              eq(users.oauthId, oauthId)
-            )
-          )
-          .limit(1);
-        return (rows[0] as unknown as AuthUser | undefined) ?? null;
-      },
-
       async findById(id: number): Promise<AuthUser | null> {
         const rows = await db
           .select()

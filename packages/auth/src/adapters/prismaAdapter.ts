@@ -64,17 +64,6 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
         }) as Promise<AuthUser | null>;
       },
 
-      async findByEmailOrOAuthId(email: string, oauthId: string): Promise<AuthUser | null> {
-        return db.user.findFirst({
-          where: {
-            OR: [
-              { email: { equals: email, mode: 'insensitive' } },
-              { oauthId: { equals: oauthId } },
-            ],
-          },
-        }) as Promise<AuthUser | null>;
-      },
-
       async findById(id: number): Promise<AuthUser | null> {
         return db.user.findUnique({ where: { id } }) as Promise<AuthUser | null>;
       },

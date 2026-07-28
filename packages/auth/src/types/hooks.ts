@@ -1,11 +1,7 @@
 import { type z, type AnyZodObject } from 'zod';
 
 import { type loginSchema, type oAuthLoginSchema, type signupSchema } from '../validators';
-import type {
-  PasskeyChallengeType,
-  PasskeyCredential,
-  StoredPasskeyCredential,
-} from './passkey';
+import type { PasskeyCredential } from './passkey';
 
 /**
  * Schema extensions for adding custom fields to auth inputs
@@ -81,7 +77,10 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
    */
   onUserCreated?: (
     userId: number,
-    input: ExtendedSignupInput<TExtensions> | ExtendedOAuthInput<TExtensions>
+    input:
+      | ExtendedSignupInput<TExtensions>
+      | ExtendedOAuthInput<TExtensions>
+      | ExtendedPasskeyRegisterInput<TExtensions>
   ) => Promise<void>;
 
   /**
@@ -174,36 +173,10 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
    */
   onBiometricVerified?: (userId: number) => Promise<void>;
 
-  // ── Passkey (WebAuthn) hooks — required when features.passkey is enabled ──
-  // The package runs the ceremony and mints the session; the consumer owns all
-  // storage (challenge, credential) and user creation.
-
-  /** Persist a short-lived challenge; return a `flowId` the client echoes back on verify. */
-  storePasskeyChallenge?: (data: {
-    challenge: string;
-    type: PasskeyChallengeType;
-    username: string | null;
-    expiresAt: Date;
-  }) => Promise<{ flowId: string }>;
-
-  /** Look up + delete a challenge by flowId. Return null if missing/expired. */
-  consumePasskeyChallenge?: (
-    flowId: string
-  ) => Promise<{ challenge: string; type: PasskeyChallengeType; username: string | null } | null>;
-
-  /** Create the user and persist the verified credential; return the new userId. */
-  createPasskeyUser?: (input: PasskeyRegisterInput<TExtensions>) => Promise<{ userId: number }>;
-
-  /** Resolve a stored credential for an authentication ceremony. Null if unknown. */
-  resolvePasskeyCredential?: (
-    credentialId: string
-  ) => Promise<StoredPasskeyCredential | null>;
-
-  /** Persist the updated signature counter after a successful authentication. */
-  onPasskeyAuthenticated?: (credentialId: string, newCounter: number) => Promise<void>;
-
-  /** Whether a user has any passkey — used to label the login method accurately. */
-  userHasPasskey?: (userId: number) => Promise<boolean>;
+  // Passkey and linked-OAuth-provider STORAGE moved to dedicated optional
+  // adapters (config.passkey / config.oauthAccounts) — see adapters/passkey.ts
+  // and adapters/oauthAccount.ts. Only notification hooks (onOAuthLinked above)
+  // remain here.
 
   /**
    * Called to log errors (e.g., server errors, auth errors)

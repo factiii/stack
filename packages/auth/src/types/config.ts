@@ -1,6 +1,8 @@
 import { type EmailAdapter } from '../adapters';
 import type { DatabaseAdapter } from '../adapters/database';
 import type { DeviceAuthAdapter } from '../adapters/deviceAuth';
+import type { OAuthAccountAdapter } from '../adapters/oauthAccount';
+import type { PasskeyAdapter } from '../adapters/passkey';
 import { type CookieSettings } from '../types';
 import type { OAuthKeys } from '../utilities/oauth';
 import { type AuthHooks, type SchemaExtensions } from './hooks';
@@ -85,6 +87,20 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
    * Standard-mode consumers should leave this undefined.
    */
   deviceAuth?: DeviceAuthAdapter;
+
+  /**
+   * Passkey storage adapter. Required (and only used) when `features.passkey`
+   * is enabled — the package runs the ceremony, this owns challenge + credential
+   * storage and user creation.
+   */
+  passkey?: PasskeyAdapter<TExtensions>;
+
+  /**
+   * Linked-OAuth-provider storage adapter. Required when OAuth is enabled — it
+   * is the source of truth for OAuth sign-in, and lets one account link several
+   * providers (e.g. both Google and Apple).
+   */
+  oauthAccounts?: OAuthAccountAdapter;
 
   /**
    * Secret keys for JWT signing

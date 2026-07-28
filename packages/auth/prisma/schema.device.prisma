@@ -64,20 +64,21 @@ model User {
   password                String?
   username                String                  @unique
   twoFaEnabled            Boolean                 @default(false)
-  oauthProvider           OAuthProvider?
-  oauthId                 String?
   tag                     UserTag                 @default(HUMAN)
   isActive                Boolean                 @default(false)
   verifiedHumanAt         DateTime?
   otpForEmailVerification String?
 
   // Relations
-  sessions       Session[]
-  passwordReset  PasswordReset[]
-  otps           OTP[]
-  devices        Device[]        @relation("devices")
-  admin          Admin?
-  magicLinks     MagicLink[]
+  sessions      Session[]
+  passwordReset PasswordReset[]
+  otps          OTP[]
+  devices       Device[]        @relation("devices")
+  admin         Admin?
+  magicLinks    MagicLink[]
+  // Optional — passkey + multi-provider features (see models at end of file).
+  passkeys      Passkey[]
+  oAuthAccounts OAuthAccount[]
 }
 
 // ==============================================================================
@@ -165,5 +166,51 @@ model MagicLink {
   userId    Int
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
+}
+
+// ==============================================================================
+// Passkey Model (optional — enable with features.passkey)
+// ==============================================================================
+// The package runs the WebAuthn ceremony; you own storage via the `passkey`
+// adapter (config.passkey — storeChallenge/consumeChallenge/createUser/
+// resolveCredential/onAuthenticated/has/list/add/remove). A user may have several.
+
+model Passkey {
+  id           String    @id @default(uuid())
+  credentialId String    @unique // base64url credential ID
+  publicKey    Bytes // COSE public key
+  counter      BigInt    @default(0)
+  transports   String[]  @default([]) // e.g. ["internal","hybrid"]
+  deviceType   String? // "singleDevice" | "multiDevice"
+  backedUp     Boolean   @default(false)
+  name         String? // friendly label, editable in settings
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ==============================================================================
+// OAuthAccount Model (optional — multi-provider accounts)
+// ==============================================================================
+// Lets one account link both Google and Apple. Implement the `oauthAccounts`
+// adapter (config.oauthAccounts — resolve/link/unlink/list) against this table;
+// when it is provided, `resolve` becomes the source of truth for OAuth sign-in
+// and the legacy User.oauthProvider scalar stops gating. Keep the scalar as the
+// primary/creation provider (and mirror it here) for backwards compat.
+
+model OAuthAccount {
+  id              String        @id @default(uuid())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider        OAuthProvider
+  providerSubject String // provider 'sub' / oauthId
+  email           String?
+  createdAt       DateTime      @default(now())
+
+  @@unique([provider, providerSubject])
   @@index([userId])
 }
