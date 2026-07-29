@@ -78,7 +78,6 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
       registerVerify: this.registerVerify(registerMeta),
       authOptions: this.authOptions(),
       authVerify: this.authVerify(loginMeta),
-      // Add / list / remove for an already signed-in account.
       addOptions: this.addOptions(),
       addVerify: this.addVerify(),
       list: this.list(),

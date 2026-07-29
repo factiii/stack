@@ -72,7 +72,7 @@ export interface PrismaPasskeyAdapterOptions<TExtensions extends SchemaExtension
   /** Create the user + persist the first credential; return the new userId.
    * (User creation + provisioning is app-specific, so you own it.) */
   createUser: (input: PasskeyRegisterInput<TExtensions>) => Promise<{ userId: number }>;
-  /** Short-lived challenge storage (e.g. Redis) — the ephemeral half. */
+  /** Short-lived challenge storage (e.g. Redis). */
   challenge: Pick<PasskeyAdapter<TExtensions>, 'storeChallenge' | 'consumeChallenge'>;
 }
 
