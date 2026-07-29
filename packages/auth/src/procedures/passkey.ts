@@ -11,10 +11,11 @@ import { TRPCError } from '@trpc/server';
 import { z, type AnyZodObject } from 'zod';
 
 import type { SchemaExtensions } from '../types/hooks';
-import { type BaseProcedure } from '../types/trpc';
+import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { issueAuthCookies, isUserInBundle } from '../utilities/issueCookies';
+import { assertKeepsLoginMethod } from '../utilities/loginMethods';
 import {
   type CreatedSchemas,
   type PasskeyAuthMetaInput,
@@ -26,14 +27,16 @@ const isObject = (v: unknown): boolean => typeof v === 'object' && v !== null;
 
 /**
  * Factory for WebAuthn passkey procedures (registerOptions / registerVerify /
- * authOptions / authVerify). The package runs the ceremony and mints the session
- * (via `issueAuthCookies`, so passkey logins are bundle-aware just like password
- * and OAuth); the consumer owns all storage + user creation through hooks.
+ * authOptions / authVerify, plus addOptions / addVerify / list / remove for an
+ * existing account). The package runs the ceremony and mints the session (via
+ * `issueAuthCookies`, so passkey logins are bundle-aware just like password and
+ * OAuth); the consumer owns all storage + user creation via `config.passkey`.
  */
 export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> {
   constructor(
     private config: ResolvedAuthConfig,
-    private procedure: BaseProcedure
+    private procedure: BaseProcedure,
+    private authProcedure: AuthProcedure
   ) {}
 
   private checkConfig() {
@@ -46,20 +49,13 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
         message: 'Passkeys enabled but no `webauthn` config was provided.',
       });
     }
-    const h = this.config.hooks;
-    if (
-      !h?.storePasskeyChallenge ||
-      !h?.consumePasskeyChallenge ||
-      !h?.createPasskeyUser ||
-      !h?.resolvePasskeyCredential
-    ) {
+    if (!this.config.passkey) {
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
-        message:
-          'Passkeys enabled but required passkey hooks are missing (storePasskeyChallenge, consumePasskeyChallenge, createPasskeyUser, resolvePasskeyCredential).',
+        message: 'Passkeys enabled but no `passkey` storage adapter was provided.',
       });
     }
-    return { webauthn: this.config.webauthn, hooks: h };
+    return { webauthn: this.config.webauthn, passkey: this.config.passkey };
   }
 
   createPasskeyProcedures(schemas: CreatedSchemas<TExtensions>) {
@@ -82,14 +78,136 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
       registerVerify: this.registerVerify(registerMeta),
       authOptions: this.authOptions(),
       authVerify: this.authVerify(loginMeta),
+      addOptions: this.addOptions(),
+      addVerify: this.addVerify(),
+      list: this.list(),
+      remove: this.remove(),
     };
+  }
+
+  private addOptions() {
+    return this.authProcedure.mutation(async ({ ctx }) => {
+      const { webauthn, passkey } = this.checkConfig();
+      const user = await this.config.database.user.findById(ctx.userId);
+      if (!user) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
+      }
+
+      const existing = await passkey.list(ctx.userId);
+      const options = await generateRegistrationOptions({
+        rpName: webauthn.rpName,
+        rpID: webauthn.rpID,
+        userName: user.username,
+        attestationType: 'none',
+        // Exclude what's already registered so the same authenticator can't be
+        // added twice — the concrete divergence from registerOptions.
+        excludeCredentials: existing.map((c) => ({
+          id: c.credentialId,
+          transports: c.transports as AuthenticatorTransportFuture[],
+        })),
+        authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+      });
+
+      const { flowId } = await passkey.storeChallenge({
+        challenge: options.challenge,
+        type: 'REGISTER',
+        username: user.username,
+        expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS),
+      });
+
+      return { flowId, options };
+    });
+  }
+
+  private addVerify() {
+    // `unknown` (not z.custom) so the inferred input matches registerVerify's,
+    // which lets the client pass the ceremony response verbatim; validated +
+    // narrowed below.
+    const schema = z.object({
+      flowId: z.string(),
+      response: z.unknown(),
+      name: z.string().max(60).optional(),
+    });
+    return this.authProcedure.input(schema).mutation(async ({ ctx, input }) => {
+      const { webauthn, passkey } = this.checkConfig();
+      if (!isObject(input.response)) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid passkey response.' });
+      }
+
+      const challenge = await passkey.consumeChallenge(input.flowId);
+      if (!challenge || challenge.type !== 'REGISTER') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Passkey challenge expired. Please try again.',
+        });
+      }
+      // The challenge is bound to a username, so a stolen flowId can't attach a
+      // credential to a different account.
+      const user = await this.config.database.user.findById(ctx.userId);
+      if (!user || user.username !== challenge.username) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Passkey challenge expired. Please try again.',
+        });
+      }
+
+      const verification = await verifyRegistrationResponse({
+        response: input.response as RegistrationResponseJSON,
+        expectedChallenge: challenge.challenge,
+        expectedOrigin: webauthn.origins,
+        expectedRPID: webauthn.rpID,
+        requireUserVerification: true,
+      });
+      if (!verification.verified || !verification.registrationInfo) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Passkey verification failed.' });
+      }
+
+      const { credential, credentialDeviceType, credentialBackedUp } =
+        verification.registrationInfo;
+
+      const { id } = await passkey.add(ctx.userId, {
+        credentialId: credential.id,
+        publicKey: credential.publicKey,
+        counter: credential.counter,
+        transports: credential.transports ?? [],
+        deviceType: credentialDeviceType,
+        backedUp: credentialBackedUp,
+        name: input.name ?? null,
+      });
+
+      return { success: true, passkey: { id, name: input.name ?? null } };
+    });
+  }
+
+  private list() {
+    return this.authProcedure.query(async ({ ctx }) => {
+      const { passkey } = this.checkConfig();
+      const passkeys = await passkey.list(ctx.userId);
+      return passkeys.map((p) => ({
+        id: p.id,
+        name: p.name,
+        createdAt: p.createdAt.toISOString(),
+        lastUsedAt: p.lastUsedAt ? p.lastUsedAt.toISOString() : null,
+      }));
+    });
+  }
+
+  private remove() {
+    return this.authProcedure
+      .input(z.object({ id: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        const { passkey } = this.checkConfig();
+        await assertKeepsLoginMethod(this.config, ctx.userId, { kind: 'passkey' });
+        await passkey.remove(ctx.userId, input.id);
+        return { success: true };
+      });
   }
 
   private registerOptions() {
     return this.procedure
       .input(z.object({ username: z.string() }))
       .mutation(async ({ input }) => {
-        const { webauthn, hooks } = this.checkConfig();
+        const { webauthn, passkey } = this.checkConfig();
 
         const options = await generateRegistrationOptions({
           rpName: webauthn.rpName,
@@ -106,7 +224,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
           },
         });
 
-        const { flowId } = await hooks.storePasskeyChallenge!({
+        const { flowId } = await passkey.storeChallenge({
           challenge: options.challenge,
           type: 'REGISTER',
           username: input.username,
@@ -124,13 +242,13 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
     });
 
     return this.procedure.input(schema).mutation(async ({ ctx, input }) => {
-      const { webauthn, hooks } = this.checkConfig();
+      const { webauthn, passkey } = this.checkConfig();
       const typedInput = input as PasskeyRegisterMetaInput<TExtensions> & {
         flowId: string;
         response: RegistrationResponseJSON;
       };
 
-      const challenge = await hooks.consumePasskeyChallenge!(typedInput.flowId);
+      const challenge = await passkey.consumeChallenge(typedInput.flowId);
       if (!challenge || challenge.type !== 'REGISTER' || !challenge.username) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -156,7 +274,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
       void _flowId;
       void _response;
 
-      const { userId } = await hooks.createPasskeyUser!({
+      const { userId } = await passkey.createUser({
         ...metadata,
         // From the challenge, never from this request's body: see registerMeta.
         username: challenge.username,
@@ -170,6 +288,12 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
         },
       });
 
+      // Same provisioning hook as password/OAuth signup — the adapter only
+      // persists the user + credential, it doesn't re-implement provisioning.
+      if (this.config.hooks?.onUserCreated) {
+        await this.config.hooks.onUserCreated(userId, metadata);
+      }
+
       return this.mintSession(ctx, userId, typedInput);
     });
   }
@@ -177,7 +301,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
   private authOptions() {
     // No input: sign-in is fully discoverable, so there is nothing to send.
     return this.procedure.mutation(async () => {
-      const { webauthn, hooks } = this.checkConfig();
+      const { webauthn, passkey } = this.checkConfig();
 
       // Discoverable credentials, so no allowCredentials: avoids username
       // enumeration and enables conditional-UI autofill.
@@ -187,7 +311,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
         allowCredentials: [],
       });
 
-      const { flowId } = await hooks.storePasskeyChallenge!({
+      const { flowId } = await passkey.storeChallenge({
         challenge: options.challenge,
         type: 'AUTH',
         username: null,
@@ -207,13 +331,13 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
     });
 
     return this.procedure.input(schema).mutation(async ({ ctx, input }) => {
-      const { webauthn, hooks } = this.checkConfig();
+      const { webauthn, passkey } = this.checkConfig();
       const typedInput = input as PasskeyAuthMetaInput<TExtensions> & {
         flowId: string;
         response: AuthenticationResponseJSON;
       };
 
-      const challenge = await hooks.consumePasskeyChallenge!(typedInput.flowId);
+      const challenge = await passkey.consumeChallenge(typedInput.flowId);
       if (!challenge || challenge.type !== 'AUTH') {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -221,7 +345,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
         });
       }
 
-      const stored = await hooks.resolvePasskeyCredential!(typedInput.response.id);
+      const stored = await passkey.resolveCredential(typedInput.response.id);
       if (!stored) {
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Passkey not recognized.' });
       }
@@ -243,12 +367,10 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Passkey verification failed.' });
       }
 
-      if (hooks.onPasskeyAuthenticated) {
-        await hooks.onPasskeyAuthenticated(
-          typedInput.response.id,
-          verification.authenticationInfo.newCounter
-        );
-      }
+      await passkey.onAuthenticated(
+        typedInput.response.id,
+        verification.authenticationInfo.newCounter
+      );
 
       return this.mintSession(ctx, stored.userId, typedInput);
     });

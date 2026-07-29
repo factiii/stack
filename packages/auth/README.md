@@ -156,7 +156,7 @@ Do **not** reach for `domain` to solve this — it applies to both cookies and w
 
 ## Procedures
 
-Auth procedures: `register`, `login`, `logout`, `refresh`, `changePassword`, `resetPassword`, `oAuthLogin`, `enableTwofa`, `disableTwofa`, `sendVerificationEmail`, `verifyEmail`, and more.
+Auth procedures: `register`, `login`, `logout`, `refresh`, `changePassword`, `setPassword`, `resetPassword`, `oAuthLogin`, `oAuthLink`, `oAuthUnlink`, `enableTwofa`, `disableTwofa`, `sendVerificationEmail`, `verifyEmail`, `passkey.*`, and more. See [Multi-method accounts](#multi-method-accounts-passkeys--linked-providers).
 
 ## Lifecycle Hooks
 
@@ -183,6 +183,49 @@ interface AuthHooks {
   getBiometricTimeout?: () => Promise<number | null>;
 }
 ```
+
+## Multi-method accounts (passkeys + linked providers)
+
+One account can hold a password, several passkeys, and both Google and Apple. All additive and opt-in — implement the storage hooks and the matching procedures light up; omit them and behavior is unchanged (single provider, single scalar).
+
+**Passkeys** (`features.passkey`): `auth.passkey.registerOptions` / `registerVerify` create a new account; `auth.passkey.addOptions` / `addVerify` / `list` / `remove` manage a signed-in account's credentials. The package runs the WebAuthn ceremony; you own storage via the **`passkey` adapter** (`config.passkey`, like `deviceAuth`):
+
+```typescript
+// PasskeyAdapter
+storeChallenge, consumeChallenge, createUser, resolveCredential,
+onAuthenticated, has, list, add, remove
+```
+
+**Linked OAuth providers** — the **`oauthAccounts` adapter** (`config.oauthAccounts`) lets `auth.oAuthLink` / `auth.oAuthUnlink` attach/detach providers, and `oAuthLogin` resolve any linked provider:
+
+```typescript
+// OAuthAccountAdapter
+resolve, link, unlink, list
+```
+
+When `oauthAccounts` is provided, `resolve` is the source of truth for OAuth sign-in, so `oAuthLogin` no longer rejects a token whose provider differs from the legacy `User.oauthProvider` scalar. Keep the scalar as the primary/creation provider (mirror it into the link table) for backwards compatibility.
+
+**Add a password** to a passwordless (passkey/OAuth) account: `auth.setPassword` — no adapter, it uses the User adapter.
+
+**Prisma? Skip the boilerplate.** Like `createPrismaDeviceAdapter`, the package ships prebuilt Prisma adapters — the credential/link CRUD is generic, so you only wire the app-specific bits:
+
+```ts
+import {
+  createPrismaOAuthAccountAdapter,
+  createPrismaPasskeyAdapter,
+} from '@factiii/auth';
+
+createAuthRouter({
+  // ...
+  oauthAccounts: createPrismaOAuthAccountAdapter(prisma), // fully generic
+  passkey: createPrismaPasskeyAdapter(prisma, {
+    createUser: async (input) => { /* your user creation + provisioning */ },
+    challenge: { storeChallenge, consumeChallenge }, // e.g. Redis with a TTL
+  }),
+});
+```
+
+The `Passkey` and `OAuthAccount` Prisma models ship in the reference schemas (`prisma/schema.*.prisma`). Every unlink/remove is guarded so an account never loses its last sign-in method; `countLoginMethods`, `assertKeepsLoginMethod` and `resolveLoginMethods` are exported (the last drives a username-first login screen).
 
 ## CLI
 

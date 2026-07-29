@@ -1,6 +1,8 @@
 import { createNoopEmailAdapter } from '../adapters';
 import type { DatabaseAdapter } from '../adapters/database';
 import type { DeviceAuthAdapter } from '../adapters/deviceAuth';
+import type { OAuthAccountAdapter } from '../adapters/oauthAccount';
+import type { PasskeyAdapter } from '../adapters/passkey';
 import { createPrismaAdapter } from '../adapters/prismaAdapter';
 import type { CookieSettings } from '../types';
 import type { AuthConfig, AuthFeatures, TokenSettings } from '../types/config';
@@ -72,6 +74,8 @@ export type ResolvedAuthConfig = Required<
     | 'getClientCookiePayload'
     | 'magicLink'
     | 'deviceAuth'
+    | 'passkey'
+    | 'oauthAccounts'
     | 'maxAccounts'
     | 'webauthn'
   >
@@ -79,6 +83,8 @@ export type ResolvedAuthConfig = Required<
   AuthConfig & {
     database: DatabaseAdapter;
     deviceAuth?: DeviceAuthAdapter;
+    passkey?: PasskeyAdapter;
+    oauthAccounts?: OAuthAccountAdapter;
     magicLink?: ResolvedMagicLinkConfig;
     maxAccounts: number;
   };
@@ -115,6 +121,8 @@ export function createAuthConfig(config: AuthConfig): ResolvedAuthConfig {
     ...config,
     database,
     deviceAuth: config.deviceAuth,
+    passkey: config.passkey,
+    oauthAccounts: config.oauthAccounts,
     features,
     tokenSettings: { ...defaultTokenSettings, ...config.tokenSettings },
     cookieSettings: { ...defaultCookieSettings, ...config.cookieSettings },

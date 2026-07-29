@@ -50,7 +50,14 @@ export type {
   SessionWithUser,
 } from './adapters/database';
 export type { DeviceAuthAdapter, SessionWithDevice } from './adapters/deviceAuth';
+export type { PasskeyAdapter } from './adapters/passkey';
+export type { OAuthAccountAdapter } from './adapters/oauthAccount';
 export { createPrismaAdapter, createPrismaDeviceAdapter } from './adapters/prismaAdapter';
+export type { PrismaPasskeyAdapterOptions } from './adapters/prismaMultiMethod';
+export {
+  createPrismaOAuthAccountAdapter,
+  createPrismaPasskeyAdapter,
+} from './adapters/prismaMultiMethod';
 
 export { detectBrowser, isMobileDevice, isNativeApp } from './utilities/browser';
 export type { CreateMagicLinkParams, CreateMagicLinkResult } from './utilities/magicLink';
@@ -75,6 +82,16 @@ export {
   verifyAuthToken,
 } from './utilities/jwt';
 export { comparePassword, hashPassword, validatePasswordStrength } from './utilities/password';
+export type {
+  LoginMethodCount,
+  LoginMethodRemoval,
+  ResolvedLoginMethods,
+} from './utilities/loginMethods';
+export {
+  assertKeepsLoginMethod,
+  countLoginMethods,
+  resolveLoginMethods,
+} from './utilities/loginMethods';
 export type {
   CreateSessionWithTokenParams,
   SessionWithTokenResult,

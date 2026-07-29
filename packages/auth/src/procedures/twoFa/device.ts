@@ -178,17 +178,10 @@ export class DeviceTwoFaProcedureFactory {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Account deactivated.' });
       }
 
-      if (user.oauthProvider) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: '2FA is not available for social login accounts.',
-        });
-      }
-
       if (!user.password) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: 'Cannot verify password for social login account.',
+          message: 'This account has no password to verify.',
         });
       }
 
@@ -216,13 +209,6 @@ export class DeviceTwoFaProcedureFactory {
       const { pushCode } = input;
 
       const user = await this.config.database.user.findById(userId);
-
-      if (user?.oauthProvider) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: '2FA is not available for social login accounts.',
-        });
-      }
 
       if (!user?.twoFaEnabled) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: '2FA not enabled.' });

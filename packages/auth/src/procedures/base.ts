@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { z } from 'zod';
 
 import { type ClientCookiePayload } from '../types';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
@@ -51,6 +52,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
       refresh: this.refresh(),
       endAllSessions: this.endAllSessions(),
       changePassword: this.changePassword(),
+      setPassword: this.setPassword(),
       sendPasswordResetEmail: this.sendPasswordResetEmail(),
       checkPasswordReset: this.checkPasswordReset(),
       resetPassword: this.resetPassword(),
@@ -179,17 +181,20 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
 
       if (!user.password) {
         // Passwordless account — tell the user exactly which method to use.
-        if (user.oauthProvider) {
-          const provider =
-            user.oauthProvider.charAt(0).toUpperCase() +
-            user.oauthProvider.slice(1).toLowerCase();
+        const providers = this.config.oauthAccounts
+          ? await this.config.oauthAccounts.list(user.id)
+          : [];
+        if (providers.length > 0) {
+          const names = providers
+            .map((p) => (p === 'GOOGLE' ? 'Google' : 'Apple'))
+            .join(' or ');
           throw new TRPCError({
             code: 'FORBIDDEN',
-            message: `This account uses ${provider} sign-in. Please continue with ${provider}.`,
+            message: `This account uses ${names} sign-in. Please continue with ${names}.`,
           });
         }
-        const hasPasskey = this.config.hooks?.userHasPasskey
-          ? await this.config.hooks.userHasPasskey(user.id)
+        const hasPasskey = this.config.passkey
+          ? await this.config.passkey.has(user.id)
           : false;
         throw new TRPCError({
           code: 'FORBIDDEN',
@@ -451,6 +456,39 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         message: 'Password changed. You will need to re-login on other devices.',
       };
     });
+  }
+
+  /** Add a password to a passwordless (passkey/OAuth) account. The session is
+   * already the factor, so no current-password prompt; changePassword (which is
+   * current-password gated) covers the case where one already exists. */
+  private setPassword() {
+    return this.authProcedure
+      // .max(72): bcrypt silently truncates past 72 bytes, matching the other
+      // password schemas (signup/reset/change).
+      .input(z.object({ password: z.string().min(8).max(72) }))
+      .mutation(async ({ ctx, input }) => {
+        const { userId } = ctx;
+        const user = await this.config.database.user.findById(userId);
+        if (!user) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
+        }
+        if (user.password) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'This account already has a password. Use change password instead.',
+          });
+        }
+
+        await this.config.database.user.update(userId, {
+          password: await hashPassword(input.password),
+        });
+
+        if (this.config.hooks?.onPasswordChanged) {
+          await this.config.hooks.onPasswordChanged(userId);
+        }
+
+        return { success: true };
+      });
   }
 
   private sendPasswordResetEmail() {

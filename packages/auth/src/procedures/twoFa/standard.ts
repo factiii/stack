@@ -180,17 +180,10 @@ export class StandardTwoFaProcedureFactory {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Account deactivated.' });
       }
 
-      if (user.oauthProvider) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: '2FA is not available for social login accounts.',
-        });
-      }
-
       if (!user.password) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: 'Cannot verify password for social login account.',
+          message: 'This account has no password to verify.',
         });
       }
 

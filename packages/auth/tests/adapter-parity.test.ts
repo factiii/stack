@@ -29,7 +29,6 @@ const EXPECTED_METHODS: Record<string, string[]> = {
     'findByEmailInsensitive',
     'findByUsernameInsensitive',
     'findByEmailOrUsernameInsensitive',
-    'findByEmailOrOAuthId',
     'findById',
     'findActiveById',
     'create',

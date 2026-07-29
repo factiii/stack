@@ -26,8 +26,6 @@ export interface AuthUser {
   twoFaSecret?: string | null;
   /** Standard-mode only. Single-use recovery codes. */
   twoFaBackupCodes?: string[];
-  oauthProvider: string | null;
-  oauthId: string | null;
   tag: string;
   verifiedHumanAt: Date | null;
   emailVerificationStatus: string;
@@ -76,8 +74,6 @@ export interface CreateUserData {
   tag: string;
   emailVerificationStatus: string;
   verifiedHumanAt: Date | null;
-  oauthProvider?: string;
-  oauthId?: string;
 }
 
 export interface CreateSessionData {
@@ -100,7 +96,6 @@ export interface DatabaseAdapter {
     findByEmailInsensitive(email: string): Promise<AuthUser | null>;
     findByUsernameInsensitive(username: string): Promise<AuthUser | null>;
     findByEmailOrUsernameInsensitive(identifier: string): Promise<AuthUser | null>;
-    findByEmailOrOAuthId(email: string, oauthId: string): Promise<AuthUser | null>;
     findById(id: number): Promise<AuthUser | null>;
     findActiveById(id: number): Promise<AuthUser | null>;
     create(data: CreateUserData): Promise<AuthUser>;
