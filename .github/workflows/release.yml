@@ -11,6 +11,15 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  # Required for npm Trusted Publishing (OIDC). npm is restricting tokens that
+  # bypass 2FA, and a granular token also just expires — this one did, which is
+  # why publishes started failing with E404 on PUT (npm's way of saying "not
+  # authorized" for a package that exists). With trusted publishing there is no
+  # token to expire: npm verifies this workflow's OIDC identity instead.
+  # Configure it once at npmjs.com > the package > Settings > Trusted Publisher,
+  # pointing at factiii/stack and this workflow file. Until then npm falls back
+  # to NODE_AUTH_TOKEN below.
+  id-token: write
 
 jobs:
   release:
@@ -26,6 +35,12 @@ jobs:
           node-version: 20
           cache: pnpm
           registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1 and node 20 ships npm 10. Pinned
+      # to the 11 line rather than @latest: npm 12 requires node >= 22 and this
+      # job runs node 20, so @latest fails the install outright.
+      - name: Use an npm that speaks OIDC
+        run: npm install -g npm@11
 
       - run: pnpm install --frozen-lockfile
 
