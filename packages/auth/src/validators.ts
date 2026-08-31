@@ -1,5 +1,6 @@
 import { z, type AnyZodObject } from 'zod';
 
+import type { UsernameMode } from './types/config';
 import type { SchemaExtensions } from './types/hooks';
 
 /**
@@ -8,16 +9,26 @@ import type { SchemaExtensions } from './types/hooks';
 const usernameValidationRegex = /^[a-zA-Z0-9_]+$/;
 
 /**
- * Schema for user registration
+ * Shape of a username wherever one is accepted: signup and `setUsername`.
+ */
+export const usernameSchema = z
+  .string()
+  .min(1, { message: 'Username is required' })
+  .max(30, { message: 'Username must be 30 characters or less' })
+  .regex(usernameValidationRegex, {
+    message: 'Username can only contain letters, numbers, and underscores',
+  });
+
+/**
+ * Schema for user registration.
+ *
+ * Username is REQUIRED here, which is the default and the behaviour every
+ * release before 0.20.0 had. A consumer that sets
+ * `features.usernameMode: 'optional'` gets `signupSchemaOptionalUsername`
+ * instead — see `createSchemas`.
  */
 export const signupSchema = z.object({
-  username: z
-    .string()
-    .min(1, { message: 'Username is required' })
-    .max(30, { message: 'Username must be 30 characters or less' })
-    .regex(usernameValidationRegex, {
-      message: 'Username can only contain letters, numbers, and underscores',
-    }),
+  username: usernameSchema,
   email: z
     .string()
     .max(254, { message: 'Email must be 254 characters or less' })
@@ -29,6 +40,15 @@ export const signupSchema = z.object({
     .refine((val) => val.trim().length >= 8, {
       message: 'Password cannot be only whitespace',
     }),
+});
+
+/**
+ * Signup for email-first consumers: no username at registration. The account
+ * keeps a null username until it picks one through `auth.setUsername`. Still
+ * validated and still unique when one IS supplied.
+ */
+export const signupSchemaOptionalUsername = signupSchema.extend({
+  username: usernameSchema.optional(),
 });
 
 /**
@@ -177,12 +197,21 @@ export type PasskeyAuthMetaInput<TExtensions extends SchemaExtensions = {}> = Om
   'username' | 'password' | 'code'
 >;
 
-/** Create schemas with optional extensions merged in */
+/**
+ * Create schemas with optional extensions merged in.
+ *
+ * `usernameMode` picks the signup base. It defaults to `'optional'` as of
+ * 0.20.0 — a change from every prior release, which required a username
+ * unconditionally. Username-first consumers must now say so explicitly.
+ */
 export function createSchemas<TExtensions extends SchemaExtensions = {}>(
-  extensions?: TExtensions
+  extensions?: TExtensions,
+  usernameMode: UsernameMode = 'optional'
 ): CreatedSchemas<TExtensions> {
+  const signupBase =
+    usernameMode === 'optional' ? signupSchemaOptionalUsername : signupSchema;
   return {
-    signup: extensions?.signup ? signupSchema.merge(extensions.signup) : signupSchema,
+    signup: extensions?.signup ? signupBase.merge(extensions.signup) : signupBase,
     login: extensions?.login ? loginSchema.merge(extensions.login) : loginSchema,
     oauth: extensions?.oauth ? oAuthLoginSchema.merge(extensions.oauth) : oAuthLoginSchema,
   } as CreatedSchemas<TExtensions>;

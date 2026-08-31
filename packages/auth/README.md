@@ -156,7 +156,47 @@ Do **not** reach for `domain` to solve this — it applies to both cookies and w
 
 ## Procedures
 
-Auth procedures: `register`, `login`, `logout`, `refresh`, `changePassword`, `setPassword`, `resetPassword`, `oAuthLogin`, `oAuthLink`, `oAuthUnlink`, `enableTwofa`, `disableTwofa`, `sendVerificationEmail`, `verifyEmail`, `passkey.*`, and more. See [Multi-method accounts](#multi-method-accounts-passkeys--linked-providers).
+Auth procedures: `register`, `login`, `logout`, `refresh`, `changePassword`, `setPassword`, `setUsername`, `resetPassword`, `oAuthLogin`, `oAuthLink`, `oAuthUnlink`, `enableTwofa`, `disableTwofa`, `sendVerificationEmail`, `verifyEmail`, `passkey.*`, and more. See [Multi-method accounts](#multi-method-accounts-passkeys--linked-providers).
+
+### Username: required or optional
+
+`features.usernameMode` decides whether signup collects a username. It defaults
+to `'optional'`.
+
+```typescript
+createAuth({
+  // ...
+  features: { usernameMode: 'required' },  // default: 'optional'
+});
+```
+
+| Mode | `register` | Use it when |
+|---|---|---|
+| `'optional'` *(default)* | accepts email + password alone, stores `null` | email-first products, where inventing a unique handle before signup is a tax |
+| `'required'` | rejects a missing username | the username IS the identity — profile URLs, mentions, ownership checks |
+
+> ⚠️ **The default changed in 0.20.0.** Every earlier release required a
+> username unconditionally. If you are username-first, set
+> `usernameMode: 'required'` when you upgrade — otherwise signup quietly stops
+> asking for one, and because `User.username` is usually `NOT NULL` the first
+> such signup fails at the database rather than at validation.
+
+The mode drives the signup schema, so a missing username fails validation and
+the client sees a normal field error rather than something thrown deep in
+`register`. Both bases are exported if you need them directly: `signupSchema`
+(required) and `signupSchemaOptionalUsername`.
+
+Login is unaffected either way — it has always accepted an email **or** a
+username as the identifier.
+
+`auth.setUsername` (authed) sets or changes the signed-in account's username
+with the same validation and uniqueness check, in both modes. Use it for a
+"pick a username" step in settings.
+
+**If you choose `'optional'`**, make your `User.username` column nullable.
+`AuthUser` / `CreateUserData` type it `string | null` so the mode is
+representable; on the default you never observe a null, but a strict `string`
+read may need widening.
 
 ## Lifecycle Hooks
 

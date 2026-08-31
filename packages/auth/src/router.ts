@@ -46,7 +46,10 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
 
   constructor(userConfig: AuthConfig<TExtensions>) {
     this.config = createAuthConfig(userConfig);
-    this.schemas = createSchemas<TExtensions>(userConfig.schemaExtensions);
+    this.schemas = createSchemas<TExtensions>(
+      userConfig.schemaExtensions,
+      userConfig.features?.usernameMode
+    );
     this.t = createTrpcBuilder(this.config);
     this.authGuard = createAuthGuard(this.config, this.t);
     this.procedure = createBaseProcedure(this.t, this.authGuard);

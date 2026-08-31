@@ -36,6 +36,11 @@ export interface TokenSettings {
 }
 
 /**
+ * Whether an account must have a username. See `AuthFeatures.usernameMode`.
+ */
+export type UsernameMode = 'required' | 'optional';
+
+/**
  * Feature flags for optional auth features
  */
 export interface AuthFeatures {
@@ -64,6 +69,31 @@ export interface AuthFeatures {
   magicLink?: boolean;
   /** Enable WebAuthn passkey registration + authentication */
   passkey?: boolean;
+  /**
+   * Whether signup collects a username. Defaults to `'optional'`.
+   *
+   * `'optional'` (the default) — `register` accepts email + password alone and
+   * stores a null username; the account picks one later through
+   * `auth.setUsername`. Right for email-first products, where making someone
+   * invent a unique handle before they can do anything is a tax on signup.
+   *
+   * `'required'` — an account cannot be created without one, and
+   * `AuthUser.username` is never null in practice. Right for username-first
+   * products, where the username IS the identity: profile URLs, mentions,
+   * ownership checks.
+   *
+   * ⚠️ **This default CHANGED in 0.20.0.** Every release before it required a
+   * username unconditionally. A username-first consumer upgrading must set
+   * `usernameMode: 'required'` explicitly, or signup quietly stops asking for
+   * one — and because the column is usually `NOT NULL`, the first such signup
+   * fails at the database instead of at validation.
+   *
+   * The mode drives the signup schema, so a missing username is rejected by
+   * validation rather than deep in `register`, and the client sees a normal
+   * field error. Login is unaffected either way — it has always accepted an
+   * email OR a username as the identifier.
+   */
+  usernameMode?: UsernameMode;
 }
 
 export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {

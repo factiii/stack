@@ -61,7 +61,7 @@ model User {
   email                   String                  @unique
   emailVerificationStatus EmailVerificationStatus @default(UNVERIFIED)
   password                String?
-  username                String                  @unique
+  username                String?                 @unique
   // Standard-mode 2FA: TOTP secret + single-use backup codes live on the user.
   // 2FA is "on" iff `twoFaSecret` is non-null — no separate enabled flag.
   twoFaSecret             String?

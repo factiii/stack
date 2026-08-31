@@ -36,7 +36,7 @@ model User {
   email                   String                  @unique
   emailVerificationStatus EmailVerificationStatus @default(UNVERIFIED)
   password                String?
-  username                String                  @unique
+  username                String?                 @unique
   twoFaSecret             String?
   twoFaBackupCodes        String[]                @default([])
   oauthProvider           OAuthProvider?

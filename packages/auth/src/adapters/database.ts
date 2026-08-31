@@ -14,7 +14,8 @@ export interface AuthUser {
   status: string;
   /** Nullable: username-first consumers collect an email later, or never. */
   email: string | null;
-  username: string;
+  /** Nullable: email-first consumers never ask for one at signup. */
+  username: string | null;
   password: string | null;
   /**
    * Device-mode only. The standard schema has no such column; 2FA-on is
@@ -67,7 +68,8 @@ export interface AuthMagicLink {
 // ── Input types ──────────────────────────────────────────────────────────────
 
 export interface CreateUserData {
-  username: string;
+  /** Null when the consumer collects no username at signup. */
+  username: string | null;
   email: string;
   password: string | null;
   status: string;

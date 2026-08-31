@@ -93,11 +93,19 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
         throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
       }
 
+      // The account's stable identity for this ceremony. `username` is nullable
+      // now, so fall back to the email and finally the id: the value is what
+      // the authenticator displays AND what `addVerify` compares the challenge
+      // against, so it must be unique per account. Comparing raw nullable
+      // usernames would make every account that never picked one bind to
+      // `null`, letting a stolen flowId attach a credential to any of them.
+      const identity = user.username ?? user.email ?? `user-${user.id}`;
+
       const existing = await passkey.list(ctx.userId);
       const options = await generateRegistrationOptions({
         rpName: webauthn.rpName,
         rpID: webauthn.rpID,
-        userName: user.username,
+        userName: identity,
         attestationType: 'none',
         // Exclude what's already registered so the same authenticator can't be
         // added twice — the concrete divergence from registerOptions.
@@ -111,7 +119,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
       const { flowId } = await passkey.storeChallenge({
         challenge: options.challenge,
         type: 'REGISTER',
-        username: user.username,
+        username: identity,
         expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS),
       });
 
@@ -141,10 +149,13 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
           message: 'Passkey challenge expired. Please try again.',
         });
       }
-      // The challenge is bound to a username, so a stolen flowId can't attach a
-      // credential to a different account.
+      // The challenge is bound to the account's identity, so a stolen flowId
+      // can't attach a credential to a different account. Same fallback chain
+      // as `addOptions` — see the note there on why a raw username is not
+      // enough once usernames are optional.
       const user = await this.config.database.user.findById(ctx.userId);
-      if (!user || user.username !== challenge.username) {
+      const identity = user ? (user.username ?? user.email ?? `user-${user.id}`) : null;
+      if (!user || identity !== challenge.username) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'Passkey challenge expired. Please try again.',

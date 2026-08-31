@@ -123,8 +123,10 @@ export {
   requestPasswordResetSchema,
   resetPasswordSchema,
   signupSchema,
+  signupSchemaOptionalUsername,
   twoFaResetSchema,
   twoFaVerifySchema,
+  usernameSchema,
   verifyEmailSchema,
 } from './validators';
 

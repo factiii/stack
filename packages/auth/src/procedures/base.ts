@@ -17,6 +17,7 @@ import {
   endAllSessionsSchema,
   requestPasswordResetSchema,
   resetPasswordSchema,
+  usernameSchema,
   type CreatedSchemas,
   type SignupSchemaInput,
   type LoginSchemaInput,
@@ -53,6 +54,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
       endAllSessions: this.endAllSessions(),
       changePassword: this.changePassword(),
       setPassword: this.setPassword(),
+      setUsername: this.setUsername(),
       sendPasswordResetEmail: this.sendPasswordResetEmail(),
       checkPasswordReset: this.checkPasswordReset(),
       resetPassword: this.resetPassword(),
@@ -76,13 +78,20 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         await this.config.hooks.beforeRegister(typedInput);
       }
 
-      const usernameCheck = await this.config.database.user.findByUsernameInsensitive(username);
+      // Guarded rather than unconditional because usernameMode decides whether
+      // one is here at all. Under 'required' the signup schema has already
+      // rejected a missing username, so this always runs; under 'optional' an
+      // account can skip it and hold null, which no lookup should ever match.
+      // See AuthFeatures.usernameMode.
+      if (username) {
+        const usernameCheck = await this.config.database.user.findByUsernameInsensitive(username);
 
-      if (usernameCheck) {
-        throw new TRPCError({
-          code: 'CONFLICT',
-          message: 'An account already exists with that username.',
-        });
+        if (usernameCheck) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'An account already exists with that username.',
+          });
+        }
       }
 
       const emailCheck = await this.config.database.user.findByEmailInsensitive(email);
@@ -97,7 +106,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
       const hashedPassword = await hashPassword(password);
 
       const user = await this.config.database.user.create({
-        username,
+        username: username ?? null,
         email,
         password: hashedPassword,
         status: 'ACTIVE',
@@ -488,6 +497,41 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         }
 
         return { success: true };
+      });
+  }
+
+  /**
+   * Sets or changes the signed-in account's username. Signup no longer collects
+   * one, so this is where an email-first account picks its name later.
+   */
+  private setUsername() {
+    return this.authProcedure
+      .input(z.object({ username: usernameSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const { userId } = ctx;
+        const user = await this.config.database.user.findById(userId);
+        if (!user) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
+        }
+
+        // A no-op re-submit of the current name must not collide with itself.
+        if (user.username?.toLowerCase() === input.username.toLowerCase()) {
+          return { success: true, username: user.username };
+        }
+
+        const taken = await this.config.database.user.findByUsernameInsensitive(input.username);
+        if (taken) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'An account already exists with that username.',
+          });
+        }
+
+        const updated = await this.config.database.user.update(userId, {
+          username: input.username,
+        });
+
+        return { success: true, username: updated.username };
       });
   }
 

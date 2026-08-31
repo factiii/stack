@@ -62,7 +62,7 @@ model User {
   email                   String                  @unique
   emailVerificationStatus EmailVerificationStatus @default(UNVERIFIED)
   password                String?
-  username                String                  @unique
+  username                String?                 @unique
   twoFaEnabled            Boolean                 @default(false)
   tag                     UserTag                 @default(HUMAN)
   isActive                Boolean                 @default(false)

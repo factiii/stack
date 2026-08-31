@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   signupSchema,
+  signupSchemaOptionalUsername,
   loginSchema,
   resetPasswordSchema,
   changePasswordSchema,
@@ -11,6 +12,36 @@ import {
 } from '../src/validators';
 import { z } from 'zod';
 
+describe('createSchemas usernameMode', () => {
+  const noUsername = { email: 'test@example.com', password: 'pass1234' };
+
+  it('DEFAULTS to optional — signup takes email + password alone', () => {
+    // Asserted rather than assumed: the default is the behaviour every consumer
+    // that configures nothing inherits, and it CHANGED in 0.20.0 (it used to be
+    // 'required'). A username-first consumer must now opt in explicitly, and if
+    // a refactor ever moves this default again the break should surface here
+    // rather than in someone's signup flow.
+    expect(createSchemas().signup.parse(noUsername)).toEqual(noUsername);
+  });
+
+  it("required mode rejects a missing username", () => {
+    expect(() => createSchemas(undefined, 'required').signup.parse(noUsername)).toThrow();
+  });
+
+  it('optional mode accepts a missing username', () => {
+    expect(createSchemas(undefined, 'optional').signup.parse(noUsername)).toEqual(noUsername);
+  });
+
+  it('keeps schema extensions in both modes', () => {
+    const ext = { signup: z.object({ referral: z.string() }) };
+    const withName = { ...noUsername, username: 'testuser', referral: 'abc' };
+    expect(createSchemas(ext, 'required').signup.parse(withName)).toEqual(withName);
+    expect(createSchemas(ext, 'optional').signup.parse({ ...noUsername, referral: 'abc' })).toEqual(
+      { ...noUsername, referral: 'abc' }
+    );
+  });
+});
+
 describe('signupSchema', () => {
   const valid = { username: 'testuser', email: 'test@example.com', password: 'pass1234' };
 
@@ -20,6 +51,26 @@ describe('signupSchema', () => {
 
   it('rejects empty username', () => {
     expect(() => signupSchema.parse({ ...valid, username: '' })).toThrow();
+  });
+
+  it('REJECTS input with no username — signupSchema is the required-mode base', () => {
+    const { username: _username, ...noUsername } = valid;
+    expect(() => signupSchema.parse(noUsername)).toThrow();
+  });
+
+  it('accepts input with no username under the optional-mode schema', () => {
+    const { username: _username, ...noUsername } = valid;
+    expect(signupSchemaOptionalUsername.parse(noUsername)).toEqual(noUsername);
+  });
+
+  it('still validates a supplied username in optional mode', () => {
+    expect(() =>
+      signupSchemaOptionalUsername.parse({ ...valid, username: 'bad name' })
+    ).toThrow();
+  });
+
+  it('still validates a username that is supplied', () => {
+    expect(() => signupSchema.parse({ ...valid, username: 'bad name' })).toThrow();
   });
 
   it('rejects username over 30 chars', () => {
