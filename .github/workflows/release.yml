@@ -16,9 +16,9 @@ permissions:
   # why publishes started failing with E404 on PUT (npm's way of saying "not
   # authorized" for a package that exists). With trusted publishing there is no
   # token to expire: npm verifies this workflow's OIDC identity instead.
-  # Configure it once at npmjs.com > the package > Settings > Trusted Publisher,
-  # pointing at factiii/stack and this workflow file. Until then npm falls back
-  # to NODE_AUTH_TOKEN below.
+  # Configure it once per package at npmjs.com > Settings > Trusted Publisher,
+  # pointing at factiii/stack and this workflow file. A package without it
+  # cannot publish at all now -- there is no token fallback left.
   id-token: write
 
 jobs:
@@ -57,12 +57,13 @@ jobs:
         if: steps.changesets.outputs.has_changesets == 'true'
         run: pnpm version-packages
 
+      # No token. npm authenticates this job by its OIDC identity (trusted
+      # publishing), configured per package at npmjs.com > Settings > Trusted
+      # Publisher. The NPM_TOKEN secret this used to carry expired, which is
+      # what E404-on-PUT means, and npm is retiring 2FA-bypass tokens anyway.
       - name: Publish to npm
         if: steps.changesets.outputs.has_changesets == 'true'
         run: pnpm release
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Commit version bumps
         if: steps.changesets.outputs.has_changesets == 'true'

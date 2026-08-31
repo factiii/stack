@@ -84,7 +84,12 @@ pnpm changeset --empty
 
 ### Setup required (one-time)
 
-1. Add an `NPM_TOKEN` secret to your GitHub repo (Settings > Secrets > Actions)
+1. Set up a **Trusted Publisher** on npm for each published package:
+   npmjs.com > the package > Settings > Trusted Publisher > GitHub Actions,
+   with organization `factiii`, repository `stack`, workflow `release.yml`,
+   and no environment name. There is no `NPM_TOKEN` — npm authenticates the
+   release workflow by its OIDC identity, so nothing expires and nothing has
+   to be rotated. A package missing this cannot publish.
    - Generate at npmjs.com > Access Tokens > Granular Access Token
    - Needs publish permission for `@factiii/stack` and `@factiii/auth`
 2. Enable branch protection on `main` requiring the CI check to pass
