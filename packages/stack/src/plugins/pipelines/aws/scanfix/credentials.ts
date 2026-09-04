@@ -30,9 +30,7 @@ import {
   setCredentialsSyncFailed,
   setLoadedCredentials,
   verifyCredentialsWithSts,
-  CreateUserCommand,
-  PutUserPolicyCommand,
-  CreateAccessKeyCommand,
+  iamSdk,
 } from '../utils/aws-helpers.js';
 
 /**
@@ -168,12 +166,12 @@ async function bootstrapAwsAccount(config: FactiiiConfig, rootDir: string): Prom
     const iam = getIAMClient(region);
 
     // Create IAM user
-    await iam.send(new CreateUserCommand({ UserName: userName }));
+    await iam.send(new (iamSdk().CreateUserCommand)({ UserName: userName }));
     console.log('   [OK] Created IAM user: ' + userName);
 
     // Read and attach bootstrap policy
     const policy = getBootstrapPolicy();
-    await iam.send(new PutUserPolicyCommand({
+    await iam.send(new (iamSdk().PutUserPolicyCommand)({
       UserName: userName,
       PolicyName: 'factiii-bootstrap',
       PolicyDocument: policy,
@@ -181,7 +179,7 @@ async function bootstrapAwsAccount(config: FactiiiConfig, rootDir: string): Prom
     console.log('   [OK] Attached bootstrap policy (EC2, RDS, S3, ECR, SES, IAM, STS)');
 
     // Create access key
-    const keyResult = await iam.send(new CreateAccessKeyCommand({ UserName: userName }));
+    const keyResult = await iam.send(new (iamSdk().CreateAccessKeyCommand)({ UserName: userName }));
     const newAccessKeyId = keyResult.AccessKey?.AccessKeyId;
     const newSecretKey = keyResult.AccessKey?.SecretAccessKey;
 

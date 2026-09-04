@@ -20,9 +20,7 @@ import {
   canManageIam,
   getIAMClient,
   setLoadedCredentials,
-  CreateUserCommand,
-  PutUserPolicyCommand,
-  CreateAccessKeyCommand,
+  iamSdk,
 } from '../utils/aws-helpers.js';
 
 /**
@@ -347,12 +345,12 @@ export const iamFixes: Fix[] = [
         }
 
         // Create IAM user
-        await iam.send(new CreateUserCommand({ UserName: userName }));
+        await iam.send(new (iamSdk().CreateUserCommand)({ UserName: userName }));
         console.log('   Created IAM user: ' + userName);
 
         // Create and attach inline policy
         const policy = getDevPolicy(projectName, region, accountId);
-        await iam.send(new PutUserPolicyCommand({
+        await iam.send(new (iamSdk().PutUserPolicyCommand)({
           UserName: userName,
           PolicyName: 'factiii-' + projectName + '-admin-policy',
           PolicyDocument: policy,
@@ -360,7 +358,7 @@ export const iamFixes: Fix[] = [
         console.log('   Attached admin policy (ECR, S3, EC2, RDS)');
 
         // Create access key
-        const keyResult = await iam.send(new CreateAccessKeyCommand({ UserName: userName }));
+        const keyResult = await iam.send(new (iamSdk().CreateAccessKeyCommand)({ UserName: userName }));
         const accessKeyId = keyResult.AccessKey?.AccessKeyId;
         const secretKey = keyResult.AccessKey?.SecretAccessKey;
 
@@ -469,12 +467,12 @@ export const iamFixes: Fix[] = [
         }
 
         // Create IAM user
-        await iam.send(new CreateUserCommand({ UserName: userName }));
+        await iam.send(new (iamSdk().CreateUserCommand)({ UserName: userName }));
         console.log('   Created IAM user: ' + userName);
 
         // Create and attach inline policy
         const policy = getProdPolicy(projectName, region, accountId);
-        await iam.send(new PutUserPolicyCommand({
+        await iam.send(new (iamSdk().PutUserPolicyCommand)({
           UserName: userName,
           PolicyName: 'factiii-' + projectName + '-prod-policy',
           PolicyDocument: policy,
@@ -482,7 +480,7 @@ export const iamFixes: Fix[] = [
         console.log('   Attached prod policy (full ECR, S3, EC2, RDS, SES)');
 
         // Create access key
-        const keyResult = await iam.send(new CreateAccessKeyCommand({ UserName: userName }));
+        const keyResult = await iam.send(new (iamSdk().CreateAccessKeyCommand)({ UserName: userName }));
         const accessKeyId = keyResult.AccessKey?.AccessKeyId;
         const secretKey = keyResult.AccessKey?.SecretAccessKey;
 

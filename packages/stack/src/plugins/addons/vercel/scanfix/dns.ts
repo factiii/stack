@@ -65,7 +65,7 @@ export const dnsFixes: Fix[] = [
 
             // Need AWS configured for Route53
             try {
-                const { isAwsConfigured, getAwsConfig, findHostedZone, findARecord } =
+                const { isAwsConfigured, getAwsConfig, findHostedZone, findARecord, route53Sdk } =
                     await import('../../../pipelines/aws/utils/aws-helpers.js');
                 if (!isAwsConfigured(config)) return false;
 
@@ -92,7 +92,7 @@ export const dnsFixes: Fix[] = [
             }
 
             try {
-                const { isAwsConfigured, getAwsConfig, findHostedZone, getRoute53Client, ChangeResourceRecordSetsCommand } =
+                const { isAwsConfigured, getAwsConfig, findHostedZone, getRoute53Client, route53Sdk } =
                     await import('../../../pipelines/aws/utils/aws-helpers.js');
                 if (!isAwsConfigured(config)) {
                     console.log('   AWS not configured — cannot manage Route53 DNS');
@@ -109,7 +109,7 @@ export const dnsFixes: Fix[] = [
                 const r53 = getRoute53Client(region);
 
                 // Create A record: root domain → Vercel anycast IP
-                await r53.send(new ChangeResourceRecordSetsCommand({
+                await r53.send(new (route53Sdk().ChangeResourceRecordSetsCommand)({
                     HostedZoneId: zoneId,
                     ChangeBatch: {
                         Changes: [
@@ -129,7 +129,7 @@ export const dnsFixes: Fix[] = [
                 console.log('   Created A record: ' + domain + ' → ' + VERCEL_ANYCAST_IP + ' (Vercel)');
 
                 // Create CNAME record: www → Vercel
-                await r53.send(new ChangeResourceRecordSetsCommand({
+                await r53.send(new (route53Sdk().ChangeResourceRecordSetsCommand)({
                     HostedZoneId: zoneId,
                     ChangeBatch: {
                         Changes: [

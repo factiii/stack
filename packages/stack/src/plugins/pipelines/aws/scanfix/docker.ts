@@ -9,7 +9,9 @@
  */
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { isOnServer } from '../utils/aws-helpers.js';
+import {
+  isOnServer,
+} from '../utils/aws-helpers.js';
 import { extractEnvironments } from '../../../../utils/config-helpers.js';
 import { sshExec, findSshKeyForStage } from '../../../../utils/ssh-helper.js';
 

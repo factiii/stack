@@ -20,8 +20,7 @@ import {
   findRdsInstance,
   getRDSClient,
   confirmAwsAction,
-  CreateDBSubnetGroupCommand,
-  CreateDBInstanceCommand,
+  rdsSdk,
 } from '../utils/aws-helpers.js';
 
 /**
@@ -74,7 +73,7 @@ export const rdsFixes: Fix[] = [
       try {
         const rds = getRDSClient(region);
 
-        await rds.send(new CreateDBSubnetGroupCommand({
+        await rds.send(new (rdsSdk().CreateDBSubnetGroupCommand)({
           DBSubnetGroupName: groupName,
           DBSubnetGroupDescription: 'Factiii DB subnet group for ' + projectName,
           SubnetIds: privateSubnets,
@@ -142,7 +141,7 @@ export const rdsFixes: Fix[] = [
         const masterUser = 'factiii';
         const masterPassword = generateRdsPassword();
 
-        await rds.send(new CreateDBInstanceCommand({
+        await rds.send(new (rdsSdk().CreateDBInstanceCommand)({
           DBInstanceIdentifier: dbId,
           DBInstanceClass: 'db.t3.micro',
           Engine: 'postgres',

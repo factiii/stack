@@ -18,9 +18,7 @@ import {
   tagSpec,
   getEC2Client,
   confirmAwsAction,
-  CreateSecurityGroupCommand,
-  AuthorizeSecurityGroupIngressCommand,
-  DescribeSecurityGroupsCommand,
+  ec2Sdk,
 } from '../utils/aws-helpers.js';
 
 export const securityGroupFixes: Fix[] = [
@@ -61,7 +59,7 @@ export const securityGroupFixes: Fix[] = [
         const ec2 = getEC2Client(region);
 
         // Create security group
-        const sgResult = await ec2.send(new CreateSecurityGroupCommand({
+        const sgResult = await ec2.send(new (ec2Sdk().CreateSecurityGroupCommand)({
           GroupName: groupName,
           Description: 'EC2 security group for ' + projectName,
           VpcId: vpcId,
@@ -71,7 +69,7 @@ export const securityGroupFixes: Fix[] = [
         console.log('   Created EC2 security group: ' + sgId);
 
         // Allow SSH (port 22)
-        await ec2.send(new AuthorizeSecurityGroupIngressCommand({
+        await ec2.send(new (ec2Sdk().AuthorizeSecurityGroupIngressCommand)({
           GroupId: sgId,
           IpProtocol: 'tcp',
           FromPort: 22,
@@ -80,7 +78,7 @@ export const securityGroupFixes: Fix[] = [
         }));
 
         // Allow HTTP (port 80)
-        await ec2.send(new AuthorizeSecurityGroupIngressCommand({
+        await ec2.send(new (ec2Sdk().AuthorizeSecurityGroupIngressCommand)({
           GroupId: sgId,
           IpProtocol: 'tcp',
           FromPort: 80,
@@ -89,7 +87,7 @@ export const securityGroupFixes: Fix[] = [
         }));
 
         // Allow HTTPS (port 443)
-        await ec2.send(new AuthorizeSecurityGroupIngressCommand({
+        await ec2.send(new (ec2Sdk().AuthorizeSecurityGroupIngressCommand)({
           GroupId: sgId,
           IpProtocol: 'tcp',
           FromPort: 443,
@@ -149,7 +147,7 @@ export const securityGroupFixes: Fix[] = [
         const ec2 = getEC2Client(region);
 
         // Create RDS security group
-        const sgResult = await ec2.send(new CreateSecurityGroupCommand({
+        const sgResult = await ec2.send(new (ec2Sdk().CreateSecurityGroupCommand)({
           GroupName: groupName,
           Description: 'RDS security group for ' + projectName,
           VpcId: vpcId,
@@ -159,7 +157,7 @@ export const securityGroupFixes: Fix[] = [
         console.log('   Created RDS security group: ' + sgId);
 
         // Allow PostgreSQL (port 5432) from EC2 security group ONLY
-        await ec2.send(new AuthorizeSecurityGroupIngressCommand({
+        await ec2.send(new (ec2Sdk().AuthorizeSecurityGroupIngressCommand)({
           GroupId: sgId,
           IpPermissions: [{
             IpProtocol: 'tcp',
@@ -222,7 +220,7 @@ export const securityGroupFixes: Fix[] = [
       // Check if RDS SG has an inbound rule for the staging IP
       try {
         const ec2 = getEC2Client(region);
-        const rulesResult = await ec2.send(new DescribeSecurityGroupsCommand({
+        const rulesResult = await ec2.send(new (ec2Sdk().DescribeSecurityGroupsCommand)({
           GroupIds: [rdsSgId],
         }));
         const rules = rulesResult.SecurityGroups?.[0]?.IpPermissions ?? [];
@@ -302,7 +300,7 @@ export const securityGroupFixes: Fix[] = [
           return false;
         }
 
-        await ec2.send(new AuthorizeSecurityGroupIngressCommand({
+        await ec2.send(new (ec2Sdk().AuthorizeSecurityGroupIngressCommand)({
           GroupId: rdsSgId,
           IpProtocol: 'tcp',
           FromPort: 5432,

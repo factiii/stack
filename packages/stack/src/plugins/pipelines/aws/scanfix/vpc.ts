@@ -18,16 +18,7 @@ import {
   tagSpec,
   getEC2Client,
   confirmAwsAction,
-  CreateVpcCommand,
-  ModifyVpcAttributeCommand,
-  DescribeAvailabilityZonesCommand,
-  CreateSubnetCommand,
-  ModifySubnetAttributeCommand,
-  CreateInternetGatewayCommand,
-  AttachInternetGatewayCommand,
-  CreateRouteTableCommand,
-  CreateRouteCommand,
-  AssociateRouteTableCommand,
+  ec2Sdk,
 } from '../utils/aws-helpers.js';
 
 export const vpcFixes: Fix[] = [
@@ -60,7 +51,7 @@ export const vpcFixes: Fix[] = [
         const ec2 = getEC2Client(region);
 
         // Create VPC
-        const vpcResult = await ec2.send(new CreateVpcCommand({
+        const vpcResult = await ec2.send(new (ec2Sdk().CreateVpcCommand)({
           CidrBlock: '10.0.0.0/16',
           TagSpecifications: [tagSpec('vpc', projectName)],
         }));
@@ -68,13 +59,13 @@ export const vpcFixes: Fix[] = [
         console.log('   Created VPC: ' + vpcId);
 
         // Enable DNS hostnames
-        await ec2.send(new ModifyVpcAttributeCommand({
+        await ec2.send(new (ec2Sdk().ModifyVpcAttributeCommand)({
           VpcId: vpcId,
           EnableDnsHostnames: { Value: true },
         }));
 
         // Enable DNS support
-        await ec2.send(new ModifyVpcAttributeCommand({
+        await ec2.send(new (ec2Sdk().ModifyVpcAttributeCommand)({
           VpcId: vpcId,
           EnableDnsSupport: { Value: true },
         }));
@@ -123,7 +114,7 @@ export const vpcFixes: Fix[] = [
         const ec2 = getEC2Client(region);
 
         // Get first AZ
-        const azResult = await ec2.send(new DescribeAvailabilityZonesCommand({}));
+        const azResult = await ec2.send(new (ec2Sdk().DescribeAvailabilityZonesCommand)({}));
         const az = azResult.AvailabilityZones?.[0]?.ZoneName;
         if (!az) {
           console.log('   No availability zones found');
@@ -131,7 +122,7 @@ export const vpcFixes: Fix[] = [
         }
 
         // Create public subnet
-        const subnetResult = await ec2.send(new CreateSubnetCommand({
+        const subnetResult = await ec2.send(new (ec2Sdk().CreateSubnetCommand)({
           VpcId: vpcId,
           CidrBlock: '10.0.1.0/24',
           AvailabilityZone: az,
@@ -140,7 +131,7 @@ export const vpcFixes: Fix[] = [
         const subnetId = subnetResult.Subnet?.SubnetId;
 
         // Enable auto-assign public IP
-        await ec2.send(new ModifySubnetAttributeCommand({
+        await ec2.send(new (ec2Sdk().ModifySubnetAttributeCommand)({
           SubnetId: subnetId,
           MapPublicIpOnLaunch: { Value: true },
         }));
@@ -190,7 +181,7 @@ export const vpcFixes: Fix[] = [
         const ec2 = getEC2Client(region);
 
         // Get first two AZs
-        const azResult = await ec2.send(new DescribeAvailabilityZonesCommand({}));
+        const azResult = await ec2.send(new (ec2Sdk().DescribeAvailabilityZonesCommand)({}));
         const azs = (azResult.AvailabilityZones ?? []).map(az => az.ZoneName!).filter(Boolean);
         if (azs.length < 2) {
           console.log('   Need at least 2 availability zones');
@@ -198,7 +189,7 @@ export const vpcFixes: Fix[] = [
         }
 
         // Create private subnet 1
-        const sub1Result = await ec2.send(new CreateSubnetCommand({
+        const sub1Result = await ec2.send(new (ec2Sdk().CreateSubnetCommand)({
           VpcId: vpcId,
           CidrBlock: '10.0.2.0/24',
           AvailabilityZone: azs[0],
@@ -208,7 +199,7 @@ export const vpcFixes: Fix[] = [
         console.log('   Created private subnet 1: ' + sub1Id + ' in ' + azs[0]);
 
         // Create private subnet 2
-        const sub2Result = await ec2.send(new CreateSubnetCommand({
+        const sub2Result = await ec2.send(new (ec2Sdk().CreateSubnetCommand)({
           VpcId: vpcId,
           CidrBlock: '10.0.3.0/24',
           AvailabilityZone: azs[1],
@@ -262,28 +253,28 @@ export const vpcFixes: Fix[] = [
         const ec2 = getEC2Client(region);
 
         // Create IGW
-        const igwResult = await ec2.send(new CreateInternetGatewayCommand({
+        const igwResult = await ec2.send(new (ec2Sdk().CreateInternetGatewayCommand)({
           TagSpecifications: [tagSpec('internet-gateway', projectName)],
         }));
         const igwId = igwResult.InternetGateway?.InternetGatewayId;
         console.log('   Created Internet Gateway: ' + igwId);
 
         // Attach to VPC
-        await ec2.send(new AttachInternetGatewayCommand({
+        await ec2.send(new (ec2Sdk().AttachInternetGatewayCommand)({
           InternetGatewayId: igwId,
           VpcId: vpcId,
         }));
         console.log('   Attached to VPC');
 
         // Create route table
-        const rtResult = await ec2.send(new CreateRouteTableCommand({
+        const rtResult = await ec2.send(new (ec2Sdk().CreateRouteTableCommand)({
           VpcId: vpcId,
           TagSpecifications: [tagSpec('route-table', projectName)],
         }));
         const rtId = rtResult.RouteTable?.RouteTableId;
 
         // Add route: 0.0.0.0/0 -> IGW
-        await ec2.send(new CreateRouteCommand({
+        await ec2.send(new (ec2Sdk().CreateRouteCommand)({
           RouteTableId: rtId,
           DestinationCidrBlock: '0.0.0.0/0',
           GatewayId: igwId,
@@ -292,7 +283,7 @@ export const vpcFixes: Fix[] = [
         // Associate route table with public subnet
         const publicSubnetId = await findSubnet(projectName, region, 'public', config);
         if (publicSubnetId) {
-          await ec2.send(new AssociateRouteTableCommand({
+          await ec2.send(new (ec2Sdk().AssociateRouteTableCommand)({
             RouteTableId: rtId,
             SubnetId: publicSubnetId,
           }));

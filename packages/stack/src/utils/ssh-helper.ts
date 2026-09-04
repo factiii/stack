@@ -684,8 +684,7 @@ export async function sshExec(
     const errMsg = result.stderr ?? '';
     if (errMsg.includes('Permission denied') && config?.aws && stage === 'prod') {
       try {
-        const { isAwsConfigured, getAwsConfig, getProjectName, findInstance, findInstancePublicIp,
-          getEC2Client, getEC2ICClient, DescribeInstancesCommand, SendSSHPublicKeyCommand } =
+        const { isAwsConfigured, getAwsConfig, getProjectName, findInstance, findInstancePublicIp, getEC2Client, getEC2ICClient, ec2Sdk, ec2IcSdk } =
           await import('../plugins/pipelines/aws/utils/aws-helpers.js');
 
         if (isAwsConfigured(config)) {
@@ -696,7 +695,7 @@ export async function sshExec(
           let instId = await findInstance(projectName, region);
           if (!instId) {
             const ec2 = getEC2Client(region);
-            const kpDesc = await ec2.send(new DescribeInstancesCommand({
+            const kpDesc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
               Filters: [
                 { Name: 'key-name', Values: ['factiii-' + projectName] },
                 { Name: 'instance-state-name', Values: ['running'] },
@@ -707,7 +706,7 @@ export async function sshExec(
 
           if (instId) {
             const ec2 = getEC2Client(region);
-            const instDesc = await ec2.send(new DescribeInstancesCommand({ InstanceIds: [instId] }));
+            const instDesc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({ InstanceIds: [instId] }));
             const inst = instDesc.Reservations?.[0]?.Instances?.[0];
             const az = inst?.Placement?.AvailabilityZone;
             const connectIp = (await findInstancePublicIp(projectName, region)) ?? inst?.PublicIpAddress;
@@ -721,7 +720,7 @@ export async function sshExec(
               if (fs.existsSync(pubPath)) {
                 const pubKey = fs.readFileSync(pubPath, 'utf8').trim();
                 const eic = getEC2ICClient(region);
-                const pushResult = await eic.send(new SendSSHPublicKeyCommand({
+                const pushResult = await eic.send(new (ec2IcSdk().SendSSHPublicKeyCommand)({
                   InstanceId: instId, InstanceOSUser: user, SSHPublicKey: pubKey, AvailabilityZone: az,
                 }));
 
