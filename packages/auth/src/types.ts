@@ -55,4 +55,3 @@ export interface ClientCookiePayload {
   updatedAt: string; // ISO timestamp
   [key: string]: unknown;
 }
-

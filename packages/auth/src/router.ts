@@ -9,10 +9,7 @@ import { MagicLinkProcedureFactory } from './procedures/magicLink';
 import { MultiAccountProcedureFactory } from './procedures/multiAccount';
 import { OAuthLoginProcedureFactory } from './procedures/oauth';
 import { PasskeyProcedureFactory } from './procedures/passkey';
-import {
-  DeviceTwoFaProcedureFactory,
-  StandardTwoFaProcedureFactory,
-} from './procedures/twoFa';
+import { DeviceTwoFaProcedureFactory, StandardTwoFaProcedureFactory } from './procedures/twoFa';
 import type { AuthFeatures, TwoFaMode } from './types/config';
 import type { SchemaExtensions } from './types/hooks';
 import { type AuthProcedure, type BaseProcedure, type TrpcContext } from './types/trpc';

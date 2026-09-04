@@ -10,10 +10,7 @@ import { type BaseProcedure } from '../../types/trpc';
 import type { ResolvedAuthConfig } from '../../utilities/config';
 import { comparePassword } from '../../utilities/password';
 import { generateOtp } from '../../utilities/totp';
-import {
-  twoFaResetSchema,
-  twoFaResetVerifySchema,
-} from '../../validators/twoFa.shared';
+import { twoFaResetSchema, twoFaResetVerifySchema } from '../../validators/twoFa.shared';
 import { isTwoFaEnabled } from './verifyChallenge';
 
 /**
@@ -67,8 +64,7 @@ export function buildTwoFaResetProcedures(
     if (!user.email) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
-        message:
-          'This account has no email address. Add one in settings to reset 2FA by email.',
+        message: 'This account has no email address. Add one in settings to reset 2FA by email.',
       });
     }
 
@@ -84,35 +80,33 @@ export function buildTwoFaResetProcedures(
     return { success: true };
   });
 
-  const twoFaResetVerify = procedure
-    .input(twoFaResetVerifySchema)
-    .mutation(async ({ input }) => {
-      checkConfig();
-      const { code, username } = input;
+  const twoFaResetVerify = procedure.input(twoFaResetVerifySchema).mutation(async ({ input }) => {
+    checkConfig();
+    const { code, username } = input;
 
-      const user = await config.database.user.findByEmailOrUsernameInsensitive(username);
+    const user = await config.database.user.findByEmailOrUsernameInsensitive(username);
 
-      if (!user) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
-      }
+    if (!user) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
+    }
 
-      const otp = await config.database.otp.findValidByUserAndCode(user.id, code);
+    const otp = await config.database.otp.findValidByUserAndCode(user.id, code);
 
-      if (!otp) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid or expired OTP' });
-      }
+    if (!otp) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid or expired OTP' });
+    }
 
-      await config.database.otp.delete(otp.id);
+    await config.database.otp.delete(otp.id);
 
-      // Mode-specific teardown owns clearing material AND any enabled flag.
-      await clearOnVerify(user.id);
+    // Mode-specific teardown owns clearing material AND any enabled flag.
+    await clearOnVerify(user.id);
 
-      if (config.hooks?.onTwoFaStatusChanged) {
-        await config.hooks.onTwoFaStatusChanged(user.id, false);
-      }
+    if (config.hooks?.onTwoFaStatusChanged) {
+      await config.hooks.onTwoFaStatusChanged(user.id, false);
+    }
 
-      return { success: true, message: '2FA has been reset.' };
-    });
+    return { success: true, message: '2FA has been reset.' };
+  });
 
   return { twoFaReset, twoFaResetVerify };
 }

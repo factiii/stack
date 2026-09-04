@@ -20,7 +20,7 @@ export function parseAuthCookie(
   cookieHeader: string | undefined,
   storageKeys: { authToken: string } = {
     authToken: DEFAULT_STORAGE_KEYS.AUTH_TOKEN,
-  },
+  }
 ): { authToken?: string } {
   if (!cookieHeader) {
     return {};
@@ -37,7 +37,7 @@ export function parseAuthCookie(
  */
 export function parseClientCookie(
   cookieHeader: string | undefined,
-  storageKeys: { clientToken?: string },
+  storageKeys: { clientToken?: string }
 ): string | undefined {
   if (!cookieHeader || !storageKeys.clientToken) return undefined;
   const value = cookieHeader.split(`${storageKeys.clientToken}=`)[1]?.split(';')[0];
@@ -62,7 +62,7 @@ export function signClientCookie(payload: ClientCookiePayload, secret: string): 
  */
 export function parseClientCookiePayload(
   value: string,
-  secret: string,
+  secret: string
 ): ClientCookiePayload | null {
   const dotIndex = value.indexOf('.');
   if (dotIndex === -1) return null;
@@ -101,7 +101,7 @@ function buildCookieString(
   value: string,
   settings: Partial<CookieSettings>,
   domain: string | undefined,
-  expiresDate?: string,
+  expiresDate?: string
 ): string {
   return [
     `${name}=${value}`,
@@ -137,7 +137,7 @@ export function setAuthCookie(
   settings: Partial<CookieSettings>,
   storageKeys: { authToken: string } = {
     authToken: DEFAULT_STORAGE_KEYS.AUTH_TOKEN,
-  },
+  }
 ): void {
   const expiresDate = settings.maxAge
     ? new Date(Date.now() + settings.maxAge * 1000).toUTCString()
@@ -148,7 +148,7 @@ export function setAuthCookie(
     authToken,
     settings,
     settings.domain,
-    expiresDate,
+    expiresDate
   );
   res.setHeader('Set-Cookie', cookie);
 }
@@ -161,7 +161,7 @@ export function clearAuthCookie(
   settings: Partial<CookieSettings>,
   storageKeys: { authToken: string } = {
     authToken: DEFAULT_STORAGE_KEYS.AUTH_TOKEN,
-  },
+  }
 ): void {
   const expiredDate = new Date(0).toUTCString();
 
@@ -170,7 +170,7 @@ export function clearAuthCookie(
     'destroy',
     settings,
     settings.domain,
-    expiredDate,
+    expiredDate
   );
   res.setHeader('Set-Cookie', cookie);
 }
@@ -187,7 +187,7 @@ export function setAuthCookies(
   clientPayload: ClientCookiePayload,
   secret: string,
   settings: Partial<CookieSettings>,
-  storageKeys: { authToken: string; clientToken?: string },
+  storageKeys: { authToken: string; clientToken?: string }
 ): void {
   const expiresDate = settings.maxAge
     ? new Date(Date.now() + settings.maxAge * 1000).toUTCString()
@@ -199,7 +199,7 @@ export function setAuthCookies(
     authToken,
     settings,
     settings.domain,
-    expiresDate,
+    expiresDate
   );
 
   if (!storageKeys.clientToken) {
@@ -218,7 +218,7 @@ export function setAuthCookies(
     clientValue,
     clientSettings,
     clientCookieDomain(settings),
-    expiresDate,
+    expiresDate
   );
 
   res.setHeader('Set-Cookie', [authCookie, clientCookie]);
@@ -233,7 +233,7 @@ export function setClientCookie(
   clientPayload: ClientCookiePayload,
   secret: string,
   settings: Partial<CookieSettings>,
-  storageKeys: { clientToken: string },
+  storageKeys: { clientToken: string }
 ): void {
   // Batched tRPC procedures run concurrently on one shared res. The check and
   // appendHeader below are synchronous and adjacent (no await between them), so
@@ -242,7 +242,11 @@ export function setClientCookie(
   // overflowing the proxy's header buffer (502).
   const existing = res.getHeader('Set-Cookie');
   const existingCookies = Array.isArray(existing) ? existing : existing ? [existing] : [];
-  if (existingCookies.some((c) => typeof c === 'string' && c.startsWith(`${storageKeys.clientToken}=`))) {
+  if (
+    existingCookies.some(
+      (c) => typeof c === 'string' && c.startsWith(`${storageKeys.clientToken}=`)
+    )
+  ) {
     return;
   }
 
@@ -257,7 +261,7 @@ export function setClientCookie(
     clientValue,
     clientSettings,
     clientCookieDomain(settings),
-    expiresDate,
+    expiresDate
   );
 
   res.appendHeader('Set-Cookie', clientCookie);
@@ -269,7 +273,7 @@ export function setClientCookie(
 export function clearAuthCookies(
   res: CreateHTTPContextOptions['res'],
   settings: Partial<CookieSettings>,
-  storageKeys: { authToken: string; clientToken?: string },
+  storageKeys: { authToken: string; clientToken?: string }
 ): void {
   const expiredDate = new Date(0).toUTCString();
 
@@ -278,7 +282,7 @@ export function clearAuthCookies(
     'destroy',
     settings,
     settings.domain,
-    expiredDate,
+    expiredDate
   );
 
   if (!storageKeys.clientToken) {
@@ -296,7 +300,7 @@ export function clearAuthCookies(
     'destroy',
     clientSettings,
     clientCookieDomain(settings),
-    expiredDate,
+    expiredDate
   );
 
   res.setHeader('Set-Cookie', [authCookie, clientCookie]);

@@ -7,10 +7,7 @@
  */
 export interface OAuthAccountAdapter {
   /** Resolve a linked provider identity to its account. Null if not linked. */
-  resolve(
-    provider: 'GOOGLE' | 'APPLE',
-    subject: string
-  ): Promise<{ userId: number } | null>;
+  resolve(provider: 'GOOGLE' | 'APPLE', subject: string): Promise<{ userId: number } | null>;
 
   /** Attach a provider identity to a user (idempotent for the same user). */
   link(

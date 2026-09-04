@@ -1,6 +1,7 @@
-import { z, type AnyZodObject } from 'zod';
+import { z } from 'zod';
 
 import type { UsernameMode } from './types/config';
+import type { AnyZodObject } from './types/zod';
 import type { SchemaExtensions } from './types/hooks';
 
 /**
@@ -208,8 +209,7 @@ export function createSchemas<TExtensions extends SchemaExtensions = {}>(
   extensions?: TExtensions,
   usernameMode: UsernameMode = 'optional'
 ): CreatedSchemas<TExtensions> {
-  const signupBase =
-    usernameMode === 'optional' ? signupSchemaOptionalUsername : signupSchema;
+  const signupBase = usernameMode === 'optional' ? signupSchemaOptionalUsername : signupSchema;
   return {
     signup: extensions?.signup ? signupBase.merge(extensions.signup) : signupBase,
     login: extensions?.login ? loginSchema.merge(extensions.login) : loginSchema,

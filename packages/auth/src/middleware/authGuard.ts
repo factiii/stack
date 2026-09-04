@@ -33,9 +33,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
   const maxAccounts = config.maxAccounts ?? 1;
   const SLIDE_THRESHOLD_SECONDS = 24 * 60 * 60; // 24 hours
 
-  const database: DatabaseAdapter =
-    config.database ??
-    createPrismaAdapter(config.prisma);
+  const database: DatabaseAdapter = config.database ?? createPrismaAdapter(config.prisma);
 
   const revokeSession = async (
     ctx: TrpcContext,
@@ -66,7 +64,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
             : [],
           origin: ctx.headers.origin ?? null,
           referer: ctx.headers.referer ?? null,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         };
 
         const combinedStack = [
@@ -126,7 +124,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
         const { kept: requestedIds, dropped: droppedIds } = truncateBundle(
           payload.sessions,
           payload.id,
-          maxAccounts,
+          maxAccounts
         );
         for (const id of droppedIds) {
           await database.session.revoke(id).catch(() => {});
@@ -161,11 +159,24 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
                 ? await config.getClientCookiePayload(newActive.userId)
                 : {}),
             };
-            setAuthCookies(ctx.res, newJwt, clientPayload, config.secrets.jwt, cookieSettings, storageKeys);
+            setAuthCookies(
+              ctx.res,
+              newJwt,
+              clientPayload,
+              config.secrets.jwt,
+              cookieSettings,
+              storageKeys
+            );
             throw new TRPCError({ code: 'UNAUTHORIZED', message: 'ACTIVE_SESSION_SWITCHED' });
           }
 
-          await revokeSession(ctx, payload.id, !session ? 'Session not found' : 'Session already revoked', undefined, path);
+          await revokeSession(
+            ctx,
+            payload.id,
+            !session ? 'Session not found' : 'Session already revoked',
+            undefined,
+            path
+          );
           throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Unauthorized' });
         }
 
@@ -176,9 +187,7 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
           await revokeSession(
             ctx,
             session.id,
-            session.userId !== payload.userId
-              ? 'Token userId mismatch'
-              : 'Token predates session',
+            session.userId !== payload.userId ? 'Token userId mismatch' : 'Token predates session',
             undefined,
             path
           );
@@ -242,7 +251,14 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
               ? await config.getClientCookiePayload(session.userId)
               : {}),
           };
-          setAuthCookies(ctx.res, newJwt, clientPayload, config.secrets.jwt, cookieSettings, storageKeys);
+          setAuthCookies(
+            ctx.res,
+            newJwt,
+            clientPayload,
+            config.secrets.jwt,
+            cookieSettings,
+            storageKeys
+          );
         } else if (storageKeys.clientToken) {
           const rawClientCookie = parseClientCookie(ctx.headers.cookie, storageKeys);
           let needsRefresh = !rawClientCookie;
@@ -264,7 +280,13 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
                 ? await config.getClientCookiePayload(session.userId)
                 : {}),
             };
-            setClientCookie(ctx.res, clientPayload, config.secrets.jwt, cookieSettings, storageKeys as { clientToken: string });
+            setClientCookie(
+              ctx.res,
+              clientPayload,
+              config.secrets.jwt,
+              cookieSettings,
+              storageKeys as { clientToken: string }
+            );
           }
         }
 
@@ -301,11 +323,9 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
           await revokeSession(
             ctx,
             null,
-            isTokenInvalidError(err)
-              ? 'Token invalid'
-              : 'Token expired',
+            isTokenInvalidError(err) ? 'Token invalid' : 'Token expired',
             errorStack,
-            path,
+            path
           );
           throw new TRPCError({
             message: isTokenInvalidError(err) ? 'Token invalid' : 'Token expired',

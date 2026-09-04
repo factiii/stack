@@ -194,17 +194,13 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
           ? await this.config.oauthAccounts.list(user.id)
           : [];
         if (providers.length > 0) {
-          const names = providers
-            .map((p) => (p === 'GOOGLE' ? 'Google' : 'Apple'))
-            .join(' or ');
+          const names = providers.map((p) => (p === 'GOOGLE' ? 'Google' : 'Apple')).join(' or ');
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: `This account uses ${names} sign-in. Please continue with ${names}.`,
           });
         }
-        const hasPasskey = this.config.passkey
-          ? await this.config.passkey.has(user.id)
-          : false;
+        const hasPasskey = this.config.passkey ? await this.config.passkey.has(user.id) : false;
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: hasPasskey
@@ -226,14 +222,11 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
           // Push another device to approve instead of asking for a code. Falls
           // back to the typed-code flow when the hook is absent.
           if (this.config.hooks?.onLoginApprovalRequired) {
-            const pending = await this.config.hooks.onLoginApprovalRequired(
-              user.id,
-              {
-                ip: ctx.ip,
-                browserName: detectBrowser(userAgent),
-                input: typedInput,
-              }
-            );
+            const pending = await this.config.hooks.onLoginApprovalRequired(user.id, {
+              ip: ctx.ip,
+              browserName: detectBrowser(userAgent),
+              input: typedInput,
+            });
             if (pending) {
               return {
                 success: false,
@@ -321,7 +314,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
               await this.config.hooks.onSessionRevoked(
                 session.id,
                 session.socketId,
-                'User logged out',
+                'User logged out'
               );
             } catch {
               // Don't let a flaky hook abort the rest of the logout.
@@ -377,7 +370,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
         clientPayload,
         this.config.secrets.jwt,
         this.config.cookieSettings,
-        this.config.storageKeys,
+        this.config.storageKeys
       );
 
       return { success: true };
@@ -471,33 +464,35 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
    * already the factor, so no current-password prompt; changePassword (which is
    * current-password gated) covers the case where one already exists. */
   private setPassword() {
-    return this.authProcedure
-      // .max(72): bcrypt silently truncates past 72 bytes, matching the other
-      // password schemas (signup/reset/change).
-      .input(z.object({ password: z.string().min(8).max(72) }))
-      .mutation(async ({ ctx, input }) => {
-        const { userId } = ctx;
-        const user = await this.config.database.user.findById(userId);
-        if (!user) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
-        }
-        if (user.password) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'This account already has a password. Use change password instead.',
+    return (
+      this.authProcedure
+        // .max(72): bcrypt silently truncates past 72 bytes, matching the other
+        // password schemas (signup/reset/change).
+        .input(z.object({ password: z.string().min(8).max(72) }))
+        .mutation(async ({ ctx, input }) => {
+          const { userId } = ctx;
+          const user = await this.config.database.user.findById(userId);
+          if (!user) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
+          }
+          if (user.password) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This account already has a password. Use change password instead.',
+            });
+          }
+
+          await this.config.database.user.update(userId, {
+            password: await hashPassword(input.password),
           });
-        }
 
-        await this.config.database.user.update(userId, {
-          password: await hashPassword(input.password),
-        });
+          if (this.config.hooks?.onPasswordChanged) {
+            await this.config.hooks.onPasswordChanged(userId);
+          }
 
-        if (this.config.hooks?.onPasswordChanged) {
-          await this.config.hooks.onPasswordChanged(userId);
-        }
-
-        return { success: true };
-      });
+          return { success: true };
+        })
+    );
   }
 
   /**
@@ -629,11 +624,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
 
       for (const session of sessionsToRevoke) {
         if (this.config.hooks?.onSessionRevoked) {
-          await this.config.hooks.onSessionRevoked(
-            session.id,
-            session.socketId,
-            'Password reset'
-          );
+          await this.config.hooks.onSessionRevoked(session.id, session.socketId, 'Password reset');
         }
       }
 

@@ -138,8 +138,7 @@ export class StandardTwoFaProcedureFactory {
       if (!user.password) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message:
-            'Two-factor authentication is only available on accounts with a password.',
+          message: 'Two-factor authentication is only available on accounts with a password.',
         });
       }
 
@@ -234,4 +233,3 @@ export class StandardTwoFaProcedureFactory {
       });
   }
 }
-

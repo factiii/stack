@@ -6,7 +6,11 @@
  * the short-lived challenge, the credential, and user creation. See
  * `prisma/schema.*.prisma` for the reference `Passkey` model.
  */
-import type { PasskeyChallengeType, PasskeyCredential, StoredPasskeyCredential } from '../types/passkey';
+import type {
+  PasskeyChallengeType,
+  PasskeyCredential,
+  StoredPasskeyCredential,
+} from '../types/passkey';
 import type { PasskeyRegisterInput, SchemaExtensions } from '../types/hooks';
 
 export interface PasskeyAdapter<TExtensions extends SchemaExtensions = {}> {

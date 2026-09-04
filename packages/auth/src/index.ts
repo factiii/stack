@@ -92,10 +92,7 @@ export {
   countLoginMethods,
   resolveLoginMethods,
 } from './utilities/loginMethods';
-export type {
-  CreateSessionWithTokenParams,
-  SessionWithTokenResult,
-} from './utilities/session';
+export type { CreateSessionWithTokenParams, SessionWithTokenResult } from './utilities/session';
 export { createSessionWithToken, createSessionWithTokenAndCookie } from './utilities/session';
 export {
   cleanBase32String,

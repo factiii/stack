@@ -103,7 +103,9 @@ export interface DatabaseAdapter {
     create(data: CreateUserData): Promise<AuthUser>;
     update(id: number, data: Partial<Omit<AuthUser, 'id'>>): Promise<AuthUser>;
     /** Read just the standard-mode 2FA secret + backup codes for a user. */
-    findTwoFaSecret(id: number): Promise<{ twoFaSecret: string | null; twoFaBackupCodes: string[] }>;
+    findTwoFaSecret(
+      id: number
+    ): Promise<{ twoFaSecret: string | null; twoFaBackupCodes: string[] }>;
     /** Persist the standard-mode 2FA secret and backup codes. Non-null secret == 2FA on. */
     setTwoFaSecret(id: number, secret: string, backupCodes: string[]): Promise<void>;
     /** Replace the backup codes without touching the TOTP secret. */
@@ -118,13 +120,21 @@ export interface DatabaseAdapter {
     /** Find session by ID with user status and verifiedHumanAt joined. */
     findById(id: number): Promise<SessionWithUser | null>;
     create(data: CreateSessionData): Promise<AuthSession>;
-    update(id: number, data: Partial<Pick<AuthSession, 'revokedAt' | 'lastUsed'>>): Promise<AuthSession>;
+    update(
+      id: number,
+      data: Partial<Pick<AuthSession, 'revokedAt' | 'lastUsed'>>
+    ): Promise<AuthSession>;
     /** Update lastUsed and return session with user's verifiedHumanAt and updatedAt. */
-    updateLastUsed(id: number): Promise<AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } }>;
+    updateLastUsed(
+      id: number
+    ): Promise<AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } }>;
     /** Set revokedAt on a single session. */
     revoke(id: number): Promise<void>;
     /** Find active (non-revoked) sessions for a user, optionally excluding one. */
-    findActiveByUserId(userId: number, excludeSessionId?: number): Promise<Pick<AuthSession, 'id' | 'socketId' | 'userId'>[]>;
+    findActiveByUserId(
+      userId: number,
+      excludeSessionId?: number
+    ): Promise<Pick<AuthSession, 'id' | 'socketId' | 'userId'>[]>;
     /** Revoke all active sessions for a user, optionally excluding one. */
     revokeAllByUserId(userId: number, excludeSessionId?: number): Promise<void>;
 

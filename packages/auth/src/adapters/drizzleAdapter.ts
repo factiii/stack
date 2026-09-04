@@ -123,11 +123,7 @@ export function createDrizzleAdapter(
       },
 
       async findById(id: number): Promise<AuthUser | null> {
-        const rows = await db
-          .select()
-          .from(users)
-          .where(eq(users.id, id))
-          .limit(1);
+        const rows = await db.select().from(users).where(eq(users.id, id)).limit(1);
         return (rows[0] as unknown as AuthUser | undefined) ?? null;
       },
 
@@ -141,7 +137,10 @@ export function createDrizzleAdapter(
       },
 
       async create(data: CreateUserData): Promise<AuthUser> {
-        const rows = await db.insert(users).values(data as unknown as Record<string, unknown>).returning();
+        const rows = await db
+          .insert(users)
+          .values(data as unknown as Record<string, unknown>)
+          .returning();
         return rows[0] as unknown as AuthUser;
       },
 
@@ -165,18 +164,15 @@ export function createDrizzleAdapter(
           .from(users)
           .where(eq(users.id, id))
           .limit(1);
-        const row = rows[0] as { twoFaSecret: string | null; twoFaBackupCodes: string[] | null } | undefined;
+        const row = rows[0] as
+          { twoFaSecret: string | null; twoFaBackupCodes: string[] | null } | undefined;
         return {
           twoFaSecret: row?.twoFaSecret ?? null,
           twoFaBackupCodes: row?.twoFaBackupCodes ?? [],
         };
       },
 
-      async setTwoFaSecret(
-        id: number,
-        secret: string,
-        backupCodes: string[]
-      ): Promise<void> {
+      async setTwoFaSecret(id: number, secret: string, backupCodes: string[]): Promise<void> {
         await db
           .update(users)
           .set({ twoFaSecret: secret, twoFaBackupCodes: backupCodes })
@@ -184,10 +180,7 @@ export function createDrizzleAdapter(
       },
 
       async setBackupCodes(id: number, backupCodes: string[]): Promise<void> {
-        await db
-          .update(users)
-          .set({ twoFaBackupCodes: backupCodes })
-          .where(eq(users.id, id));
+        await db.update(users).set({ twoFaBackupCodes: backupCodes }).where(eq(users.id, id));
       },
 
       async clearTwoFaSecret(id: number): Promise<void> {
@@ -213,10 +206,7 @@ export function createDrizzleAdapter(
         const idx = codes.indexOf(code);
         if (idx === -1) return false;
         const next = [...codes.slice(0, idx), ...codes.slice(idx + 1)];
-        await db
-          .update(users)
-          .set({ twoFaBackupCodes: next })
-          .where(eq(users.id, id));
+        await db.update(users).set({ twoFaBackupCodes: next }).where(eq(users.id, id));
         return true;
       },
     },
@@ -246,7 +236,10 @@ export function createDrizzleAdapter(
       },
 
       async create(data: CreateSessionData): Promise<AuthSession> {
-        const rows = await db.insert(sessions).values(data as unknown as Record<string, unknown>).returning();
+        const rows = await db
+          .insert(sessions)
+          .values(data as unknown as Record<string, unknown>)
+          .returning();
         return rows[0] as unknown as AuthSession;
       },
 
@@ -265,10 +258,7 @@ export function createDrizzleAdapter(
       async updateLastUsed(
         id: number
       ): Promise<AuthSession & { user: { verifiedHumanAt: Date | null; updatedAt: Date } }> {
-        await db
-          .update(sessions)
-          .set({ lastUsed: new Date() })
-          .where(eq(sessions.id, id));
+        await db.update(sessions).set({ lastUsed: new Date() }).where(eq(sessions.id, id));
 
         const rows = await db
           .select({
@@ -295,10 +285,7 @@ export function createDrizzleAdapter(
       },
 
       async revoke(id: number): Promise<void> {
-        await db
-          .update(sessions)
-          .set({ revokedAt: new Date() })
-          .where(eq(sessions.id, id));
+        await db.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.id, id));
       },
 
       async findManyByIds(ids: number[]): Promise<SessionWithUser[]> {
@@ -362,15 +349,16 @@ export function createDrizzleAdapter(
         const rows = await db
           .select()
           .from(otps)
-          .where(
-            and(eq(otps.userId, userId), eq(otps.code, code), gte(otps.expiresAt, new Date()))
-          )
+          .where(and(eq(otps.userId, userId), eq(otps.code, code), gte(otps.expiresAt, new Date())))
           .limit(1);
         return (rows[0] as unknown as AuthOTP | undefined) ?? null;
       },
 
       async create(data: { userId: number; code: number; expiresAt: Date }): Promise<AuthOTP> {
-        const rows = await db.insert(otps).values(data as unknown as Record<string, unknown>).returning();
+        const rows = await db
+          .insert(otps)
+          .values(data as unknown as Record<string, unknown>)
+          .returning();
         return rows[0] as unknown as AuthOTP;
       },
 
@@ -394,10 +382,7 @@ export function createDrizzleAdapter(
       },
 
       async create(userId: number): Promise<AuthPasswordReset> {
-        const rows = await db
-          .insert(passwordResets)
-          .values({ userId })
-          .returning();
+        const rows = await db.insert(passwordResets).values({ userId }).returning();
         return rows[0] as unknown as AuthPasswordReset;
       },
 
@@ -440,9 +425,7 @@ export function createDrizzleDeviceAdapter(
 
   return {
     session: {
-      async findTwoFaSecretsByUserId(
-        userId: number
-      ): Promise<{ twoFaSecret: string | null }[]> {
+      async findTwoFaSecretsByUserId(userId: number): Promise<{ twoFaSecret: string | null }[]> {
         const secretRows = await db
           .select({ twoFaSecret: sessions.twoFaSecret })
           .from(sessions)
@@ -463,16 +446,10 @@ export function createDrizzleDeviceAdapter(
       },
 
       async setTwoFaSecret(sessionId: number, secret: string | null): Promise<void> {
-        await db
-          .update(sessions)
-          .set({ twoFaSecret: secret })
-          .where(eq(sessions.id, sessionId));
+        await db.update(sessions).set({ twoFaSecret: secret }).where(eq(sessions.id, sessionId));
       },
 
-      async findByIdWithDevice(
-        id: number,
-        userId: number
-      ): Promise<SessionWithDevice | null> {
+      async findByIdWithDevice(id: number, userId: number): Promise<SessionWithDevice | null> {
         const rows = await db
           .select({
             twoFaSecret: sessions.twoFaSecret,
@@ -584,11 +561,7 @@ export function createDrizzleDeviceAdapter(
         return { id: rows[0].id };
       },
 
-      async upsertByPushToken(
-        pushToken: string,
-        sessionId: number,
-        userId: number
-      ): Promise<void> {
+      async upsertByPushToken(pushToken: string, sessionId: number, userId: number): Promise<void> {
         const existing = (await db
           .select({ id: devices.id })
           .from(devices)
@@ -614,36 +587,19 @@ export function createDrizzleDeviceAdapter(
             .onConflictDoNothing();
         }
         if (tables.devicesToUsers) {
-          await db
-            .insert(tables.devicesToUsers)
-            .values({ deviceId, userId })
-            .onConflictDoNothing();
+          await db.insert(tables.devicesToUsers).values({ deviceId, userId }).onConflictDoNothing();
         }
 
-        await db
-          .update(sessions)
-          .set({ deviceId })
-          .where(eq(sessions.id, sessionId));
+        await db.update(sessions).set({ deviceId }).where(eq(sessions.id, sessionId));
       },
 
-      async findByUserAndToken(
-        userId: number,
-        pushToken: string
-      ): Promise<{ id: number } | null> {
+      async findByUserAndToken(userId: number, pushToken: string): Promise<{ id: number } | null> {
         if (tables.devicesToUsers) {
           const joinRows = (await db
             .select({ id: devices.id })
             .from(devices)
-            .innerJoin(
-              tables.devicesToUsers,
-              eq(devices.id, tables.devicesToUsers.deviceId)
-            )
-            .where(
-              and(
-                eq(devices.pushToken, pushToken),
-                eq(tables.devicesToUsers.userId, userId)
-              )
-            )
+            .innerJoin(tables.devicesToUsers, eq(devices.id, tables.devicesToUsers.deviceId))
+            .where(and(eq(devices.pushToken, pushToken), eq(tables.devicesToUsers.userId, userId)))
             .limit(1)) as { id: number }[];
           return joinRows[0] ? { id: joinRows[0].id } : null;
         }

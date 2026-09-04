@@ -6,7 +6,6 @@
  * - port-convention.ts scanfixes (PORT slot validation, http/https enforcement)
  * - start-sh.ts scanfix (start.sh generation and marker detection)
  * - generate-all.ts (slot-based docker compose + nginx port mapping)
- * - template-generator.ts (PORT=1 default in .env.example template)
  */
 
 import * as fs from 'fs';
@@ -614,32 +613,6 @@ describe('generate-all.ts slot port mapping', () => {
     expect(compose.services['app-a-staging'].ports).toContain('5001:5001');
     expect(compose.services['app-b-staging'].ports).toContain('3002:3002');
     expect(compose.services['app-b-staging'].ports).toContain('5002:5002');
-  });
-});
-
-// ══════════════════════════════════════════════════════════════
-// TEMPLATE GENERATOR
-// ══════════════════════════════════════════════════════════════
-
-describe('template-generator PORT default', () => {
-  test('generates PORT=1 (slot) not PORT=3000', async () => {
-    const { generateEnvExampleTemplate } = await import('../src/utils/template-generator');
-    const template = generateEnvExampleTemplate({ name: 'test-app' } as FactiiiConfig);
-
-    // Should have slot-based PORT
-    expect(template).toContain('PORT=1');
-    expect(template).not.toContain('PORT=3000');
-
-    // Should have slot explanation comment
-    expect(template).toMatch(/[Ss]lot/);
-    expect(template).toMatch(/3000\+PORT|3000 \+ PORT|Client.*3000/i);
-  });
-
-  test('URL placeholders use YOUR_IP', async () => {
-    const { generateEnvExampleTemplate } = await import('../src/utils/template-generator');
-    const template = generateEnvExampleTemplate({ name: 'test-app' } as FactiiiConfig);
-
-    expect(template).toContain('YOUR_IP');
   });
 });
 

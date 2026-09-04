@@ -28,11 +28,10 @@ export function createAuthToken(
   payload: Omit<JwtPayload, 'exp' | 'iat' | 'sessions'> & { sessions?: number[] },
   options: CreateTokenOptions
 ): string {
-  return jwt.sign(
-    { ...payload, sessions: payload.sessions ?? [payload.id] },
-    options.secret,
-    { algorithm: 'HS256', expiresIn: options.expiresIn }
-  );
+  return jwt.sign({ ...payload, sessions: payload.sessions ?? [payload.id] }, options.secret, {
+    algorithm: 'HS256',
+    expiresIn: options.expiresIn,
+  });
 }
 
 /**

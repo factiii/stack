@@ -6,9 +6,7 @@ import type { ResolvedAuthConfig } from './config';
 // is never counted here.
 
 export type LoginMethodRemoval =
-  | { kind: 'oauth'; provider: 'GOOGLE' | 'APPLE' }
-  | { kind: 'passkey' }
-  | { kind: 'password' };
+  { kind: 'oauth'; provider: 'GOOGLE' | 'APPLE' } | { kind: 'passkey' } | { kind: 'password' };
 
 export interface LoginMethodCount {
   password: boolean;
@@ -23,9 +21,7 @@ export async function countLoginMethods(
 ): Promise<LoginMethodCount> {
   const [user, passkeys, providers] = await Promise.all([
     config.database.user.findById(userId),
-    config.passkey
-      ? config.passkey.list(userId).then((p) => p.length)
-      : Promise.resolve(0),
+    config.passkey ? config.passkey.list(userId).then((p) => p.length) : Promise.resolve(0),
     config.oauthAccounts
       ? config.oauthAccounts.list(userId)
       : Promise.resolve<Array<'GOOGLE' | 'APPLE'>>([]),

@@ -126,8 +126,7 @@ export class DeviceTwoFaProcedureFactory {
       if (!user.password) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message:
-            'Two-factor authentication is only available on accounts with a password.',
+          message: 'Two-factor authentication is only available on accounts with a password.',
         });
       }
 
@@ -258,28 +257,26 @@ export class DeviceTwoFaProcedureFactory {
   }
 
   private deregisterPushToken() {
-    return this.authProcedure
-      .input(deregisterPushTokenSchema)
-      .mutation(async ({ ctx, input }) => {
-        this.checkConfig();
-        const { userId } = ctx;
-        const { pushToken } = input;
+    return this.authProcedure.input(deregisterPushTokenSchema).mutation(async ({ ctx, input }) => {
+      this.checkConfig();
+      const { userId } = ctx;
+      const { pushToken } = input;
 
-        const device = await this.deviceAuth.device.findByUserAndToken(userId, pushToken);
+      const device = await this.deviceAuth.device.findByUserAndToken(userId, pushToken);
 
-        if (device) {
-          await this.deviceAuth.session.clearDeviceId(userId, device.id);
+      if (device) {
+        await this.deviceAuth.session.clearDeviceId(userId, device.id);
 
-          await this.deviceAuth.device.disconnectUser(device.id, userId);
+        await this.deviceAuth.device.disconnectUser(device.id, userId);
 
-          const hasUsers = await this.deviceAuth.device.hasRemainingUsers(device.id);
+        const hasUsers = await this.deviceAuth.device.hasRemainingUsers(device.id);
 
-          if (!hasUsers) {
-            await this.deviceAuth.device.delete(device.id);
-          }
+        if (!hasUsers) {
+          await this.deviceAuth.device.delete(device.id);
         }
+      }
 
-        return { deregistered: true };
-      });
+      return { deregistered: true };
+    });
   }
 }
