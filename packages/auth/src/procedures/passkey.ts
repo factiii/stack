@@ -10,6 +10,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
+import type { UsernameMode } from '../types/config';
 import type { SchemaExtensions } from '../types/hooks';
 import type { AnyZodObject } from '../types/zod';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
@@ -33,7 +34,10 @@ const isObject = (v: unknown): boolean => typeof v === 'object' && v !== null;
  * `issueAuthCookies`, so passkey logins are bundle-aware just like password and
  * OAuth); the consumer owns all storage + user creation via `config.passkey`.
  */
-export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> {
+export class PasskeyProcedureFactory<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> {
   constructor(
     private config: ResolvedAuthConfig,
     private procedure: BaseProcedure,
@@ -59,7 +63,7 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
     return { webauthn: this.config.webauthn, passkey: this.config.passkey };
   }
 
-  createPasskeyProcedures(schemas: CreatedSchemas<TExtensions>) {
+  createPasskeyProcedures(schemas: CreatedSchemas<TExtensions, TMode>) {
     // Signup metadata minus email/password, and minus username: the account is
     // created under the name bound to the challenge, so it always matches what
     // the authenticator saved.

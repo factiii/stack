@@ -10,7 +10,8 @@ import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
 import { issueAuthCookies, revokeDeviceSessionsForUser } from '../utilities/issueCookies';
 import { createAuthToken } from '../utilities/jwt';
 import { comparePassword, hashPassword } from '../utilities/password';
-import type { SchemaExtensions } from '../types/hooks';
+import type { UsernameMode } from '../types/config';
+import type { ExtendedSignupHookInput, SchemaExtensions } from '../types/hooks';
 import {
   changePasswordSchema,
   checkPasswordResetSchema,
@@ -27,7 +28,10 @@ import {
  * Factory for core authentication procedures: register, login, logout,
  * token refresh, session management, and password reset flows.
  */
-export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
+export class BaseProcedureFactory<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> {
   constructor(
     private config: ResolvedAuthConfig,
     private procedure: BaseProcedure,
@@ -45,7 +49,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
   }
 
   /** Returns all base auth procedures to be merged into the router. */
-  createBaseProcedures(schemas: CreatedSchemas<TExtensions>) {
+  createBaseProcedures(schemas: CreatedSchemas<TExtensions, TMode>) {
     return {
       register: this.register(schemas.signup),
       login: this.login(schemas.login),
@@ -61,9 +65,9 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
     };
   }
 
-  private register(schema: CreatedSchemas<TExtensions>['signup']) {
+  private register(schema: CreatedSchemas<TExtensions, TMode>['signup']) {
     return this.procedure.input(schema).mutation(async ({ ctx, input }) => {
-      const typedInput = input as SignupSchemaInput<TExtensions>;
+      const typedInput = input as SignupSchemaInput<TExtensions, TMode>;
       const { username, email, password } = typedInput;
       const userAgent = ctx.headers['user-agent'];
 
@@ -75,7 +79,11 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
       }
 
       if (this.config.hooks?.beforeRegister) {
-        await this.config.hooks.beforeRegister(typedInput);
+        // The hook's `username` is typed `string` for every mode, because
+        // widening it would break the username-first consumers that read it.
+        // Under `usernameMode: 'optional'` the field can genuinely be absent,
+        // which is why AuthHooks.beforeRegister documents the caveat.
+        await this.config.hooks.beforeRegister(typedInput as ExtendedSignupHookInput<TExtensions>);
       }
 
       // Guarded rather than unconditional because usernameMode decides whether
@@ -148,7 +156,7 @@ export class BaseProcedureFactory<TExtensions extends SchemaExtensions = {}> {
     });
   }
 
-  private login(schema: CreatedSchemas<TExtensions>['login']) {
+  private login(schema: CreatedSchemas<TExtensions, TMode>['login']) {
     return this.procedure.input(schema).mutation(async ({ ctx, input }) => {
       const typedInput = input as LoginSchemaInput<TExtensions>;
       const { username, password, code } = typedInput;

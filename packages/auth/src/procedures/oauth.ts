@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
+import type { UsernameMode } from '../types/config';
 import type { SchemaExtensions } from '../types/hooks';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities';
@@ -13,7 +14,10 @@ import { type CreatedSchemas, type OAuthSchemaInput } from '../validators';
 const providerEnum = z.enum(['GOOGLE', 'APPLE']);
 
 /** Factory for OAuth login + link/unlink procedures (Google, Apple). */
-export class OAuthLoginProcedureFactory<TExtensions extends SchemaExtensions = {}> {
+export class OAuthLoginProcedureFactory<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> {
   private verifyOAuthToken:
     | ((provider: OAuthProvider, token: string, extra?: { email?: string }) => Promise<OAuthResult>)
     | null = null;
@@ -28,7 +32,7 @@ export class OAuthLoginProcedureFactory<TExtensions extends SchemaExtensions = {
     }
   }
 
-  createOAuthLoginProcedures(schemas: CreatedSchemas<TExtensions>) {
+  createOAuthLoginProcedures(schemas: CreatedSchemas<TExtensions, TMode>) {
     return {
       oAuthLogin: this.oAuthLogin(schemas.oauth),
       oAuthLink: this.oAuthLink(),
@@ -52,7 +56,7 @@ export class OAuthLoginProcedureFactory<TExtensions extends SchemaExtensions = {
     return this.verifyOAuthToken;
   }
 
-  private oAuthLogin(schema: CreatedSchemas<TExtensions>['oauth']) {
+  private oAuthLogin(schema: CreatedSchemas<TExtensions, TMode>['oauth']) {
     return this.procedure.input(schema).mutation(async ({ ctx, input }) => {
       this.checkConfig();
 

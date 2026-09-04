@@ -18,6 +18,9 @@ type BaseLoginInput = z.infer<typeof loginSchema>;
 type BaseOAuthInput = z.infer<typeof oAuthLoginSchema>;
 
 /** Input types that include base fields plus any extension fields */
+export type ExtendedSignupHookInput<TExtensions extends SchemaExtensions> =
+  ExtendedSignupInput<TExtensions>;
+
 type ExtendedSignupInput<TExtensions extends SchemaExtensions> = BaseSignupInput &
   (TExtensions['signup'] extends AnyZodObject
     ? z.infer<TExtensions['signup']>
@@ -63,6 +66,12 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
   /**
    * Called before user registration validation
    * Use this to add custom validation or check business rules
+   *
+   * `username` is typed as always present, which holds under the default
+   * `usernameMode: 'required'` reading of a username-first app. Under
+   * `usernameMode: 'optional'` the signup schema makes the field optional, so
+   * a hook that reads `input.username` there must handle `undefined` at
+   * runtime even though the type does not say so.
    */
   beforeRegister?: (input: ExtendedSignupInput<TExtensions>) => Promise<void>;
 

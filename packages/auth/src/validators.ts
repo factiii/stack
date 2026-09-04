@@ -172,14 +172,33 @@ type MergedSchema<TBase extends AnyZodObject, TExt extends AnyZodObject | undefi
   ? z.ZodObject<TBase['shape'] & TExt['shape']>
   : TBase;
 
+/**
+ * The signup base a given `usernameMode` selects, at the type level.
+ *
+ * Only a mode that is *exactly* `'required'` gets the username-required base.
+ * A consumer whose config is annotated (rather than `satisfies`-checked) widens
+ * the field to the whole `UsernameMode` union, and a union resolves here to the
+ * optional base — the looser of the two, so the compiler never demands a field
+ * the runtime might not want. Runtime validation is authoritative either way.
+ */
+type SignupBase<TMode extends UsernameMode> = [TMode] extends ['required']
+  ? typeof signupSchema
+  : typeof signupSchemaOptionalUsername;
+
 /** Result type from createSchemas - preserves concrete schema types */
-export type CreatedSchemas<TExtensions extends SchemaExtensions = {}> = {
-  signup: MergedSchema<typeof signupSchema, TExtensions['signup']>;
+export type CreatedSchemas<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> = {
+  signup: MergedSchema<SignupBase<TMode>, TExtensions['signup']>;
   login: MergedSchema<typeof loginSchema, TExtensions['login']>;
   oauth: MergedSchema<typeof oAuthLoginSchema, TExtensions['oauth']>;
 };
 
-export type SignupSchemaInput<TExtensions extends SchemaExtensions = {}> = SignupInput &
+export type SignupSchemaInput<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> = z.infer<SignupBase<TMode>> &
   (TExtensions['signup'] extends AnyZodObject ? z.infer<TExtensions['signup']> : {});
 
 export type LoginSchemaInput<TExtensions extends SchemaExtensions = {}> = LoginInput &
@@ -188,10 +207,10 @@ export type LoginSchemaInput<TExtensions extends SchemaExtensions = {}> = LoginI
 export type OAuthSchemaInput<TExtensions extends SchemaExtensions = {}> = OAuthLoginInput &
   (TExtensions['oauth'] extends AnyZodObject ? z.infer<TExtensions['oauth']> : {});
 
-export type PasskeyRegisterMetaInput<TExtensions extends SchemaExtensions = {}> = Omit<
-  SignupSchemaInput<TExtensions>,
-  'username' | 'email' | 'password'
->;
+export type PasskeyRegisterMetaInput<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> = Omit<SignupSchemaInput<TExtensions, TMode>, 'username' | 'email' | 'password'>;
 
 export type PasskeyAuthMetaInput<TExtensions extends SchemaExtensions = {}> = Omit<
   LoginSchemaInput<TExtensions>,
@@ -204,15 +223,22 @@ export type PasskeyAuthMetaInput<TExtensions extends SchemaExtensions = {}> = Om
  * `usernameMode` picks the signup base. It defaults to `'optional'` as of
  * 0.20.0 — a change from every prior release, which required a username
  * unconditionally. Username-first consumers must now say so explicitly.
+ *
+ * The mode is a type parameter as well as a runtime argument, so the returned
+ * signup schema types match what it actually validates. Before 0.20.4 the type
+ * was pinned to the username-required base whatever the mode said, and an
+ * `'optional'` consumer could not call `register` without passing a username
+ * it had explicitly opted out of collecting.
  */
-export function createSchemas<TExtensions extends SchemaExtensions = {}>(
-  extensions?: TExtensions,
-  usernameMode: UsernameMode = 'optional'
-): CreatedSchemas<TExtensions> {
-  const signupBase = usernameMode === 'optional' ? signupSchemaOptionalUsername : signupSchema;
+export function createSchemas<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+>(extensions?: TExtensions, usernameMode?: TMode): CreatedSchemas<TExtensions, TMode> {
+  const signupBase =
+    (usernameMode ?? 'optional') === 'optional' ? signupSchemaOptionalUsername : signupSchema;
   return {
     signup: extensions?.signup ? signupBase.merge(extensions.signup) : signupBase,
     login: extensions?.login ? loginSchema.merge(extensions.login) : loginSchema,
     oauth: extensions?.oauth ? oAuthLoginSchema.merge(extensions.oauth) : oAuthLoginSchema,
-  } as CreatedSchemas<TExtensions>;
+  } as CreatedSchemas<TExtensions, TMode>;
 }

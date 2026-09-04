@@ -10,7 +10,7 @@ import { MultiAccountProcedureFactory } from './procedures/multiAccount';
 import { OAuthLoginProcedureFactory } from './procedures/oauth';
 import { PasskeyProcedureFactory } from './procedures/passkey';
 import { DeviceTwoFaProcedureFactory, StandardTwoFaProcedureFactory } from './procedures/twoFa';
-import type { AuthFeatures, TwoFaMode } from './types/config';
+import type { AuthFeatures, TwoFaMode, UsernameMode } from './types/config';
 import type { SchemaExtensions } from './types/hooks';
 import { type AuthProcedure, type BaseProcedure, type TrpcContext } from './types/trpc';
 import type { AuthConfig, ResolvedAuthConfig } from './utilities/config';
@@ -33,9 +33,12 @@ export const createContext = ({ req, res }: CreateHTTPContextOptions): TrpcConte
  * router itself, so each builder can do that with a literal procedure set
  * (preserving narrow inferred types per mode).
  */
-class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
+class AuthScaffold<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> {
   config: ResolvedAuthConfig;
-  schemas: CreatedSchemas<TExtensions>;
+  schemas: CreatedSchemas<TExtensions, TMode>;
   t: ReturnType<typeof createTrpcBuilder>;
   authGuard: ReturnType<typeof createAuthGuard>;
   procedure: BaseProcedure;
@@ -43,9 +46,9 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
 
   constructor(userConfig: AuthConfig<TExtensions>) {
     this.config = createAuthConfig(userConfig);
-    this.schemas = createSchemas<TExtensions>(
+    this.schemas = createSchemas<TExtensions, TMode>(
       userConfig.schemaExtensions,
-      userConfig.features?.usernameMode
+      userConfig.features?.usernameMode as TMode | undefined
     );
     this.t = createTrpcBuilder(this.config);
     this.authGuard = createAuthGuard(this.config, this.t);
@@ -55,7 +58,7 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
 
   /** Procedures common to both router modes. */
   buildSharedProcedures() {
-    const baseRoutes = new BaseProcedureFactory<TExtensions>(
+    const baseRoutes = new BaseProcedureFactory<TExtensions, TMode>(
       this.config,
       this.procedure,
       this.authProcedure
@@ -65,7 +68,7 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
       this.config,
       this.authProcedure
     );
-    const oAuthLoginRoutes = new OAuthLoginProcedureFactory<TExtensions>(
+    const oAuthLoginRoutes = new OAuthLoginProcedureFactory<TExtensions, TMode>(
       this.config,
       this.procedure,
       this.authProcedure
@@ -78,7 +81,7 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
       this.config,
       this.authProcedure
     ).createMultiAccountProcedures();
-    const passkeyRoutes = new PasskeyProcedureFactory<TExtensions>(
+    const passkeyRoutes = new PasskeyProcedureFactory<TExtensions, TMode>(
       this.config,
       this.procedure,
       this.authProcedure
@@ -98,26 +101,38 @@ class AuthScaffold<TExtensions extends SchemaExtensions = {}> {
   }
 }
 
-/** Concrete return type of a standard-mode auth router. */
-export type StandardAuthRouter<TExtensions extends SchemaExtensions = {}> = ReturnType<
-  typeof buildStandardAuthRouter<TExtensions>
->;
+/**
+ * Concrete return type of a standard-mode auth router.
+ *
+ * `TMode` mirrors `features.usernameMode`, so `register`'s input type matches
+ * what the schema actually validates. It defaults to `'optional'` — the same
+ * default the runtime uses.
+ */
+export type StandardAuthRouter<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> = ReturnType<typeof buildStandardAuthRouter<TExtensions, TMode>>;
 
 /** Concrete return type of a device-mode auth router. */
-export type DeviceAuthRouter<TExtensions extends SchemaExtensions = {}> = ReturnType<
-  typeof buildDeviceAuthRouter<TExtensions>
->;
+export type DeviceAuthRouter<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> = ReturnType<typeof buildDeviceAuthRouter<TExtensions, TMode>>;
 
 /**
  * Backwards-compatible alias. Defaults to the standard auth router shape —
  * if you set `features.twoFaMode: 'device'`, use `DeviceAuthRouter` instead.
  */
-export type AuthRouter<TExtensions extends SchemaExtensions = {}> = StandardAuthRouter<TExtensions>;
+export type AuthRouter<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+> = StandardAuthRouter<TExtensions, TMode>;
 
-function buildStandardAuthRouter<TExtensions extends SchemaExtensions = {}>(
-  config: AuthConfig<TExtensions>
-) {
-  const scaffold = new AuthScaffold<TExtensions>(config);
+function buildStandardAuthRouter<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+>(config: AuthConfig<TExtensions>) {
+  const scaffold = new AuthScaffold<TExtensions, TMode>(config);
   const shared = scaffold.buildSharedProcedures();
   const twoFa = new StandardTwoFaProcedureFactory(
     scaffold.config,
@@ -149,10 +164,11 @@ function buildStandardAuthRouter<TExtensions extends SchemaExtensions = {}>(
   };
 }
 
-function buildDeviceAuthRouter<TExtensions extends SchemaExtensions = {}>(
-  config: AuthConfig<TExtensions> & { deviceAuth: DeviceAuthAdapter }
-) {
-  const scaffold = new AuthScaffold<TExtensions>(config);
+function buildDeviceAuthRouter<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+>(config: AuthConfig<TExtensions> & { deviceAuth: DeviceAuthAdapter }) {
+  const scaffold = new AuthScaffold<TExtensions, TMode>(config);
   if (!scaffold.config.deviceAuth) {
     throw new Error(
       "@factiii/auth: features.twoFaMode is 'device' but no `deviceAuth` adapter was provided."
@@ -204,29 +220,49 @@ function buildDeviceAuthRouter<TExtensions extends SchemaExtensions = {}>(
 //   procedures are completely absent from the type surface.
 
 /** Standard mode (default). No deviceAuth needed. */
-export function createAuthRouter<TExtensions extends SchemaExtensions = {}>(
+export function createAuthRouter<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+>(
   config: AuthConfig<TExtensions> & {
-    features?: AuthFeatures & { twoFaMode?: 'standard' };
+    // `usernameMode` is omitted from AuthFeatures before being re-declared as
+    // TMode. Intersecting instead would type the property `UsernameMode & TMode`,
+    // and TS cannot infer TMode out of an intersection — it would silently fall
+    // back to the 'optional' default and type register's input as loose for
+    // every consumer, which is the 0.20.0-0.20.3 bug this fixes.
+    features?: Omit<AuthFeatures, 'usernameMode'> & {
+      twoFaMode?: 'standard';
+      usernameMode?: TMode;
+    };
     deviceAuth?: undefined;
   }
-): StandardAuthRouter<TExtensions>;
+): StandardAuthRouter<TExtensions, TMode>;
 
 /** Device mode. `deviceAuth` is required at the type level. */
-export function createAuthRouter<TExtensions extends SchemaExtensions = {}>(
+export function createAuthRouter<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+>(
   config: AuthConfig<TExtensions> & {
-    features: AuthFeatures & { twoFaMode: 'device' };
+    features: Omit<AuthFeatures, 'usernameMode'> & {
+      twoFaMode: 'device';
+      usernameMode?: TMode;
+    };
     deviceAuth: DeviceAuthAdapter;
   }
-): DeviceAuthRouter<TExtensions>;
+): DeviceAuthRouter<TExtensions, TMode>;
 
-export function createAuthRouter<TExtensions extends SchemaExtensions = {}>(
+export function createAuthRouter<
+  TExtensions extends SchemaExtensions = {},
+  TMode extends UsernameMode = 'optional',
+>(
   config: AuthConfig<TExtensions>
-): StandardAuthRouter<TExtensions> | DeviceAuthRouter<TExtensions> {
+): StandardAuthRouter<TExtensions, TMode> | DeviceAuthRouter<TExtensions, TMode> {
   const mode: TwoFaMode = config.features?.twoFaMode ?? 'standard';
   if (mode === 'device') {
-    return buildDeviceAuthRouter(
+    return buildDeviceAuthRouter<TExtensions, TMode>(
       config as AuthConfig<TExtensions> & { deviceAuth: DeviceAuthAdapter }
     );
   }
-  return buildStandardAuthRouter(config);
+  return buildStandardAuthRouter<TExtensions, TMode>(config);
 }
