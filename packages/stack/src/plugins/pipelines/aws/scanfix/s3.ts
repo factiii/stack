@@ -17,10 +17,7 @@ import {
   hasCors,
   getS3Client,
   confirmAwsAction,
-  CreateBucketCommand,
-  PutPublicAccessBlockCommand,
-  PutBucketEncryptionCommand,
-  PutBucketCorsCommand,
+  s3Sdk,
 } from '../utils/aws-helpers.js';
 
 /**
@@ -72,9 +69,9 @@ export const s3Fixes: Fix[] = [
 
         // Create bucket (us-east-1 doesn't need LocationConstraint)
         if (region === 'us-east-1') {
-          await s3.send(new CreateBucketCommand({ Bucket: bucketName }));
+          await s3.send(new (s3Sdk().CreateBucketCommand)({ Bucket: bucketName }));
         } else {
-          await s3.send(new CreateBucketCommand({
+          await s3.send(new (s3Sdk().CreateBucketCommand)({
             Bucket: bucketName,
             CreateBucketConfiguration: { LocationConstraint: region as any },
           }));
@@ -82,7 +79,7 @@ export const s3Fixes: Fix[] = [
         console.log('   Created S3 bucket: ' + bucketName);
 
         // Block all public access
-        await s3.send(new PutPublicAccessBlockCommand({
+        await s3.send(new (s3Sdk().PutPublicAccessBlockCommand)({
           Bucket: bucketName,
           PublicAccessBlockConfiguration: {
             BlockPublicAcls: true,
@@ -94,7 +91,7 @@ export const s3Fixes: Fix[] = [
         console.log('   Blocked all public access');
 
         // Enable server-side encryption (AES-256)
-        await s3.send(new PutBucketEncryptionCommand({
+        await s3.send(new (s3Sdk().PutBucketEncryptionCommand)({
           Bucket: bucketName,
           ServerSideEncryptionConfiguration: {
             Rules: [{
@@ -156,7 +153,7 @@ export const s3Fixes: Fix[] = [
       try {
         const s3 = getS3Client(region);
 
-        await s3.send(new PutBucketCorsCommand({
+        await s3.send(new (s3Sdk().PutBucketCorsCommand)({
           Bucket: bucketName,
           CORSConfiguration: {
             CORSRules: [{

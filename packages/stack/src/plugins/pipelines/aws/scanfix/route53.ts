@@ -8,18 +8,16 @@
 
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
 import {
-    getAwsConfig,
-    getProjectName,
-    isAwsConfigured,
-    findInstance,
-    findElasticIp,
-    findHostedZone,
-    findARecord,
-    getRoute53Client,
-    confirmAwsAction,
-    CreateHostedZoneCommand,
-    ChangeResourceRecordSetsCommand,
-    GetHostedZoneCommand,
+  getAwsConfig,
+  getProjectName,
+  isAwsConfigured,
+  findInstance,
+  findElasticIp,
+  findHostedZone,
+  findARecord,
+  getRoute53Client,
+  confirmAwsAction,
+  route53Sdk,
 } from '../utils/aws-helpers.js';
 import { extractEnvironments } from '../../../../utils/config-helpers.js';
 
@@ -81,7 +79,7 @@ export const route53Fixes: Fix[] = [
 
                 // Create hosted zone with a unique caller reference
                 const callerRef = 'factiii-' + Date.now();
-                const result = await r53.send(new CreateHostedZoneCommand({
+                const result = await r53.send(new (route53Sdk().CreateHostedZoneCommand)({
                     Name: domain,
                     CallerReference: callerRef,
                 }));
@@ -92,7 +90,7 @@ export const route53Fixes: Fix[] = [
 
                 // Get the NS records to show the user
                 if (zoneId) {
-                    const zoneDetail = await r53.send(new GetHostedZoneCommand({
+                    const zoneDetail = await r53.send(new (route53Sdk().GetHostedZoneCommand)({
                         Id: zoneId,
                     }));
                     const nameServers = zoneDetail.DelegationSet?.NameServers ?? [];
@@ -189,7 +187,7 @@ export const route53Fixes: Fix[] = [
                 const r53 = getRoute53Client(region);
 
                 // Create/update A record (UPSERT)
-                await r53.send(new ChangeResourceRecordSetsCommand({
+                await r53.send(new (route53Sdk().ChangeResourceRecordSetsCommand)({
                     HostedZoneId: zoneId,
                     ChangeBatch: {
                         Changes: [

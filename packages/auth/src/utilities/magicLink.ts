@@ -21,7 +21,7 @@ export interface CreateMagicLinkResult {
  */
 export async function createMagicLink(
   config: ResolvedAuthConfig,
-  params: CreateMagicLinkParams,
+  params: CreateMagicLinkParams
 ): Promise<CreateMagicLinkResult> {
   if (!config.magicLink) {
     throw new Error('@factiii/auth: magicLink config is required to create magic links');
@@ -29,7 +29,7 @@ export async function createMagicLink(
 
   if (!config.database.magicLink) {
     throw new Error(
-      '@factiii/auth: database adapter does not support magicLink — add the MagicLink model to your schema',
+      '@factiii/auth: database adapter does not support magicLink — add the MagicLink model to your schema'
     );
   }
 

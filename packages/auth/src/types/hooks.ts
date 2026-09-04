@@ -1,7 +1,8 @@
-import { type z, type AnyZodObject } from 'zod';
+import { type z } from 'zod';
 
 import { type loginSchema, type oAuthLoginSchema, type signupSchema } from '../validators';
 import type { PasskeyCredential } from './passkey';
+import type { AnyZodObject } from './zod';
 
 /**
  * Schema extensions for adding custom fields to auth inputs
@@ -106,17 +107,12 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
    * Called to get additional data for session creation
    * Return an object with extra fields to include in session.create
    */
-  getSessionData?: (
-    input: SessionSourceInput<TExtensions>
-  ) => Promise<Record<string, unknown>>;
+  getSessionData?: (input: SessionSourceInput<TExtensions>) => Promise<Record<string, unknown>>;
 
   /**
    * Called after a new session is created
    */
-  onSessionCreated?: (
-    sessionId: number,
-    input: SessionSourceInput<TExtensions>
-  ) => Promise<void>;
+  onSessionCreated?: (sessionId: number, input: SessionSourceInput<TExtensions>) => Promise<void>;
 
   /**
    * Called when a session is revoked
@@ -128,7 +124,7 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
     userId: number,
     sessionId: number,
     socketId: string | null,
-    otherSessions?: Array<{ userId: number; sessionId: number; socketId: string | null }>,
+    otherSessions?: Array<{ userId: number; sessionId: number; socketId: string | null }>
   ) => Promise<void>;
 
   /**
@@ -160,7 +156,9 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
    * Called before creating a session from a magic link verification.
    * Return extra data to include in the session record (e.g., instanceId).
    */
-  onBeforeMagicLinkSession?: (userId: number) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  onBeforeMagicLinkSession?: (
+    userId: number
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
   /**
    * Custom validation for biometric verification

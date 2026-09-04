@@ -107,8 +107,7 @@ async function tryEc2InstanceConnect(
   config: FactiiiConfig
 ): Promise<{ added: boolean; connectedHost?: string }> {
   try {
-    const { isAwsConfigured, getAwsConfig, getProjectName, findInstance, findInstancePublicIp,
-      getEC2Client, getEC2ICClient, DescribeInstancesCommand, SendSSHPublicKeyCommand } =
+    const { isAwsConfigured, getAwsConfig, getProjectName, findInstance, findInstancePublicIp, getEC2Client, getEC2ICClient, ec2Sdk, ec2IcSdk } =
       await import('../../aws/utils/aws-helpers.js');
 
     if (!isAwsConfigured(config)) return { added: false };
@@ -127,7 +126,7 @@ async function tryEc2InstanceConnect(
     if (!instanceId) {
       try {
         const keyPairName = 'factiii-' + projectName;
-        const desc = await ec2.send(new DescribeInstancesCommand({
+        const desc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
           Filters: [
             { Name: 'key-name', Values: [keyPairName] },
             { Name: 'instance-state-name', Values: ['running', 'stopped'] },
@@ -162,7 +161,7 @@ async function tryEc2InstanceConnect(
 
       if (matchIps.size > 0) {
         try {
-          const desc = await ec2.send(new DescribeInstancesCommand({
+          const desc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
             Filters: [{ Name: 'instance-state-name', Values: ['running'] }],
           }));
           for (const reservation of desc.Reservations ?? []) {
@@ -190,7 +189,7 @@ async function tryEc2InstanceConnect(
     }
 
     // Get instance details for AZ and public IP
-    const desc = await ec2.send(new DescribeInstancesCommand({
+    const desc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
       InstanceIds: [instanceId],
     }));
     const instance = desc.Reservations?.[0]?.Instances?.[0];
@@ -223,7 +222,7 @@ async function tryEc2InstanceConnect(
     for (const target of targets) {
       // Push fresh temporary key via EC2 Instance Connect before each attempt (60s window per push)
       const eicClient = getEC2ICClient(region);
-      const sendResult = await eicClient.send(new SendSSHPublicKeyCommand({
+      const sendResult = await eicClient.send(new (ec2IcSdk().SendSSHPublicKeyCommand)({
         InstanceId: instanceId,
         InstanceOSUser: user,
         SSHPublicKey: pubKey,
@@ -290,9 +289,7 @@ async function autoGenerateAndDeploySshKey(
   if (!host || host.toUpperCase().startsWith('EXAMPLE')) {
     // Try to auto-detect host from EC2 instance (Elastic IP or public IP)
     try {
-      const { isAwsConfigured, getAwsConfig, getProjectName, findInstancePublicIp,
-        findInstance: findInst, findElasticIp: findEip, getEC2Client: getEc2,
-        DescribeInstancesCommand: DescInst } =
+      const { isAwsConfigured, getAwsConfig, getProjectName, findInstancePublicIp, findInstance: findInst, findElasticIp: findEip, getEC2Client: getEc2, ec2Sdk } =
         await import('../../aws/utils/aws-helpers.js');
 
       if (isAwsConfigured(config)) {
@@ -307,7 +304,7 @@ async function autoGenerateAndDeploySshKey(
           try {
             const ec2 = getEc2(region);
             const keyPairName = 'factiii-' + projectName;
-            const descResult = await ec2.send(new DescInst({
+            const descResult = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
               Filters: [
                 { Name: 'key-name', Values: [keyPairName] },
                 { Name: 'instance-state-name', Values: ['running'] },
@@ -382,9 +379,7 @@ async function autoGenerateAndDeploySshKey(
 
   if (isAwsStage) {
     try {
-      const { getAwsConfig: getAws, getProjectName: getProjName,
-        findInstancePublicIp: findIp, findElasticIp: findEip2,
-        getEC2Client: getEc2b, DescribeInstancesCommand: DescInst2 } =
+      const { getAwsConfig: getAws, getProjectName: getProjName, findInstancePublicIp: findIp, findElasticIp: findEip2, getEC2Client: getEc2b, ec2Sdk } =
         await import('../../aws/utils/aws-helpers.js');
       const { region } = getAws(config);
       const projName = getProjName(config);
@@ -394,7 +389,7 @@ async function autoGenerateAndDeploySshKey(
       if (!ec2PublicIp) {
         try {
           const ec2b = getEc2b(region);
-          const descResult = await ec2b.send(new DescInst2({
+          const descResult = await ec2b.send(new (ec2Sdk().DescribeInstancesCommand)({
             Filters: [
               { Name: 'key-name', Values: ['factiii-' + projName] },
               { Name: 'instance-state-name', Values: ['running'] },
@@ -731,7 +726,7 @@ export const secretsFixes: Fix[] = [
 
       try {
         // Check if AWS is configured for this project
-        const { isAwsConfigured, getAwsConfig, getAwsAccountId, getProjectName, findKeyPair, getEC2Client, CreateKeyPairCommand } =
+        const { isAwsConfigured, getAwsConfig, getAwsAccountId, getProjectName, findKeyPair, getEC2Client, ec2Sdk } =
           await import('../../aws/utils/aws-helpers.js');
 
         if (isAwsConfigured(config)) {
@@ -777,8 +772,7 @@ export const secretsFixes: Fix[] = [
             console.log('');
 
             // Import additional helpers for instance discovery
-            const { findInstance, findElasticIp, findInstancePublicIp,
-              DescribeInstancesCommand, getEC2ICClient, SendSSHPublicKeyCommand } =
+            const { findInstance, findElasticIp, findInstancePublicIp, getEC2ICClient, ec2Sdk, ec2IcSdk } =
               await import('../../aws/utils/aws-helpers.js');
 
             // Find the EC2 instance using multiple strategies
@@ -788,7 +782,7 @@ export const secretsFixes: Fix[] = [
             // Try by key pair name if tag lookup fails
             if (!instanceId) {
               try {
-                const desc = await ec2.send(new DescribeInstancesCommand({
+                const desc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
                   Filters: [
                     { Name: 'key-name', Values: [keyName] },
                     { Name: 'instance-state-name', Values: ['running', 'stopped'] },
@@ -815,7 +809,7 @@ export const secretsFixes: Fix[] = [
                     });
                   });
                   if (resolved.length > 0) {
-                    const desc = await ec2.send(new DescribeInstancesCommand({
+                    const desc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
                       Filters: [{ Name: 'instance-state-name', Values: ['running'] }],
                     }));
                     for (const r of desc.Reservations ?? []) {
@@ -838,7 +832,7 @@ export const secretsFixes: Fix[] = [
             // List ALL running instances as last resort — prefer newest (most recently launched)
             if (!instanceId) {
               try {
-                const desc = await ec2.send(new DescribeInstancesCommand({
+                const desc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
                   Filters: [{ Name: 'instance-state-name', Values: ['running'] }],
                 }));
                 const allInstances: { id: string; ip?: string; name?: string; launchTime?: Date }[] = [];
@@ -913,7 +907,7 @@ export const secretsFixes: Fix[] = [
             }
 
             // Instance found — get its details
-            const instDesc = await ec2.send(new DescribeInstancesCommand({
+            const instDesc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
               InstanceIds: [instanceId],
             }));
             const instance = instDesc.Reservations?.[0]?.Instances?.[0];
@@ -974,7 +968,7 @@ export const secretsFixes: Fix[] = [
             console.log('      [2/4] Pushing key via EC2 Instance Connect...');
 
             const eicClient = getEC2ICClient(region);
-            const sendResult = await eicClient.send(new SendSSHPublicKeyCommand({
+            const sendResult = await eicClient.send(new (ec2IcSdk().SendSSHPublicKeyCommand)({
               InstanceId: instanceId,
               InstanceOSUser: sshUser,
               SSHPublicKey: pubKey,
@@ -1059,7 +1053,7 @@ export const secretsFixes: Fix[] = [
             // Create new key pair — AWS returns the private key material
             console.log('      Creating EC2 key pair: ' + keyName);
             const ec2 = getEC2Client(region);
-            const keyResult = await ec2.send(new CreateKeyPairCommand({
+            const keyResult = await ec2.send(new (ec2Sdk().CreateKeyPairCommand)({
               KeyName: keyName,
               KeyType: 'ed25519',
             }));

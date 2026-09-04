@@ -77,9 +77,7 @@ export class OAuthLoginProcedureFactory<TExtensions extends SchemaExtensions = {
       // 1. A linked identity resolves straight to its account — even if the
       //    provider hid the email on this sign-in.
       const linked = await this.config.oauthAccounts.resolve(provider, oauthId);
-      let user = linked
-        ? await this.config.database.user.findActiveById(linked.userId)
-        : null;
+      let user = linked ? await this.config.database.user.findActiveById(linked.userId) : null;
       if (linked && !user) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'This account is not available.' });
       }

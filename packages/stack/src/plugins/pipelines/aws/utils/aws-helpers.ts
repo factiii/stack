@@ -5,89 +5,66 @@
  * Uses AWS SDK v3 clients instead of AWS CLI.
  */
 
-import {
-  EC2Client,
-  DescribeVpcsCommand,
-  DescribeSubnetsCommand,
-  DescribeSecurityGroupsCommand,
-  DescribeInstancesCommand,
-  DescribeKeyPairsCommand,
-  DescribeAddressesCommand,
-  DescribeInternetGatewaysCommand,
-  DescribeAvailabilityZonesCommand,
-  DescribeImagesCommand,
-  CreateVpcCommand,
-  ModifyVpcAttributeCommand,
-  CreateSubnetCommand,
-  ModifySubnetAttributeCommand,
-  CreateInternetGatewayCommand,
-  AttachInternetGatewayCommand,
-  CreateRouteTableCommand,
-  CreateRouteCommand,
-  AssociateRouteTableCommand,
-  CreateSecurityGroupCommand,
-  AuthorizeSecurityGroupIngressCommand,
-  CreateKeyPairCommand,
-  RunInstancesCommand,
-  AllocateAddressCommand,
-  AssociateAddressCommand,
-  type Tag,
-  type TagSpecification,
-  type Filter,
-  waitUntilInstanceRunning,
-} from '@aws-sdk/client-ec2';
-import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
-import {
-  IAMClient,
-  GetUserCommand,
-  ListUsersCommand,
-  CreateUserCommand,
-  PutUserPolicyCommand,
-  CreateAccessKeyCommand,
-} from '@aws-sdk/client-iam';
-import {
-  RDSClient,
-  DescribeDBSubnetGroupsCommand,
-  CreateDBSubnetGroupCommand,
-  DescribeDBInstancesCommand,
-  CreateDBInstanceCommand,
-} from '@aws-sdk/client-rds';
-import {
-  S3Client,
-  HeadBucketCommand,
-  CreateBucketCommand,
-  PutPublicAccessBlockCommand,
-  PutBucketEncryptionCommand,
-  GetBucketCorsCommand,
-  PutBucketCorsCommand,
-} from '@aws-sdk/client-s3';
-import {
-  ECRClient,
-  DescribeRepositoriesCommand,
-  CreateRepositoryCommand,
-  PutLifecyclePolicyCommand,
-  GetAuthorizationTokenCommand,
-} from '@aws-sdk/client-ecr';
-import {
-  SESClient,
-  VerifyDomainIdentityCommand,
-  GetIdentityVerificationAttributesCommand,
-  VerifyDomainDkimCommand,
-  GetIdentityDkimAttributesCommand,
-  GetSendQuotaCommand,
-} from '@aws-sdk/client-ses';
-import {
-  Route53Client,
-  ListHostedZonesByNameCommand,
-  CreateHostedZoneCommand,
-  ChangeResourceRecordSetsCommand,
-  ListResourceRecordSetsCommand,
-  GetHostedZoneCommand,
-} from '@aws-sdk/client-route-53';
-import {
-  EC2InstanceConnectClient,
-  SendSSHPublicKeyCommand,
-} from '@aws-sdk/client-ec2-instance-connect';
+// CRITICAL: lazy SDK loading.
+// Why: the nine @aws-sdk/client-* packages cost ~100 ms to require, which was
+// most of `npx stack` startup. Every AWS scanfix module imports this file, and
+// factiii/index.ts imports those to build its `fixes` array, so a plain
+// `import { EC2Client } from '@aws-sdk/client-ec2'` here loads the whole SDK on
+// every command — including `--help`, `ops`, `db` and `backup`, which never
+// touch AWS. The type imports below are erased by TypeScript and cost nothing;
+// the `*Sdk()` accessors require the real package on first use and cache it.
+// Breaks-if-changed: reintroducing a value import from '@aws-sdk/*' anywhere in
+// this file, or in any scanfix file, puts the SDK back on the startup path.
+import type * as Ec2 from '@aws-sdk/client-ec2';
+import type * as Sts from '@aws-sdk/client-sts';
+import type * as Iam from '@aws-sdk/client-iam';
+import type * as Rds from '@aws-sdk/client-rds';
+import type * as S3 from '@aws-sdk/client-s3';
+import type * as Ecr from '@aws-sdk/client-ecr';
+import type * as Ses from '@aws-sdk/client-ses';
+import type * as Route53 from '@aws-sdk/client-route-53';
+import type * as Ec2Ic from '@aws-sdk/client-ec2-instance-connect';
+
+let _ec2Sdk: typeof Ec2 | undefined;
+let _stsSdk: typeof Sts | undefined;
+let _iamSdk: typeof Iam | undefined;
+let _rdsSdk: typeof Rds | undefined;
+let _s3Sdk: typeof S3 | undefined;
+let _ecrSdk: typeof Ecr | undefined;
+let _sesSdk: typeof Ses | undefined;
+let _route53Sdk: typeof Route53 | undefined;
+let _ec2IcSdk: typeof Ec2Ic | undefined;
+
+/* eslint-disable @typescript-eslint/no-require-imports */
+export function ec2Sdk(): typeof Ec2 {
+  return (_ec2Sdk ??= require('@aws-sdk/client-ec2') as typeof Ec2);
+}
+export function stsSdk(): typeof Sts {
+  return (_stsSdk ??= require('@aws-sdk/client-sts') as typeof Sts);
+}
+export function iamSdk(): typeof Iam {
+  return (_iamSdk ??= require('@aws-sdk/client-iam') as typeof Iam);
+}
+export function rdsSdk(): typeof Rds {
+  return (_rdsSdk ??= require('@aws-sdk/client-rds') as typeof Rds);
+}
+export function s3Sdk(): typeof S3 {
+  return (_s3Sdk ??= require('@aws-sdk/client-s3') as typeof S3);
+}
+export function ecrSdk(): typeof Ecr {
+  return (_ecrSdk ??= require('@aws-sdk/client-ecr') as typeof Ecr);
+}
+export function sesSdk(): typeof Ses {
+  return (_sesSdk ??= require('@aws-sdk/client-ses') as typeof Ses);
+}
+export function route53Sdk(): typeof Route53 {
+  return (_route53Sdk ??= require('@aws-sdk/client-route-53') as typeof Route53);
+}
+export function ec2IcSdk(): typeof Ec2Ic {
+  return (_ec2IcSdk ??= require('@aws-sdk/client-ec2-instance-connect') as typeof Ec2Ic);
+}
+/* eslint-enable @typescript-eslint/no-require-imports */
+
 import type { FactiiiConfig, EnvironmentConfig } from '../../../../types/index.js';
 import { AnsibleVaultSecrets } from '../../../../utils/ansible-vault-secrets.js';
 
@@ -149,11 +126,11 @@ export async function verifyCredentialsWithSts(
   region: string
 ): Promise<string | null> {
   try {
-    const sts = new STSClient({
+    const sts = new (stsSdk().STSClient)({
       region,
       credentials: { accessKeyId, secretAccessKey },
     });
-    const result = await sts.send(new GetCallerIdentityCommand({}));
+    const result = await sts.send(new (stsSdk().GetCallerIdentityCommand)({}));
     return result.Account ?? null;
   } catch {
     return null;
@@ -240,40 +217,40 @@ function getCachedClient<T>(
   return clientCache[key] as T;
 }
 
-export function getEC2Client(region: string): EC2Client {
-  return getCachedClient(EC2Client, region);
+export function getEC2Client(region: string): Ec2.EC2Client {
+  return getCachedClient(ec2Sdk().EC2Client, region);
 }
 
-export function getSTSClient(region: string): STSClient {
-  return getCachedClient(STSClient, region);
+export function getSTSClient(region: string): Sts.STSClient {
+  return getCachedClient(stsSdk().STSClient, region);
 }
 
-export function getIAMClient(region: string): IAMClient {
-  return getCachedClient(IAMClient, region);
+export function getIAMClient(region: string): Iam.IAMClient {
+  return getCachedClient(iamSdk().IAMClient, region);
 }
 
-export function getRDSClient(region: string): RDSClient {
-  return getCachedClient(RDSClient, region);
+export function getRDSClient(region: string): Rds.RDSClient {
+  return getCachedClient(rdsSdk().RDSClient, region);
 }
 
-export function getS3Client(region: string): S3Client {
-  return getCachedClient(S3Client, region);
+export function getS3Client(region: string): S3.S3Client {
+  return getCachedClient(s3Sdk().S3Client, region);
 }
 
-export function getECRClient(region: string): ECRClient {
-  return getCachedClient(ECRClient, region);
+export function getECRClient(region: string): Ecr.ECRClient {
+  return getCachedClient(ecrSdk().ECRClient, region);
 }
 
-export function getSESClient(region: string): SESClient {
-  return getCachedClient(SESClient, region);
+export function getSESClient(region: string): Ses.SESClient {
+  return getCachedClient(sesSdk().SESClient, region);
 }
 
-export function getRoute53Client(region: string): Route53Client {
-  return getCachedClient(Route53Client, region);
+export function getRoute53Client(region: string): Route53.Route53Client {
+  return getCachedClient(route53Sdk().Route53Client, region);
 }
 
-export function getEC2ICClient(region: string): EC2InstanceConnectClient {
-  return getCachedClient(EC2InstanceConnectClient, region);
+export function getEC2ICClient(region: string): Ec2Ic.EC2InstanceConnectClient {
+  return getCachedClient(ec2IcSdk().EC2InstanceConnectClient, region);
 }
 
 // ============================================================
@@ -283,8 +260,8 @@ export function getEC2ICClient(region: string): EC2InstanceConnectClient {
 /**
  * Build standard tags array for AWS resources
  */
-export function buildTags(projectName: string, extraTags?: Record<string, string>): Tag[] {
-  const tags: Tag[] = [
+export function buildTags(projectName: string, extraTags?: Record<string, string>): Ec2.Tag[] {
+  const tags: Ec2.Tag[] = [
     { Key: 'factiii:project', Value: projectName },
     { Key: 'factiii:managed', Value: 'true' },
     { Key: 'Name', Value: 'factiii-' + projectName },
@@ -300,9 +277,9 @@ export function buildTags(projectName: string, extraTags?: Record<string, string
 /**
  * Build TagSpecification for resource creation
  */
-export function tagSpec(resourceType: string, projectName: string, extraTags?: Record<string, string>): TagSpecification {
+export function tagSpec(resourceType: string, projectName: string, extraTags?: Record<string, string>): Ec2.TagSpecification {
   return {
-    ResourceType: resourceType as TagSpecification['ResourceType'],
+    ResourceType: resourceType as Ec2.TagSpecification['ResourceType'],
     Tags: buildTags(projectName, extraTags),
   };
 }
@@ -310,7 +287,7 @@ export function tagSpec(resourceType: string, projectName: string, extraTags?: R
 /**
  * Build a filter for factiii:project tag
  */
-export function projectFilter(projectName: string): Filter {
+export function projectFilter(projectName: string): Ec2.Filter {
   return { Name: 'tag:factiii:project', Values: [projectName] };
 }
 
@@ -432,7 +409,7 @@ export function getResourceNames(config: FactiiiConfig): ResourceNames {
 export async function getAwsAccountId(region: string): Promise<string | null> {
   try {
     const sts = getSTSClient(region);
-    const result = await sts.send(new GetCallerIdentityCommand({}));
+    const result = await sts.send(new (stsSdk().GetCallerIdentityCommand)({}));
     return result.Account ?? null;
   } catch {
     return null;
@@ -447,7 +424,7 @@ export async function getAwsAccountId(region: string): Promise<string | null> {
 export async function getCallerArn(region: string): Promise<string | null> {
   try {
     const sts = getSTSClient(region);
-    const result = await sts.send(new GetCallerIdentityCommand({}));
+    const result = await sts.send(new (stsSdk().GetCallerIdentityCommand)({}));
     const arn = result.Arn ?? '';
     const userName = arn.includes('/') ? arn.split('/').pop() : null;
     let accessKeyId: string | null = null;
@@ -469,7 +446,7 @@ export async function getCallerArn(region: string): Promise<string | null> {
 export async function canManageIam(region: string): Promise<boolean> {
   try {
     const iam = getIAMClient(region);
-    await iam.send(new ListUsersCommand({ MaxItems: 1 }));
+    await iam.send(new (iamSdk().ListUsersCommand)({ MaxItems: 1 }));
     return true;
   } catch {
     return false;
@@ -488,7 +465,7 @@ export async function getEcrAuthToken(region: string): Promise<{
 } | null> {
   try {
     const ecr = getECRClient(region);
-    const result = await ecr.send(new GetAuthorizationTokenCommand({}));
+    const result = await ecr.send(new (ecrSdk().GetAuthorizationTokenCommand)({}));
     const authData = result.authorizationData?.[0];
     if (!authData?.authorizationToken || !authData?.proxyEndpoint) return null;
 
@@ -518,7 +495,7 @@ export async function findVpc(projectName: string, region: string, config?: Fact
   if (config?.aws?.vpc_id) return config.aws.vpc_id;
   try {
     const ec2 = getEC2Client(region);
-    const result = await ec2.send(new DescribeVpcsCommand({
+    const result = await ec2.send(new (ec2Sdk().DescribeVpcsCommand)({
       Filters: [projectFilter(projectName)],
     }));
     return result.Vpcs?.[0]?.VpcId ?? null;
@@ -535,7 +512,7 @@ export async function findSubnet(projectName: string, region: string, type: stri
   if (type === 'public' && config?.aws?.subnet_public_id) return config.aws.subnet_public_id;
   try {
     const ec2 = getEC2Client(region);
-    const result = await ec2.send(new DescribeSubnetsCommand({
+    const result = await ec2.send(new (ec2Sdk().DescribeSubnetsCommand)({
       Filters: [
         projectFilter(projectName),
         { Name: 'tag:factiii:subnet-type', Values: [type] },
@@ -554,7 +531,7 @@ export async function findPrivateSubnets(projectName: string, region: string, co
   if (config?.aws?.subnet_private_ids?.length) return config.aws.subnet_private_ids;
   try {
     const ec2 = getEC2Client(region);
-    const result = await ec2.send(new DescribeSubnetsCommand({
+    const result = await ec2.send(new (ec2Sdk().DescribeSubnetsCommand)({
       Filters: [
         projectFilter(projectName),
         { Name: 'tag:factiii:subnet-type', Values: ['private'] },
@@ -572,7 +549,7 @@ export async function findPrivateSubnets(projectName: string, region: string, co
 export async function findSecurityGroup(groupName: string, vpcId: string, region: string): Promise<string | null> {
   try {
     const ec2 = getEC2Client(region);
-    const result = await ec2.send(new DescribeSecurityGroupsCommand({
+    const result = await ec2.send(new (ec2Sdk().DescribeSecurityGroupsCommand)({
       Filters: [
         { Name: 'group-name', Values: [groupName] },
         { Name: 'vpc-id', Values: [vpcId] },
@@ -590,7 +567,7 @@ export async function findSecurityGroup(groupName: string, vpcId: string, region
 export async function findKeyPair(keyName: string, region: string): Promise<boolean> {
   try {
     const ec2 = getEC2Client(region);
-    const result = await ec2.send(new DescribeKeyPairsCommand({
+    const result = await ec2.send(new (ec2Sdk().DescribeKeyPairsCommand)({
       KeyNames: [keyName],
     }));
     return (result.KeyPairs?.length ?? 0) > 0;
@@ -605,7 +582,7 @@ export async function findKeyPair(keyName: string, region: string): Promise<bool
 export async function findInstance(projectName: string, region: string): Promise<string | null> {
   try {
     const ec2 = getEC2Client(region);
-    const result = await ec2.send(new DescribeInstancesCommand({
+    const result = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
       Filters: [
         projectFilter(projectName),
         { Name: 'instance-state-name', Values: ['running', 'stopped'] },
@@ -624,7 +601,7 @@ export async function findInstance(projectName: string, region: string): Promise
 export async function findInstancePublicIp(projectName: string, region: string): Promise<string | null> {
   try {
     const ec2 = getEC2Client(region);
-    const result = await ec2.send(new DescribeInstancesCommand({
+    const result = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
       Filters: [
         projectFilter(projectName),
         { Name: 'instance-state-name', Values: ['running'] },
@@ -663,7 +640,7 @@ export async function pushSshPublicKey(
     let az = availabilityZone;
     if (!az) {
       const ec2 = getEC2Client(region);
-      const desc = await ec2.send(new DescribeInstancesCommand({
+      const desc = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
         InstanceIds: [instanceId],
       }));
       az = desc.Reservations?.[0]?.Instances?.[0]?.Placement?.AvailabilityZone;
@@ -671,7 +648,7 @@ export async function pushSshPublicKey(
     if (!az) return false;
 
     const ic = getEC2ICClient(region);
-    const result = await ic.send(new SendSSHPublicKeyCommand({
+    const result = await ic.send(new (ec2IcSdk().SendSSHPublicKeyCommand)({
       InstanceId: instanceId,
       InstanceOSUser: osUser,
       SSHPublicKey: sshPublicKey,
@@ -689,7 +666,7 @@ export async function pushSshPublicKey(
 export async function findElasticIp(instanceId: string, region: string): Promise<string | null> {
   try {
     const ec2 = getEC2Client(region);
-    const result = await ec2.send(new DescribeAddressesCommand({
+    const result = await ec2.send(new (ec2Sdk().DescribeAddressesCommand)({
       Filters: [{ Name: 'instance-id', Values: [instanceId] }],
     }));
     return result.Addresses?.[0]?.PublicIp ?? null;
@@ -704,7 +681,7 @@ export async function findElasticIp(instanceId: string, region: string): Promise
 export async function findIgw(vpcId: string, region: string): Promise<string | null> {
   try {
     const ec2 = getEC2Client(region);
-    const result = await ec2.send(new DescribeInternetGatewaysCommand({
+    const result = await ec2.send(new (ec2Sdk().DescribeInternetGatewaysCommand)({
       Filters: [{ Name: 'attachment.vpc-id', Values: [vpcId] }],
     }));
     return result.InternetGateways?.[0]?.InternetGatewayId ?? null;
@@ -719,7 +696,7 @@ export async function findIgw(vpcId: string, region: string): Promise<string | n
 export async function findDbSubnetGroup(groupName: string, region: string): Promise<boolean> {
   try {
     const rds = getRDSClient(region);
-    const result = await rds.send(new DescribeDBSubnetGroupsCommand({
+    const result = await rds.send(new (rdsSdk().DescribeDBSubnetGroupsCommand)({
       DBSubnetGroupName: groupName,
     }));
     return (result.DBSubnetGroups?.length ?? 0) > 0;
@@ -734,7 +711,7 @@ export async function findDbSubnetGroup(groupName: string, region: string): Prom
 export async function findRdsInstance(dbInstanceId: string, region: string): Promise<{ status: string; endpoint: string | null } | null> {
   try {
     const rds = getRDSClient(region);
-    const result = await rds.send(new DescribeDBInstancesCommand({
+    const result = await rds.send(new (rdsSdk().DescribeDBInstancesCommand)({
       DBInstanceIdentifier: dbInstanceId,
     }));
     const instance = result.DBInstances?.[0];
@@ -763,7 +740,7 @@ export async function findRdsEndpoint(projectName: string, region: string): Prom
 export async function findEcrRepo(repoName: string, region: string): Promise<boolean> {
   try {
     const ecr = getECRClient(region);
-    await ecr.send(new DescribeRepositoriesCommand({
+    await ecr.send(new (ecrSdk().DescribeRepositoriesCommand)({
       repositoryNames: [repoName],
     }));
     return true;
@@ -778,7 +755,7 @@ export async function findEcrRepo(repoName: string, region: string): Promise<boo
 export async function findBucket(bucketName: string, region: string): Promise<boolean> {
   try {
     const s3 = getS3Client(region);
-    await s3.send(new HeadBucketCommand({ Bucket: bucketName }));
+    await s3.send(new (s3Sdk().HeadBucketCommand)({ Bucket: bucketName }));
     return true;
   } catch {
     return false;
@@ -791,7 +768,7 @@ export async function findBucket(bucketName: string, region: string): Promise<bo
 export async function findIamUser(userName: string, region: string): Promise<boolean> {
   try {
     const iam = getIAMClient(region);
-    await iam.send(new GetUserCommand({ UserName: userName }));
+    await iam.send(new (iamSdk().GetUserCommand)({ UserName: userName }));
     return true;
   } catch {
     return false;
@@ -804,7 +781,7 @@ export async function findIamUser(userName: string, region: string): Promise<boo
 export async function isDomainVerified(domain: string, region: string): Promise<boolean> {
   try {
     const ses = getSESClient(region);
-    const result = await ses.send(new GetIdentityVerificationAttributesCommand({
+    const result = await ses.send(new (sesSdk().GetIdentityVerificationAttributesCommand)({
       Identities: [domain],
     }));
     return result.VerificationAttributes?.[domain]?.VerificationStatus === 'Success';
@@ -819,7 +796,7 @@ export async function isDomainVerified(domain: string, region: string): Promise<
 export async function hasDkim(domain: string, region: string): Promise<boolean> {
   try {
     const ses = getSESClient(region);
-    const result = await ses.send(new GetIdentityDkimAttributesCommand({
+    const result = await ses.send(new (sesSdk().GetIdentityDkimAttributesCommand)({
       Identities: [domain],
     }));
     return result.DkimAttributes?.[domain]?.DkimEnabled === true;
@@ -834,7 +811,7 @@ export async function hasDkim(domain: string, region: string): Promise<boolean> 
 export async function hasCors(bucketName: string, region: string): Promise<boolean> {
   try {
     const s3 = getS3Client(region);
-    const result = await s3.send(new GetBucketCorsCommand({ Bucket: bucketName }));
+    const result = await s3.send(new (s3Sdk().GetBucketCorsCommand)({ Bucket: bucketName }));
     return (result.CORSRules?.length ?? 0) > 0;
   } catch {
     return false;
@@ -866,7 +843,7 @@ export async function findHostedZone(domain: string, region: string): Promise<st
     const r53 = getRoute53Client(region);
     // Ensure domain has trailing dot for Route53 lookup
     const dnsName = domain.endsWith('.') ? domain : domain + '.';
-    const result = await r53.send(new ListHostedZonesByNameCommand({
+    const result = await r53.send(new (route53Sdk().ListHostedZonesByNameCommand)({
       DNSName: dnsName,
       MaxItems: 1,
     }));
@@ -888,7 +865,7 @@ export async function findARecord(domain: string, hostedZoneId: string, region: 
   try {
     const r53 = getRoute53Client(region);
     const dnsName = domain.endsWith('.') ? domain : domain + '.';
-    const result = await r53.send(new ListResourceRecordSetsCommand({
+    const result = await r53.send(new (route53Sdk().ListResourceRecordSetsCommand)({
       HostedZoneId: hostedZoneId,
       StartRecordName: dnsName,
       StartRecordType: 'A',
@@ -905,82 +882,8 @@ export async function findARecord(domain: string, hostedZoneId: string, region: 
 }
 
 // ============================================================
-// RE-EXPORTS for SDK commands used directly in scanfix files
+// SDK ACCESS for scanfix files
 // ============================================================
-
-export {
-  // EC2
-  EC2Client,
-  DescribeVpcsCommand,
-  DescribeSubnetsCommand,
-  DescribeSecurityGroupsCommand,
-  DescribeInstancesCommand,
-  DescribeKeyPairsCommand,
-  DescribeAddressesCommand,
-  DescribeInternetGatewaysCommand,
-  DescribeAvailabilityZonesCommand,
-  DescribeImagesCommand,
-  CreateVpcCommand,
-  ModifyVpcAttributeCommand,
-  CreateSubnetCommand,
-  ModifySubnetAttributeCommand,
-  CreateInternetGatewayCommand,
-  AttachInternetGatewayCommand,
-  CreateRouteTableCommand,
-  CreateRouteCommand,
-  AssociateRouteTableCommand,
-  CreateSecurityGroupCommand,
-  AuthorizeSecurityGroupIngressCommand,
-  CreateKeyPairCommand,
-  RunInstancesCommand,
-  AllocateAddressCommand,
-  AssociateAddressCommand,
-  waitUntilInstanceRunning,
-  // STS
-  STSClient,
-  GetCallerIdentityCommand,
-  // IAM
-  IAMClient,
-  GetUserCommand,
-  ListUsersCommand,
-  CreateUserCommand,
-  PutUserPolicyCommand,
-  CreateAccessKeyCommand,
-  // RDS
-  RDSClient,
-  DescribeDBSubnetGroupsCommand,
-  CreateDBSubnetGroupCommand,
-  DescribeDBInstancesCommand,
-  CreateDBInstanceCommand,
-  // S3
-  S3Client,
-  HeadBucketCommand,
-  CreateBucketCommand,
-  PutPublicAccessBlockCommand,
-  PutBucketEncryptionCommand,
-  GetBucketCorsCommand,
-  PutBucketCorsCommand,
-  // ECR
-  ECRClient,
-  DescribeRepositoriesCommand,
-  CreateRepositoryCommand,
-  PutLifecyclePolicyCommand,
-  GetAuthorizationTokenCommand,
-  // SES
-  SESClient,
-  VerifyDomainIdentityCommand,
-  GetIdentityVerificationAttributesCommand,
-  VerifyDomainDkimCommand,
-  GetIdentityDkimAttributesCommand,
-  GetSendQuotaCommand,
-  // Route53
-  Route53Client,
-  ListHostedZonesByNameCommand,
-  CreateHostedZoneCommand,
-  ChangeResourceRecordSetsCommand,
-  ListResourceRecordSetsCommand,
-  GetHostedZoneCommand,
-  // EC2 Instance Connect
-  EC2InstanceConnectClient,
-  SendSSHPublicKeyCommand,
-};
+// Scanfix files no longer import command classes from here. They call the
+// `*Sdk()` accessors above inside their scan/fix bodies, which keeps the SDK
+// off the module-load path. See the CRITICAL note at the top of this file.

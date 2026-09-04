@@ -100,9 +100,7 @@ export function createAuthConfig(config: AuthConfig): ResolvedAuthConfig {
     );
   }
 
-  const database =
-    config.database ??
-    createPrismaAdapter(config.prisma);
+  const database = config.database ?? createPrismaAdapter(config.prisma);
 
   const emailService = config.emailService ?? createNoopEmailAdapter();
 

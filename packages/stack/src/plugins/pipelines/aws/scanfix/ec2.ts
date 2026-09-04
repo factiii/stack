@@ -23,13 +23,7 @@ import {
   tagSpec,
   getEC2Client,
   confirmAwsAction,
-  CreateKeyPairCommand,
-  DescribeImagesCommand,
-  RunInstancesCommand,
-  waitUntilInstanceRunning,
-  DescribeInstancesCommand,
-  AllocateAddressCommand,
-  AssociateAddressCommand,
+  ec2Sdk,
 } from '../utils/aws-helpers.js';
 
 export const ec2Fixes: Fix[] = [
@@ -63,7 +57,7 @@ export const ec2Fixes: Fix[] = [
         const ec2 = getEC2Client(region);
 
         // Create key pair — AWS returns the private key material
-        const result = await ec2.send(new CreateKeyPairCommand({
+        const result = await ec2.send(new (ec2Sdk().CreateKeyPairCommand)({
           KeyName: keyName,
           KeyType: 'ed25519',
         }));
@@ -154,7 +148,7 @@ export const ec2Fixes: Fix[] = [
         const ec2 = getEC2Client(region);
 
         // Get latest Ubuntu 22.04 AMI
-        const amiResult = await ec2.send(new DescribeImagesCommand({
+        const amiResult = await ec2.send(new (ec2Sdk().DescribeImagesCommand)({
           Owners: ['099720109477'],
           Filters: [
             { Name: 'name', Values: ['ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*'] },
@@ -172,7 +166,7 @@ export const ec2Fixes: Fix[] = [
         console.log('   Using AMI: ' + amiId);
 
         // Launch instance
-        const instanceResult = await ec2.send(new RunInstancesCommand({
+        const instanceResult = await ec2.send(new (ec2Sdk().RunInstancesCommand)({
           ImageId: amiId,
           InstanceType: 't3.micro',
           KeyName: keyName,
@@ -188,13 +182,13 @@ export const ec2Fixes: Fix[] = [
         console.log('   Waiting for instance to be running...');
 
         // Wait for instance to be running
-        await waitUntilInstanceRunning(
+        await ec2Sdk().waitUntilInstanceRunning(
           { client: ec2, maxWaitTime: 300 },
           { InstanceIds: [instanceId!] }
         );
 
         // Get public IP
-        const descResult = await ec2.send(new DescribeInstancesCommand({
+        const descResult = await ec2.send(new (ec2Sdk().DescribeInstancesCommand)({
           InstanceIds: [instanceId!],
         }));
         const publicIp = descResult.Reservations?.[0]?.Instances?.[0]?.PublicIpAddress;
@@ -247,7 +241,7 @@ export const ec2Fixes: Fix[] = [
         const ec2 = getEC2Client(region);
 
         // Allocate Elastic IP
-        const eipResult = await ec2.send(new AllocateAddressCommand({
+        const eipResult = await ec2.send(new (ec2Sdk().AllocateAddressCommand)({
           Domain: 'vpc',
           TagSpecifications: [tagSpec('elastic-ip', projectName)],
         }));
@@ -256,7 +250,7 @@ export const ec2Fixes: Fix[] = [
         console.log('   Allocated Elastic IP: ' + publicIp);
 
         // Associate with instance
-        await ec2.send(new AssociateAddressCommand({
+        await ec2.send(new (ec2Sdk().AssociateAddressCommand)({
           AllocationId: allocationId,
           InstanceId: instanceId,
         }));

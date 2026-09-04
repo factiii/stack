@@ -8,11 +8,13 @@ import { type Meta, type TrpcBuilder, type TrpcContext } from '../types/trpc';
 import { type ResolvedAuthConfig } from './config';
 
 /** Type guard for objects with a specific string property. */
-function hasStringProp<K extends string>(
-  obj: unknown,
-  key: K
-): obj is Record<K, string> {
-  return typeof obj === 'object' && obj !== null && key in obj && typeof (obj as Record<string, unknown>)[key] === 'string';
+function hasStringProp<K extends string>(obj: unknown, key: K): obj is Record<K, string> {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    key in obj &&
+    typeof (obj as Record<string, unknown>)[key] === 'string'
+  );
 }
 
 /**

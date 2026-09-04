@@ -5,7 +5,9 @@
 
 import { execSync } from 'child_process';
 import type { FactiiiConfig, Fix } from '../../../../types/index.js';
-import { isOnServer } from '../utils/aws-helpers.js';
+import {
+  isOnServer,
+} from '../utils/aws-helpers.js';
 
 export const configFixes: Fix[] = [
   // PROD STAGE FIXES

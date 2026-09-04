@@ -4,12 +4,7 @@ import type { CreateHTTPContextOptions } from '@trpc/server/adapters/standalone'
 import type { ClientCookiePayload } from '../types';
 import type { ResolvedAuthConfig } from './config';
 import { parseAuthCookie, setAuthCookies } from './cookies';
-import {
-  createAuthToken,
-  isTokenExpiredError,
-  isTokenInvalidError,
-  verifyAuthToken,
-} from './jwt';
+import { createAuthToken, isTokenExpiredError, isTokenInvalidError, verifyAuthToken } from './jwt';
 
 interface IssueCookiesParams {
   ctx: { headers: { cookie?: string }; res: CreateHTTPContextOptions['res'] };

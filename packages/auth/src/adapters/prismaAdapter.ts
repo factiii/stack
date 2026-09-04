@@ -95,11 +95,7 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
         };
       },
 
-      async setTwoFaSecret(
-        id: number,
-        secret: string,
-        backupCodes: string[]
-      ): Promise<void> {
+      async setTwoFaSecret(id: number, secret: string, backupCodes: string[]): Promise<void> {
         await db.user.update({
           where: { id },
           data: { twoFaSecret: secret, twoFaBackupCodes: backupCodes },
@@ -133,7 +129,10 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
           if (!row) return false;
           const idx = row.twoFaBackupCodes.indexOf(code);
           if (idx === -1) return false;
-          const next = [...row.twoFaBackupCodes.slice(0, idx), ...row.twoFaBackupCodes.slice(idx + 1)];
+          const next = [
+            ...row.twoFaBackupCodes.slice(0, idx),
+            ...row.twoFaBackupCodes.slice(idx + 1),
+          ];
           await db.user.update({
             where: { id },
             data: { twoFaBackupCodes: next },
@@ -149,7 +148,10 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
           if (!row) return false;
           const idx = row.twoFaBackupCodes.indexOf(code);
           if (idx === -1) return false;
-          const next = [...row.twoFaBackupCodes.slice(0, idx), ...row.twoFaBackupCodes.slice(idx + 1)];
+          const next = [
+            ...row.twoFaBackupCodes.slice(0, idx),
+            ...row.twoFaBackupCodes.slice(idx + 1),
+          ];
           await txDb.user.update({
             where: { id },
             data: { twoFaBackupCodes: next },
@@ -257,7 +259,6 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
         });
         return rows as SessionWithUser[];
       },
-
     },
 
     otp: {
@@ -346,9 +347,7 @@ export function createPrismaDeviceAdapter(prisma: unknown): DeviceAuthAdapter {
   const db = prisma as PrismaModelAccess;
   return {
     session: {
-      async findTwoFaSecretsByUserId(
-        userId: number
-      ): Promise<{ twoFaSecret: string | null }[]> {
+      async findTwoFaSecretsByUserId(userId: number): Promise<{ twoFaSecret: string | null }[]> {
         return db.session.findMany({
           where: { userId, twoFaSecret: { not: null } },
           select: { twoFaSecret: true },
@@ -372,10 +371,7 @@ export function createPrismaDeviceAdapter(prisma: unknown): DeviceAuthAdapter {
         });
       },
 
-      async findByIdWithDevice(
-        id: number,
-        userId: number
-      ): Promise<SessionWithDevice | null> {
+      async findByIdWithDevice(id: number, userId: number): Promise<SessionWithDevice | null> {
         const session = await db.session.findUnique({
           where: { id, userId },
           select: {
@@ -435,11 +431,7 @@ export function createPrismaDeviceAdapter(prisma: unknown): DeviceAuthAdapter {
         }) as Promise<{ id: number } | null>;
       },
 
-      async upsertByPushToken(
-        pushToken: string,
-        sessionId: number,
-        userId: number
-      ): Promise<void> {
+      async upsertByPushToken(pushToken: string, sessionId: number, userId: number): Promise<void> {
         await db.device.upsert({
           where: { pushToken },
           create: {
@@ -454,10 +446,7 @@ export function createPrismaDeviceAdapter(prisma: unknown): DeviceAuthAdapter {
         });
       },
 
-      async findByUserAndToken(
-        userId: number,
-        pushToken: string
-      ): Promise<{ id: number } | null> {
+      async findByUserAndToken(userId: number, pushToken: string): Promise<{ id: number } | null> {
         return db.device.findFirst({
           where: { users: { some: { id: userId } }, pushToken },
           select: { id: true },

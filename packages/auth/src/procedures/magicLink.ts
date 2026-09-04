@@ -10,7 +10,7 @@ import { createSessionWithTokenAndCookie } from '../utilities/session';
 export class MagicLinkProcedureFactory {
   constructor(
     private config: ResolvedAuthConfig,
-    private procedure: BaseProcedure,
+    private procedure: BaseProcedure
   ) {}
 
   createMagicLinkProcedures() {
@@ -61,8 +61,7 @@ export class MagicLinkProcedureFactory {
         // Mark as used (single-use)
         await db.markUsed(magicLink.id);
 
-        const browserName =
-          (ctx.headers as Record<string, string>)?.['user-agent'] ?? 'Unknown';
+        const browserName = (ctx.headers as Record<string, string>)?.['user-agent'] ?? 'Unknown';
 
         // Let the host app inject extra session data (e.g., instanceId)
         const extraSessionData = this.config.hooks?.onBeforeMagicLinkSession
@@ -77,7 +76,7 @@ export class MagicLinkProcedureFactory {
             socketId: null,
             extraSessionData,
           },
-          ctx.res,
+          ctx.res
         );
 
         return { success: true };

@@ -22,10 +22,7 @@ export { issueAuthCookies, isUserInBundle, revokeDeviceSessionsForUser } from '.
 export type { OAuthKeys, OAuthProvider, OAuthResult } from './oauth';
 export { createOAuthVerifier, OAuthVerificationError } from './oauth';
 export { comparePassword, hashPassword, validatePasswordStrength } from './password';
-export type {
-  CreateSessionWithTokenParams,
-  SessionWithTokenResult,
-} from './session';
+export type { CreateSessionWithTokenParams, SessionWithTokenResult } from './session';
 export { createSessionWithToken, createSessionWithTokenAndCookie } from './session';
 export {
   cleanBase32String,

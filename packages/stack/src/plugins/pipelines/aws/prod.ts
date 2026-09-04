@@ -11,7 +11,10 @@ import yaml from 'js-yaml';
 import { sshExec } from '../../../utils/ssh-helper.js';
 import { extractEnvironments } from '../../../utils/config-helpers.js';
 import { generateProdCompose, generateProdNginx, prodComposeServiceName } from '../../../generators/index.js';
-import { getAwsAccountId, getEcrAuthToken } from './utils/aws-helpers.js';
+import {
+  getAwsAccountId,
+  getEcrAuthToken,
+} from './utils/aws-helpers.js';
 import { AnsibleVaultSecrets } from '../../../utils/ansible-vault-secrets.js';
 import type {
   FactiiiConfig,

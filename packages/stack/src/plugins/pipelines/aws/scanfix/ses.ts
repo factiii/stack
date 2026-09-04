@@ -14,10 +14,7 @@ import {
   hasDkim,
   getSESClient,
   confirmAwsAction,
-  VerifyDomainIdentityCommand,
-  GetIdentityVerificationAttributesCommand,
-  VerifyDomainDkimCommand,
-  GetSendQuotaCommand,
+  sesSdk,
 } from '../utils/aws-helpers.js';
 
 /**
@@ -68,10 +65,10 @@ export const sesFixes: Fix[] = [
         const ses = getSESClient(region);
 
         // Start domain verification
-        await ses.send(new VerifyDomainIdentityCommand({ Domain: domain }));
+        await ses.send(new (sesSdk().VerifyDomainIdentityCommand)({ Domain: domain }));
 
         // Get the verification token
-        const tokenResult = await ses.send(new GetIdentityVerificationAttributesCommand({
+        const tokenResult = await ses.send(new (sesSdk().GetIdentityVerificationAttributesCommand)({
           Identities: [domain],
         }));
         const token = tokenResult.VerificationAttributes?.[domain]?.VerificationToken ?? '';
@@ -124,7 +121,7 @@ export const sesFixes: Fix[] = [
         const ses = getSESClient(region);
 
         // Generate DKIM tokens
-        const result = await ses.send(new VerifyDomainDkimCommand({ Domain: domain }));
+        const result = await ses.send(new (sesSdk().VerifyDomainDkimCommand)({ Domain: domain }));
         const tokens: string[] = result.DkimTokens ?? [];
 
         console.log('   Generated DKIM tokens for: ' + domain);
@@ -161,7 +158,7 @@ export const sesFixes: Fix[] = [
       // Check sending quota — sandbox has max 200/day
       try {
         const ses = getSESClient(region);
-        const result = await ses.send(new GetSendQuotaCommand({}));
+        const result = await ses.send(new (sesSdk().GetSendQuotaCommand)({}));
         const maxSend = result.Max24HourSend ?? 0;
         return maxSend <= 200;
       } catch {

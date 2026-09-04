@@ -191,7 +191,9 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
    * Called on login, register, refresh, and when authGuard detects stale updatedAt.
    * Return value is merged into the client cookie payload alongside { userId, updatedAt }.
    */
-  getClientCookiePayload?: (userId: number) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  getClientCookiePayload?: (
+    userId: number
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
   /**
    * Schema extensions for adding custom fields to auth inputs

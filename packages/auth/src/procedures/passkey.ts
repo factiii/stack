@@ -8,9 +8,10 @@ import {
   type RegistrationResponseJSON,
 } from '@simplewebauthn/server';
 import { TRPCError } from '@trpc/server';
-import { z, type AnyZodObject } from 'zod';
+import { z } from 'zod';
 
 import type { SchemaExtensions } from '../types/hooks';
+import type { AnyZodObject } from '../types/zod';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities';
 import type { ResolvedAuthConfig } from '../utilities/config';
@@ -215,35 +216,33 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
   }
 
   private registerOptions() {
-    return this.procedure
-      .input(z.object({ username: z.string() }))
-      .mutation(async ({ input }) => {
-        const { webauthn, passkey } = this.checkConfig();
+    return this.procedure.input(z.object({ username: z.string() })).mutation(async ({ input }) => {
+      const { webauthn, passkey } = this.checkConfig();
 
-        const options = await generateRegistrationOptions({
-          rpName: webauthn.rpName,
-          rpID: webauthn.rpID,
-          userName: input.username,
-          attestationType: 'none',
-          excludeCredentials: [],
-          authenticatorSelection: {
-            // Neither is negotiable: sign-in passes an empty allowCredentials so
-            // a non-discoverable credential could never be offered back, and the
-            // UV gesture is what makes a sole-factor passkey two-factor.
-            residentKey: 'required',
-            userVerification: 'required',
-          },
-        });
-
-        const { flowId } = await passkey.storeChallenge({
-          challenge: options.challenge,
-          type: 'REGISTER',
-          username: input.username,
-          expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS),
-        });
-
-        return { flowId, options };
+      const options = await generateRegistrationOptions({
+        rpName: webauthn.rpName,
+        rpID: webauthn.rpID,
+        userName: input.username,
+        attestationType: 'none',
+        excludeCredentials: [],
+        authenticatorSelection: {
+          // Neither is negotiable: sign-in passes an empty allowCredentials so
+          // a non-discoverable credential could never be offered back, and the
+          // UV gesture is what makes a sole-factor passkey two-factor.
+          residentKey: 'required',
+          userVerification: 'required',
+        },
       });
+
+      const { flowId } = await passkey.storeChallenge({
+        challenge: options.challenge,
+        type: 'REGISTER',
+        username: input.username,
+        expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS),
+      });
+
+      return { flowId, options };
+    });
   }
 
   private registerVerify(registerMeta: AnyZodObject) {
@@ -400,7 +399,10 @@ export class PasskeyProcedureFactory<TExtensions extends SchemaExtensions = {}> 
 
     const user = await this.config.database.user.findById(userId);
     if (!user) {
-      throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'User not found after passkey ceremony.' });
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'User not found after passkey ceremony.',
+      });
     }
 
     if (await isUserInBundle(this.config, ctx.headers.cookie, user.id)) {

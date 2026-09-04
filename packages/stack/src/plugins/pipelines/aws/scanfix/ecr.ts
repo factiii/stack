@@ -14,9 +14,7 @@ import {
   findEcrRepo,
   getECRClient,
   confirmAwsAction,
-  CreateRepositoryCommand,
-  PutLifecyclePolicyCommand,
-  GetAuthorizationTokenCommand,
+  ecrSdk,
 } from '../utils/aws-helpers.js';
 
 export const ecrFixes: Fix[] = [
@@ -49,7 +47,7 @@ export const ecrFixes: Fix[] = [
         const ecr = getECRClient(region);
 
         // Create ECR repository
-        const result = await ecr.send(new CreateRepositoryCommand({
+        const result = await ecr.send(new (ecrSdk().CreateRepositoryCommand)({
           repositoryName: repoName,
           imageScanningConfiguration: { scanOnPush: true },
         }));
@@ -73,7 +71,7 @@ export const ecrFixes: Fix[] = [
           }],
         });
 
-        await ecr.send(new PutLifecyclePolicyCommand({
+        await ecr.send(new (ecrSdk().PutLifecyclePolicyCommand)({
           repositoryName: repoName,
           lifecyclePolicyText: lifecyclePolicy,
         }));
@@ -101,7 +99,7 @@ export const ecrFixes: Fix[] = [
       // Test ECR authorization token
       try {
         const ecr = getECRClient(region);
-        const result = await ecr.send(new GetAuthorizationTokenCommand({}));
+        const result = await ecr.send(new (ecrSdk().GetAuthorizationTokenCommand)({}));
         return !(result.authorizationData?.length);
       } catch {
         return true;

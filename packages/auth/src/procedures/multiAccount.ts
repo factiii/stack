@@ -20,10 +20,7 @@ export class MultiAccountProcedureFactory {
     };
   }
 
-  private async buildClientPayload(
-    userId: number,
-    updatedAt: Date
-  ): Promise<ClientCookiePayload> {
+  private async buildClientPayload(userId: number, updatedAt: Date): Promise<ClientCookiePayload> {
     const base: ClientCookiePayload = {
       userId,
       updatedAt: updatedAt.toISOString(),
@@ -35,10 +32,10 @@ export class MultiAccountProcedureFactory {
     return base;
   }
 
-  private requireBundle(ctx: {
-    bundleSessionIds?: number[];
-    sessionId: number | null;
-  }): { sessions: number[]; active: number } {
+  private requireBundle(ctx: { bundleSessionIds?: number[]; sessionId: number | null }): {
+    sessions: number[];
+    active: number;
+  } {
     if (!ctx.bundleSessionIds || ctx.sessionId === null) {
       throw new TRPCError({
         code: 'UNAUTHORIZED',
@@ -100,10 +97,7 @@ export class MultiAccountProcedureFactory {
             expiresIn: this.config.tokenSettings.jwtExpiry,
           }
         );
-        const clientPayload = await this.buildClientPayload(
-          target.userId,
-          target.user.updatedAt
-        );
+        const clientPayload = await this.buildClientPayload(target.userId, target.user.updatedAt);
         setAuthCookies(
           ctx.res,
           newJwt,
@@ -153,11 +147,7 @@ export class MultiAccountProcedureFactory {
         const remaining = sessions.filter((id) => id !== targetSessionId);
 
         if (remaining.length === 0) {
-          clearAuthCookies(
-            ctx.res,
-            this.config.cookieSettings,
-            this.config.storageKeys
-          );
+          clearAuthCookies(ctx.res, this.config.cookieSettings, this.config.storageKeys);
           if (wasLive) {
             await this.config.database.user.update(target!.userId, { isActive: false });
             if (this.config.hooks?.afterLogout) {
@@ -166,7 +156,7 @@ export class MultiAccountProcedureFactory {
                   target!.userId,
                   target!.id,
                   target!.socketId,
-                  [],
+                  []
                 );
               } catch {
                 // Don't let a flaky hook abort the removal.

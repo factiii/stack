@@ -1,7 +1,7 @@
 export function truncateBundle(
   sessions: number[],
   activeId: number,
-  maxAccounts: number,
+  maxAccounts: number
 ): { kept: number[]; dropped: number[] } {
   if (sessions.length <= maxAccounts) {
     return { kept: sessions, dropped: [] };

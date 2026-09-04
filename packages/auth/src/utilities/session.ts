@@ -42,7 +42,7 @@ export interface SessionWithTokenResult {
  */
 export async function createSessionWithToken(
   config: ResolvedAuthConfig,
-  params: CreateSessionWithTokenParams,
+  params: CreateSessionWithTokenParams
 ): Promise<SessionWithTokenResult> {
   const { userId, browserName, socketId, deviceId, extraSessionData } = params;
 
@@ -64,7 +64,7 @@ export async function createSessionWithToken(
     {
       secret: config.secrets.jwt,
       expiresIn: config.tokenSettings.jwtExpiry,
-    },
+    }
   );
 
   return { accessToken, sessionId: session.id };
@@ -84,14 +84,13 @@ export async function createSessionWithToken(
 export async function createSessionWithTokenAndCookie(
   config: ResolvedAuthConfig,
   params: CreateSessionWithTokenParams,
-  res: CreateHTTPContextOptions['res'],
+  res: CreateHTTPContextOptions['res']
 ): Promise<SessionWithTokenResult> {
   const result = await createSessionWithToken(config, params);
 
   const user = await config.database.user.findById(params.userId);
 
-  const cookieHeader =
-    (res.req as { headers?: { cookie?: string } } | undefined)?.headers?.cookie;
+  const cookieHeader = (res.req as { headers?: { cookie?: string } } | undefined)?.headers?.cookie;
 
   await issueAuthCookies(config, {
     ctx: { headers: { cookie: cookieHeader }, res },
