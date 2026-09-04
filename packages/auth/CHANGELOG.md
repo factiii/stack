@@ -1,5 +1,22 @@
 # @factiii/auth
 
+## 0.20.3
+
+### Patch Changes
+
+- 7f8fc49: Declare `@trpc/server` as a peer dependency, not a regular one
+
+  `createAuthRouter` returns a tRPC router the consumer merges into its own, and
+  the package throws `TRPCError` across twenty source files. Both sides must
+  share one `@trpc/server` instance, exactly as they must share one `zod`.
+
+  0.20.2 bumped it from `^11.8.0` to `^11.18.0` while it was still a regular
+  dependency. Consumers on 11.8.x satisfied the old range and deduped to a single
+  copy; they do not satisfy the new one, so pnpm nests a second `@trpc/server`
+  under the package and their typecheck fails on `TRPCRequestInfoProcedureCall`.
+
+  The peer range is `>=11.0.0 <12`, which every tRPC 11 consumer satisfies.
+
 ## 0.20.2
 
 ### Patch Changes
