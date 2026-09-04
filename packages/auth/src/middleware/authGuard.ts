@@ -279,11 +279,22 @@ export function createAuthGuard(config: AuthConfig, t: TrpcBuilder) {
         });
       } catch (err: unknown) {
         if (err instanceof TRPCError && err.code === 'FORBIDDEN') throw err;
-        if (err instanceof TRPCError && err.code === 'UNAUTHORIZED') throw err;
 
+        // CRITICAL: this must stay ABOVE the UNAUTHORIZED re-throw below.
+        // Why: every session-integrity failure in the try block above throws
+        // UNAUTHORIZED — revoked session, missing session, userId mismatch,
+        // token predating the session, banned user, admin IP mismatch. None of
+        // those matter to a procedure that does not require auth: the caller is
+        // simply not logged in, which is what userId 0 means.
+        // Breaks-if-changed: a dead session makes every public route fail,
+        // including this library's own login/logout/register. The auth cookie is
+        // httpOnly, so the client cannot clear it and cannot log in to replace
+        // it — the browser is locked out until the JWT expires.
         if (!meta?.authRequired) {
           return next({ ctx: { ...ctx, userId: 0 } });
         }
+
+        if (err instanceof TRPCError && err.code === 'UNAUTHORIZED') throw err;
 
         const errorStack = err instanceof Error ? err.stack : undefined;
         if (isTokenExpiredError(err) || isTokenInvalidError(err)) {

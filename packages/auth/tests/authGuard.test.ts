@@ -233,6 +233,87 @@ describe('authGuard anonymous (no token) requests', () => {
   });
 });
 
+describe('authGuard public routes with a dead session', () => {
+  // Regression: 0.10.0 moved the UNAUTHORIZED re-throw above the
+  // `!meta?.authRequired` fallback, making the fallback unreachable. Every
+  // session-integrity failure throws UNAUTHORIZED, so a revoked session broke
+  // every public route — including this library's own login, logout and
+  // register, which are built on the public procedure. The auth cookie is
+  // httpOnly, so a browser in that state could neither clear it nor log in to
+  // replace it. Fixed by restoring the pre-0.10.0 ordering.
+  const revokedSession = () =>
+    makeSession({ id: 1, userId: 5, issuedAt: new Date(), revokedAt: new Date() });
+
+  const tokenFor = (userId: number) =>
+    createAuthToken({ id: 1, userId, verifiedHumanAt: null }, { secret: SECRET, expiresIn: 3600 });
+
+  it('passes through as anonymous when the session is revoked', async () => {
+    const guard = buildGuard(async () => revokedSession());
+    const ctx = makeCtx(tokenFor(5));
+    const next = vi.fn(({ ctx: newCtx }) => ({ ctx: newCtx }));
+
+    await guard({ ctx, meta: undefined, next, path: 'auth.login' });
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({ ctx: expect.objectContaining({ userId: 0 }) }),
+    );
+  });
+
+  it('passes through as anonymous when the session is missing entirely', async () => {
+    const guard = buildGuard(async () => null);
+    const ctx = makeCtx(tokenFor(5));
+    const next = vi.fn(({ ctx: newCtx }) => ({ ctx: newCtx }));
+
+    await guard({ ctx, meta: undefined, next, path: 'products.list' });
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({ ctx: expect.objectContaining({ userId: 0 }) }),
+    );
+  });
+
+  it('passes through as anonymous when the token predates the session', async () => {
+    const guard = buildGuard(async () =>
+      makeSession({ id: 1, userId: 5, issuedAt: new Date(Date.now() + 60_000) }),
+    );
+    const ctx = makeCtx(tokenFor(5));
+    const next = vi.fn(({ ctx: newCtx }) => ({ ctx: newCtx }));
+
+    await guard({ ctx, meta: undefined, next, path: 'auth.register' });
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({ ctx: expect.objectContaining({ userId: 0 }) }),
+    );
+  });
+
+  it('still rejects the same dead session on an authRequired route', async () => {
+    const guard = buildGuard(async () => revokedSession());
+    const ctx = makeCtx(tokenFor(5));
+    const next = vi.fn();
+
+    await expect(
+      guard({ ctx, meta: { authRequired: true }, next, path: 'users.me' }),
+    ).rejects.toThrow(TRPCError);
+
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('still rejects a FORBIDDEN failure on a public route', async () => {
+    // FORBIDDEN is deliberate refusal (biometric re-verification), not a dead
+    // session, so it must keep propagating regardless of authRequired.
+    const guard = buildGuard(async () =>
+      makeSession({ id: 1, userId: 5, issuedAt: new Date() }),
+    );
+    const ctx = makeCtx(tokenFor(5));
+    const next = vi.fn(() => {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'nope' });
+    });
+
+    await expect(
+      guard({ ctx, meta: undefined, next, path: 'public.route' }),
+    ).rejects.toThrow(TRPCError);
+  });
+});
+
 describe('revocation log descriptions', () => {
   // Regression: call sites passed pre-prefixed reasons and revokeSession
   // prefixes again, producing "Session revoked: Session revoked: ..." in the
