@@ -1,5 +1,28 @@
 # @factiii/auth
 
+## 0.20.2
+
+### Patch Changes
+
+- a25c537: Build against zod 4, so the emitted types match the declared peer range
+
+  `peerDependencies` has always said `zod >=4.3.6 <5`, but a `zod: 3.25.76`
+  override in the workspace forced zod 3 into the build. The package compiled and
+  tested green while emitting zod 3 shapes into the published `.d.ts`, which do
+  not typecheck for a consumer on zod 4.
+
+  `validators.ts`, `types/hooks.ts` and `procedures/passkey.ts` imported
+  `AnyZodObject`, which zod 3 exported and zod 4 removed. `src/types/zod.ts` now
+  defines the zod 4 equivalent.
+
+  Also drops the unused `better-sqlite3` dependency, its adapter and its types,
+  which removes a native build step from install.
+
+  Note: this release also bumped `@trpc/server` from `^11.8.0` to `^11.18.0`
+  while it was still a regular dependency. That nests a second `@trpc/server`
+  under the package for any consumer on 11.8.x and breaks their typecheck. Fixed
+  in 0.20.3, which makes it a peer dependency.
+
 ## 0.20.1
 
 ### Patch Changes
