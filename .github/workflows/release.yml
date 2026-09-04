@@ -32,13 +32,18 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
-      # Trusted publishing needs npm >= 11.5.1 and node 20 ships npm 10. Pinned
-      # to the 11 line rather than @latest: npm 12 requires node >= 22 and this
-      # job runs node 20, so @latest fails the install outright.
+      # Node 22, not 20: @changesets/cli 3 declares node "^22.11 || ^24 || >=26"
+      # and its bin calls module.enableCompileCache(), added in node 22.1. On
+      # node 20 `changeset version` dies with "enableCompileCache is not a
+      # function" before it versions anything.
+      #
+      # Trusted publishing needs npm >= 11.5.1 and node 22 ships npm 10. Pinned
+      # to the 11 line rather than @latest so the npm major is a deliberate
+      # choice rather than whatever npm ships today.
       - name: Use an npm that speaks OIDC
         run: npm install -g npm@11
 
