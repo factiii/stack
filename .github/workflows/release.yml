@@ -66,8 +66,17 @@ jobs:
       # publishing), configured per package at npmjs.com > Settings > Trusted
       # Publisher. The NPM_TOKEN secret this used to carry expired, which is
       # what E404-on-PUT means, and npm is retiring 2FA-bypass tokens anyway.
+      #
+      # Deliberately NOT gated on has_changesets. `changeset publish` compares
+      # each package's local version against the registry and publishes only
+      # what is missing, so with nothing to release it is a no-op. Gating it
+      # meant a package that failed to publish could never be retried without
+      # inventing a changeset: when one package in the run succeeds and another
+      # fails, the changesets are consumed but the failed package is left
+      # behind, and the next push skips publishing because no changesets
+      # remain. That is exactly how @factiii/stack sat at 0.19.0 on npm while
+      # the repo said 0.20.4. Ungated, the next run picks it up on its own.
       - name: Publish to npm
-        if: steps.changesets.outputs.has_changesets == 'true'
         run: pnpm release
 
       - name: Commit version bumps
