@@ -108,6 +108,19 @@ export class OAuthLoginProcedureFactory<
           });
         }
 
+        // Attaching by email is only safe when the address was PROVEN on the
+        // account being attached to. Consumers can let a user store any unclaimed
+        // address unverified, so an unverified match may be an account someone
+        // else registered in the victim's name — and signing the victim into it
+        // hands them an account the registrant still controls (pre-hijacking).
+        // An adapter that omits the field refuses every attach: fail-closed.
+        if (existing && existing.emailVerificationStatus !== 'VERIFIED') {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Sign in another way, then link this provider from Settings.',
+          });
+        }
+
         let created = false;
         if (existing) {
           user = existing;
