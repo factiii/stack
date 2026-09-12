@@ -425,11 +425,20 @@ export function createDrizzleDeviceAdapter(
 
   return {
     session: {
+      // The revoked filter is load-bearing — see the prisma twin for why a
+      // revoked device's secret must stop answering the login challenge, and why
+      // this is only safe alongside `carryDeviceTwoFaSecret`.
       async findTwoFaSecretsByUserId(userId: number): Promise<{ twoFaSecret: string | null }[]> {
         const secretRows = await db
           .select({ twoFaSecret: sessions.twoFaSecret })
           .from(sessions)
-          .where(and(eq(sessions.userId, userId), sql`${sessions.twoFaSecret} is not null`));
+          .where(
+            and(
+              eq(sessions.userId, userId),
+              sql`${sessions.twoFaSecret} is not null`,
+              isNull(sessions.revokedAt)
+            )
+          );
         return secretRows as { twoFaSecret: string | null }[];
       },
 
@@ -447,6 +456,32 @@ export function createDrizzleDeviceAdapter(
 
       async setTwoFaSecret(sessionId: number, secret: string | null): Promise<void> {
         await db.update(sessions).set({ twoFaSecret: secret }).where(eq(sessions.id, sessionId));
+      },
+
+      // See the prisma twin for why this exists and why the clear must precede
+      // the write: `twoFaSecret` is unique, so the secret is moved, never copied.
+      async moveTwoFaSecret(
+        userId: number,
+        fromSessionId: number,
+        toSessionId: number
+      ): Promise<void> {
+        await db.transaction(async (tx) => {
+          const rows = await tx
+            .select({ twoFaSecret: sessions.twoFaSecret })
+            .from(sessions)
+            .where(and(eq(sessions.id, fromSessionId), eq(sessions.userId, userId)));
+          const secret = rows[0]?.twoFaSecret;
+          if (!secret) return;
+
+          await tx
+            .update(sessions)
+            .set({ twoFaSecret: null })
+            .where(and(eq(sessions.id, fromSessionId), eq(sessions.userId, userId)));
+          await tx
+            .update(sessions)
+            .set({ twoFaSecret: secret })
+            .where(and(eq(sessions.id, toSessionId), eq(sessions.userId, userId)));
+        });
       },
 
       async findByIdWithDevice(id: number, userId: number): Promise<SessionWithDevice | null> {

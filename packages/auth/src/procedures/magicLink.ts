@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { type BaseProcedure } from '../types/trpc';
 import type { ResolvedAuthConfig } from '../utilities/config';
-import { revokeDeviceSessionsForUser } from '../utilities/issueCookies';
+import { carryDeviceTwoFaSecret, revokeDeviceSessionsForUser } from '../utilities/issueCookies';
 import { createSessionWithTokenAndCookie } from '../utilities/session';
 
 /** Factory for magic link authentication procedures. */
@@ -56,7 +56,11 @@ export class MagicLinkProcedureFactory {
 
         // The link proves control of the address, so a session this device
         // already holds for the same account is stale, not a reason to refuse.
-        await revokeDeviceSessionsForUser(this.config, ctx.headers.cookie, magicLink.userId);
+        const replacedSessionIds = await revokeDeviceSessionsForUser(
+          this.config,
+          ctx.headers.cookie,
+          magicLink.userId
+        );
 
         // Mark as used (single-use)
         await db.markUsed(magicLink.id);
@@ -68,7 +72,7 @@ export class MagicLinkProcedureFactory {
           ? await this.config.hooks.onBeforeMagicLinkSession(magicLink.userId)
           : {};
 
-        await createSessionWithTokenAndCookie(
+        const { sessionId } = await createSessionWithTokenAndCookie(
           this.config,
           {
             userId: magicLink.userId,
@@ -78,6 +82,14 @@ export class MagicLinkProcedureFactory {
           },
           ctx.res
         );
+
+        // Same rule as the other sign-in paths: the device keeps the second
+        // factor it already had. A magic link is not a reason to lose it.
+        await carryDeviceTwoFaSecret(this.config, {
+          userId: magicLink.userId,
+          revokedSessionIds: replacedSessionIds,
+          newSessionId: sessionId,
+        });
 
         return { success: true };
       });

@@ -7,7 +7,11 @@ import { detectBrowser } from '../utilities/browser';
 import { isTwoFaEnabled, verifyTwoFaChallenge } from './twoFa/verifyChallenge';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
-import { issueAuthCookies, revokeDeviceSessionsForUser } from '../utilities/issueCookies';
+import {
+  carryDeviceTwoFaSecret,
+  issueAuthCookies,
+  revokeDeviceSessionsForUser,
+} from '../utilities/issueCookies';
 import { createAuthToken } from '../utilities/jwt';
 import { comparePassword, hashPassword } from '../utilities/password';
 import type { UsernameMode } from '../types/config';
@@ -266,7 +270,11 @@ export class BaseProcedureFactory<
       // Credentials and 2FA have both passed by here, so a session this device
       // already holds for the same account is stale, not a reason to refuse.
       // Retire it and issue a fresh one.
-      await revokeDeviceSessionsForUser(this.config, ctx.headers.cookie, user.id);
+      const replacedSessionIds = await revokeDeviceSessionsForUser(
+        this.config,
+        ctx.headers.cookie,
+        user.id
+      );
 
       const extraSessionData = this.config.hooks?.getSessionData
         ? await this.config.hooks.getSessionData(typedInput)
@@ -277,6 +285,14 @@ export class BaseProcedureFactory<
         browserName: detectBrowser(userAgent),
         socketId: null,
         ...extraSessionData,
+      });
+
+      // The device's second factor rides on the session, so it has to move to
+      // the replacement or the sign-in quietly costs the user their 2FA.
+      await carryDeviceTwoFaSecret(this.config, {
+        userId: user.id,
+        revokedSessionIds: replacedSessionIds,
+        newSessionId: session.id,
       });
 
       if (this.config.hooks?.onUserLogin) {
