@@ -6,7 +6,11 @@ import type { SchemaExtensions } from '../types/hooks';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities';
 import type { ResolvedAuthConfig } from '../utilities/config';
-import { issueAuthCookies, revokeDeviceSessionsForUser } from '../utilities/issueCookies';
+import {
+  carryDeviceTwoFaSecret,
+  issueAuthCookies,
+  revokeDeviceSessionsForUser,
+} from '../utilities/issueCookies';
 import { assertKeepsLoginMethod } from '../utilities/loginMethods';
 import { createOAuthVerifier, type OAuthProvider, type OAuthResult } from '../utilities/oauth';
 import { type CreatedSchemas, type OAuthSchemaInput } from '../validators';
@@ -104,6 +108,19 @@ export class OAuthLoginProcedureFactory<
           });
         }
 
+        // Attaching by email is only safe when the address was PROVEN on the
+        // account being attached to. Consumers can let a user store any unclaimed
+        // address unverified, so an unverified match may be an account someone
+        // else registered in the victim's name — and signing the victim into it
+        // hands them an account the registrant still controls (pre-hijacking).
+        // An adapter that omits the field refuses every attach: fail-closed.
+        if (existing && existing.emailVerificationStatus !== 'VERIFIED') {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Sign in another way, then link this provider from Settings.',
+          });
+        }
+
         let created = false;
         if (existing) {
           user = existing;
@@ -145,7 +162,11 @@ export class OAuthLoginProcedureFactory<
 
       // The provider has vouched for this identity, so a session this device
       // already holds for the same account is stale, not a reason to refuse.
-      await revokeDeviceSessionsForUser(this.config, ctx.headers.cookie, user.id);
+      const replacedSessionIds = await revokeDeviceSessionsForUser(
+        this.config,
+        ctx.headers.cookie,
+        user.id
+      );
 
       const extraSessionData = this.config.hooks?.getSessionData
         ? await this.config.hooks.getSessionData(typedInput)
@@ -156,6 +177,14 @@ export class OAuthLoginProcedureFactory<
         browserName: detectBrowser(userAgent),
         socketId: null,
         ...extraSessionData,
+      });
+
+      // An OAuth account can still have device 2FA enrolled from a password it
+      // used to have, so this path carries the secret like any other.
+      await carryDeviceTwoFaSecret(this.config, {
+        userId: user.id,
+        revokedSessionIds: replacedSessionIds,
+        newSessionId: session.id,
       });
 
       if (this.config.hooks?.onUserLogin) {

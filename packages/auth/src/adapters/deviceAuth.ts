@@ -37,6 +37,24 @@ export interface DeviceAuthAdapter {
     clearTwoFaSecrets(userId: number, excludeSessionId?: number): Promise<void>;
     /** Set the `twoFaSecret` on a single session. */
     setTwoFaSecret(sessionId: number, secret: string | null): Promise<void>;
+    /**
+     * Move a session's `twoFaSecret` to another session of the same user, in one
+     * atomic step. No-op when `fromSessionId` holds none.
+     *
+     * This exists because the secret cannot be COPIED: the reference schema
+     * declares `Session.twoFaSecret` as `@unique`, so two rows may not hold the
+     * same string for an instant, let alone a transaction. The donor must give it
+     * up in the same breath the recipient takes it, and a crash in between must
+     * not leave it on neither row.
+     *
+     * Optional so that adding it does not break an adapter written against an
+     * earlier version. `carryDeviceTwoFaSecret` falls back to a clear-then-set
+     * pair when it is absent — correct, but not atomic, and a crash between the
+     * two writes costs the device its cached second factor (recoverable: the
+     * vault mints a new one). Implement it if your database can do better, which
+     * both shipped adapters do.
+     */
+    moveTwoFaSecret?(userId: number, fromSessionId: number, toSessionId: number): Promise<void>;
     /** Find a session with its (optional) device join, scoped to a user. */
     findByIdWithDevice(id: number, userId: number): Promise<SessionWithDevice | null>;
     /** Read just the deviceId from a session, scoped to a user. */

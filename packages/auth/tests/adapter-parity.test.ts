@@ -63,6 +63,10 @@ const DEVICE_EXPECTED_METHODS: Record<string, string[]> = {
     'findTwoFaSecretsByUserId',
     'clearTwoFaSecrets',
     'setTwoFaSecret',
+    // Optional on the interface — an older custom adapter is still valid without
+    // it — but both shipped adapters must implement it, or one of them silently
+    // takes the non-atomic fallback while the other does not.
+    'moveTwoFaSecret',
     'findByIdWithDevice',
     'getDeviceId',
     'revokeByDevicePushToken',

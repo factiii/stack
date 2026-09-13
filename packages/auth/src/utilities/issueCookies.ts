@@ -136,6 +136,86 @@ export async function revokeDeviceSessionsForUser(
   return revoked;
 }
 
+/**
+ * Move a device-mode TOTP secret from the sessions a sign-in just retired onto
+ * the session that replaced them. Call it after creating the replacement, with
+ * the ids `revokeDeviceSessionsForUser` returned.
+ *
+ * MOVE, not copy. `Session.twoFaSecret` is `@unique` in the reference schema, so
+ * two rows may not hold the same string for an instant: writing the secret to the
+ * replacement while the retired row still holds it throws a unique-constraint
+ * error, and the first version of this function did exactly that and then
+ * swallowed the error — leaving the replacement with nothing, which with the
+ * revoked filter live is the lockout this function exists to prevent. The unit
+ * tests missed it because a mocked adapter has no unique index, and the package's
+ * own e2e schema had dropped the constraint. Any future change here must keep the
+ * donor and the recipient from holding the string at the same time.
+ *
+ * In device mode the second factor lives on `Session.twoFaSecret`, but it
+ * belongs to the *phone*, not to any one session of it — `enableTwofa` writes it
+ * once and the vault caches it from there. Nothing carried it across a
+ * replacement, so every ordinary sign-in left the device's live secret on a
+ * revoked row and gave the replacement none. That was survivable only because
+ * `findTwoFaSecretsByUserId` did not filter revoked rows, which is a hole:
+ * a secret from a device the user deliberately revoked still answered the login
+ * challenge. Closing that hole without this carry would turn the leak into a
+ * lockout — after any re-login the user would have no live secret at all, and on
+ * an account with no email on file, no way back in. The two changes are one
+ * change; do not ship either alone.
+ *
+ * It also fixes something already broken: a consumer that filters revoked rows
+ * itself (factiii's push-approval path does) finds nothing after a re-login, so
+ * approvals fail until the vault happens to re-materialize a secret.
+ *
+ * Best effort by design. A failure here costs the device its cached second
+ * factor — recoverable, since the vault can mint a new one — while throwing
+ * would fail a sign-in whose credentials have already been accepted. It is not
+ * SILENT, though: swallowing without a word is how the copy bug survived review
+ * and every unit test, so a failure says so on the way past.
+ */
+export async function carryDeviceTwoFaSecret(
+  config: ResolvedAuthConfig,
+  params: { userId: number; revokedSessionIds: number[]; newSessionId: number }
+): Promise<void> {
+  const { userId, revokedSessionIds, newSessionId } = params;
+  // Standard mode keeps the secret on the user row, where a session replacement
+  // cannot touch it, so there is nothing to carry and no column to write.
+  if (config.features.twoFaMode !== 'device') return;
+  const deviceAuth = config.deviceAuth;
+  if (!deviceAuth) return;
+  if (revokedSessionIds.length === 0) return;
+
+  try {
+    for (const id of revokedSessionIds) {
+      const row = await deviceAuth.session.findByIdWithDevice(id, userId);
+      // First one wins. Several retired sessions can each hold a secret (one per
+      // sign-in that enrolled), and any of them is a secret this device's vault
+      // has been using — they are alternatives, not a set to merge.
+      if (!row?.twoFaSecret) continue;
+
+      if (deviceAuth.session.moveTwoFaSecret) {
+        await deviceAuth.session.moveTwoFaSecret(userId, id, newSessionId);
+        return;
+      }
+      // Fallback for an adapter written before `moveTwoFaSecret` existed. Not
+      // atomic, so the order is the safety: clearing first means the worst case
+      // is a secret on neither row, which the vault can re-mint. Writing first
+      // would simply throw against a unique index and change nothing.
+      await deviceAuth.session.setTwoFaSecret(id, null);
+      await deviceAuth.session.setTwoFaSecret(newSessionId, row.twoFaSecret);
+      return;
+    }
+  } catch (err) {
+    // Never fail a sign-in whose credentials have already been accepted — but
+    // never disappear either. This losing quietly is what cost a release.
+    console.error(
+      '[@factiii/auth] could not carry the device 2FA secret to the new session; ' +
+        'the device must re-materialize one from its vault:',
+      err
+    );
+  }
+}
+
 /** Returns session ids from the request cookie. */
 function readExistingBundle(
   cookieHeader: string | undefined,

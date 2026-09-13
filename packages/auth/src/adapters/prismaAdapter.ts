@@ -347,9 +347,19 @@ export function createPrismaDeviceAdapter(prisma: unknown): DeviceAuthAdapter {
   const db = prisma as PrismaModelAccess;
   return {
     session: {
+      // `revokedAt: null` is load-bearing, not tidiness. Revoking a session sets
+      // the column and leaves the row, so without this filter the TOTP secret of
+      // a device the user deliberately revoked — an old phone, a sold one, "log
+      // out everywhere" after a compromise — still answers the login challenge.
+      // Revoking a device has to revoke its second factor with it.
+      //
+      // Safe only because `carryDeviceTwoFaSecret` moves the secret onto the
+      // replacement session on every sign-in (utilities/issueCookies.ts). Without
+      // that, this filter turns the leak into a lockout: an ordinary re-login
+      // would leave the account with no live secret at all.
       async findTwoFaSecretsByUserId(userId: number): Promise<{ twoFaSecret: string | null }[]> {
         return db.session.findMany({
-          where: { userId, twoFaSecret: { not: null } },
+          where: { userId, twoFaSecret: { not: null }, revokedAt: null },
           select: { twoFaSecret: true },
         }) as Promise<{ twoFaSecret: string | null }[]>;
       },
@@ -369,6 +379,43 @@ export function createPrismaDeviceAdapter(prisma: unknown): DeviceAuthAdapter {
           where: { id: sessionId },
           data: { twoFaSecret: secret },
         });
+      },
+
+      async moveTwoFaSecret(
+        userId: number,
+        fromSessionId: number,
+        toSessionId: number
+      ): Promise<void> {
+        const apply = async (client: PrismaModelAccess) => {
+          const from = (await client.session.findUnique({
+            where: { id: fromSessionId, userId },
+            select: { twoFaSecret: true },
+          })) as { twoFaSecret: string | null } | null;
+          if (!from?.twoFaSecret) return;
+
+          // Clear BEFORE writing, even inside the transaction. `twoFaSecret` is
+          // `@unique` and Prisma does not declare the constraint DEFERRABLE, so
+          // Postgres checks it per statement: the donor has to be empty before
+          // the recipient can hold the string. Writing first fails outright, and
+          // copying — which is what this method replaced — fails the same way.
+          await client.session.updateMany({
+            where: { id: fromSessionId, userId },
+            data: { twoFaSecret: null },
+          });
+          await client.session.updateMany({
+            where: { id: toSessionId, userId },
+            data: { twoFaSecret: from.twoFaSecret },
+          });
+        };
+
+        // Both writes or neither, so a crash cannot leave the secret on no row
+        // at all. `$transaction` is optional on the client shape this adapter
+        // accepts; without it the pair still runs in the fail-safe order.
+        if (db.$transaction) {
+          await db.$transaction((tx) => apply(tx as PrismaModelAccess));
+          return;
+        }
+        await apply(db);
       },
 
       async findByIdWithDevice(id: number, userId: number): Promise<SessionWithDevice | null> {
