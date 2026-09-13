@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { type ClientCookiePayload } from '../types';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities/browser';
+import { sameIdentifier } from '../utilities/emailMatch';
 import { isTwoFaEnabled, verifyTwoFaChallenge } from './twoFa/verifyChallenge';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
@@ -98,7 +99,7 @@ export class BaseProcedureFactory<
       if (username) {
         const usernameCheck = await this.config.database.user.findByUsernameInsensitive(username);
 
-        if (usernameCheck) {
+        if (usernameCheck && sameIdentifier(usernameCheck.username, username)) {
           throw new TRPCError({
             code: 'CONFLICT',
             message: 'An account already exists with that username.',
@@ -108,7 +109,7 @@ export class BaseProcedureFactory<
 
       const emailCheck = await this.config.database.user.findByEmailInsensitive(email);
 
-      if (emailCheck) {
+      if (emailCheck && sameIdentifier(emailCheck.email, email)) {
         throw new TRPCError({
           code: 'CONFLICT',
           message: 'An account already exists with that email.',
@@ -177,7 +178,13 @@ export class BaseProcedureFactory<
         await this.config.hooks.beforeLogin(typedInput);
       }
 
-      const user = await this.config.database.user.findByEmailOrUsernameInsensitive(username);
+      const found = await this.config.database.user.findByEmailOrUsernameInsensitive(username);
+      // Re-checked here as well as in the adapter: a row whose email and username
+      // both differ from what was typed is not this account.
+      const user =
+        found && (sameIdentifier(found.email, username) || sameIdentifier(found.username, username))
+          ? found
+          : null;
 
       if (!user) {
         throw new TRPCError({
@@ -539,7 +546,7 @@ export class BaseProcedureFactory<
         }
 
         const taken = await this.config.database.user.findByUsernameInsensitive(input.username);
-        if (taken) {
+        if (taken && sameIdentifier(taken.username, input.username)) {
           throw new TRPCError({
             code: 'CONFLICT',
             message: 'An account already exists with that username.',
@@ -558,7 +565,9 @@ export class BaseProcedureFactory<
     return this.procedure.input(requestPasswordResetSchema).mutation(async ({ input }) => {
       const { email } = input;
 
-      const user = await this.config.database.user.findByEmailInsensitive(email);
+      const found = await this.config.database.user.findByEmailInsensitive(email);
+      // A reset link for a look-alike address must never go to another account.
+      const user = found && sameIdentifier(found.email, email) ? found : null;
 
       if (!user || user.status !== 'ACTIVE') {
         return { message: 'If an account exists with that email, a reset link has been sent.' };

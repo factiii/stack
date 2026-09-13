@@ -10,6 +10,7 @@ import type {
   SessionWithUser,
 } from './database';
 import type { DeviceAuthAdapter, SessionWithDevice } from './deviceAuth';
+import { escapeLikePattern, sameIdentifier } from '../utilities/emailMatch';
 
 /** Internal accessor for Prisma model delegates (avoids repeating casts). */
 type PrismaDelegate = Record<string, (...args: unknown[]) => Promise<unknown>>;
@@ -41,27 +42,36 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
   const db = prisma as PrismaModelAccess;
   return {
     user: {
+      // `mode: 'insensitive'` equals is ILIKE on Postgres, so the value is escaped
+      // (utilities/emailMatch.ts) and the row is re-checked before it is returned.
       async findByEmailInsensitive(email: string): Promise<AuthUser | null> {
-        return db.user.findFirst({
-          where: { email: { equals: email, mode: 'insensitive' } },
-        }) as Promise<AuthUser | null>;
+        const user = (await db.user.findFirst({
+          where: { email: { equals: escapeLikePattern(email), mode: 'insensitive' } },
+        })) as AuthUser | null;
+        return user && sameIdentifier(user.email, email) ? user : null;
       },
 
       async findByUsernameInsensitive(username: string): Promise<AuthUser | null> {
-        return db.user.findFirst({
-          where: { username: { equals: username, mode: 'insensitive' } },
-        }) as Promise<AuthUser | null>;
+        const user = (await db.user.findFirst({
+          where: { username: { equals: escapeLikePattern(username), mode: 'insensitive' } },
+        })) as AuthUser | null;
+        return user && sameIdentifier(user.username, username) ? user : null;
       },
 
       async findByEmailOrUsernameInsensitive(identifier: string): Promise<AuthUser | null> {
-        return db.user.findFirst({
+        const pattern = escapeLikePattern(identifier);
+        const user = (await db.user.findFirst({
           where: {
             OR: [
-              { email: { equals: identifier, mode: 'insensitive' } },
-              { username: { equals: identifier, mode: 'insensitive' } },
+              { email: { equals: pattern, mode: 'insensitive' } },
+              { username: { equals: pattern, mode: 'insensitive' } },
             ],
           },
-        }) as Promise<AuthUser | null>;
+        })) as AuthUser | null;
+        return user &&
+          (sameIdentifier(user.email, identifier) || sameIdentifier(user.username, identifier))
+          ? user
+          : null;
       },
 
       async findById(id: number): Promise<AuthUser | null> {

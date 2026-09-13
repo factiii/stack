@@ -8,10 +8,22 @@ import { TRPCError } from '@trpc/server';
 
 import { type BaseProcedure } from '../../types/trpc';
 import type { ResolvedAuthConfig } from '../../utilities/config';
+import { sameIdentifier } from '../../utilities/emailMatch';
 import { comparePassword } from '../../utilities/password';
 import { generateOtp } from '../../utilities/totp';
 import { twoFaResetSchema, twoFaResetVerifySchema } from '../../validators/twoFa.shared';
 import { isTwoFaEnabled } from './verifyChallenge';
+
+/** The lookup result only when its email or username is the identifier typed. */
+function matchesIdentifier<T extends { email?: string | null; username?: string | null }>(
+  user: T | null,
+  identifier: string
+): T | null {
+  return user &&
+    (sameIdentifier(user.email, identifier) || sameIdentifier(user.username, identifier))
+    ? user
+    : null;
+}
 
 /**
  * Build the `twoFaReset` procedure: re-authenticates the user with
@@ -41,7 +53,10 @@ export function buildTwoFaResetProcedures(
     checkConfig();
     const { username, password } = input;
 
-    const user = await config.database.user.findByEmailOrUsernameInsensitive(username);
+    const user = matchesIdentifier(
+      await config.database.user.findByEmailOrUsernameInsensitive(username),
+      username
+    );
 
     if (!user || !isTwoFaEnabled(config, user)) {
       throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid credentials.' });
@@ -84,7 +99,10 @@ export function buildTwoFaResetProcedures(
     checkConfig();
     const { code, username } = input;
 
-    const user = await config.database.user.findByEmailOrUsernameInsensitive(username);
+    const user = matchesIdentifier(
+      await config.database.user.findByEmailOrUsernameInsensitive(username),
+      username
+    );
 
     if (!user) {
       throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });

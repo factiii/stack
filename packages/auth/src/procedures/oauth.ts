@@ -11,6 +11,7 @@ import {
   issueAuthCookies,
   revokeDeviceSessionsForUser,
 } from '../utilities/issueCookies';
+import { sameIdentifier } from '../utilities/emailMatch';
 import { assertKeepsLoginMethod } from '../utilities/loginMethods';
 import { createOAuthVerifier, type OAuthProvider, type OAuthResult } from '../utilities/oauth';
 import { type CreatedSchemas, type OAuthSchemaInput } from '../validators';
@@ -100,7 +101,10 @@ export class OAuthLoginProcedureFactory<
           });
         }
 
-        const existing = await this.config.database.user.findByEmailInsensitive(email);
+        // Re-checked here as well as in the adapter: attaching by email hands over
+        // the account, so a lookup result for a different address is not a match.
+        const found = await this.config.database.user.findByEmailInsensitive(email);
+        const existing = found && sameIdentifier(found.email, email) ? found : null;
         if (existing?.password) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
