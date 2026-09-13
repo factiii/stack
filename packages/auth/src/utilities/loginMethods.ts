@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 
 import type { ResolvedAuthConfig } from './config';
+import { sameIdentifier } from './emailMatch';
 
 // TOTP/2FA is a step-up layer on password login, not a standalone method, so it
 // is never counted here.
@@ -49,7 +50,8 @@ export async function resolveLoginMethods(
   config: ResolvedAuthConfig,
   username: string
 ): Promise<ResolvedLoginMethods> {
-  const user = await config.database.user.findByUsernameInsensitive(username);
+  const found = await config.database.user.findByUsernameInsensitive(username);
+  const user = found && sameIdentifier(found.username, username) ? found : null;
   if (!user) {
     return { found: false, hasPassword: false, hasPasskey: false, providers: [] };
   }
