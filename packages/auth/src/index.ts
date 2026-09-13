@@ -4,12 +4,14 @@ export type { ClientCookiePayload, CookieSettings } from './types';
 export type {
   AuthConfig,
   AuthFeatures,
+  EmailLoginAppConfig,
+  EmailLoginConfig,
   SchemaExtensions,
   TokenSettings,
   TwoFaMode,
 } from './types/config';
-export type { ResolvedAuthConfig } from './utilities/config';
-export type { AuthHooks, PasskeyRegisterInput } from './types/hooks';
+export type { ResolvedAuthConfig, ResolvedEmailLoginConfig } from './utilities/config';
+export type { AuthHooks, LoginPlatform, PasskeyRegisterInput } from './types/hooks';
 export type {
   AuthenticationResponseJSON,
   PasskeyChallengeType,
@@ -35,15 +37,21 @@ export { createOAuthVerifier, OAuthVerificationError } from './utilities/oauth';
 
 export { createAuthGuard } from './middleware/authGuard';
 
-export type { EmailAdapter } from './adapters/email';
+export type {
+  EmailAdapter,
+  LoginEmailParams,
+  PasswordResetEmailOptions,
+} from './adapters/email';
 export { createConsoleEmailAdapter, createNoopEmailAdapter } from './adapters/email';
 
 export type {
+  AuthEmailLoginAttempt,
   AuthMagicLink,
   AuthOTP,
   AuthPasswordReset,
   AuthSession,
   AuthUser,
+  CreateEmailLoginAttemptData,
   CreateSessionData,
   CreateUserData,
   DatabaseAdapter,
@@ -62,6 +70,16 @@ export {
 export { detectBrowser, isMobileDevice, isNativeApp } from './utilities/browser';
 export type { CreateMagicLinkParams, CreateMagicLinkResult } from './utilities/magicLink';
 export { createMagicLink } from './utilities/magicLink';
+export {
+  emailLoginPeekLinkSchema,
+  emailLoginRequestSchema,
+  emailLoginVerifyCodeSchema,
+  emailLoginVerifyLinkSchema,
+  maskEmail,
+  normalizeLoginEmail,
+} from './procedures/emailLogin';
+export type { DeviceStepOutcome, FirstFactor } from './procedures/twoFa/deviceStep';
+export { requiresDeviceStep } from './procedures/twoFa/deviceStep';
 export {
   clearAuthCookie,
   clearAuthCookies,
@@ -130,6 +148,7 @@ export {
 export {
   AUTH_REQUIRED_ENV_VARS,
   AUTH_OAUTH_ENV_VARS,
+  AUTH_EMAIL_LOGIN_ENV_VARS,
   AUTH_ALL_SECRET_NAMES,
   AUTH_DEFAULT_FEATURES,
   AUTH_CONFIG_SCHEMA,

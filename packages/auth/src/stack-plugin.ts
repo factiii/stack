@@ -27,12 +27,20 @@ export const AUTH_OAUTH_ENV_VARS = {
 } as const;
 
 /**
+ * Email sign-in environment variables. The pepper keys the HMAC over sign-in
+ * codes; `createAuthConfig` refuses to start without one when
+ * `features.emailLogin` is on.
+ */
+export const AUTH_EMAIL_LOGIN_ENV_VARS = ['EMAIL_LOGIN_PEPPER'] as const;
+
+/**
  * All possible auth-related secret names (for vault management).
  */
 export const AUTH_ALL_SECRET_NAMES = [
   ...AUTH_REQUIRED_ENV_VARS,
   ...AUTH_OAUTH_ENV_VARS.google,
   ...AUTH_OAUTH_ENV_VARS.apple,
+  ...AUTH_EMAIL_LOGIN_ENV_VARS,
 ] as const;
 
 /**
@@ -63,6 +71,7 @@ export const AUTH_CONFIG_SCHEMA = {
       passwordReset: (defaultFeatures as AuthFeatures).passwordReset ?? false,
       otpLogin: (defaultFeatures as AuthFeatures).otpLogin ?? false,
       magicLink: (defaultFeatures as AuthFeatures).magicLink ?? false,
+      emailLogin: (defaultFeatures as AuthFeatures).emailLogin ?? false,
     },
     oauth_provider: 'EXAMPLE_google',
   },
@@ -95,6 +104,7 @@ export const AUTH_PRISMA_MODELS = AUTH_PRISMA_MODELS_STANDARD;
 export const stackPlugin = {
   requiredEnvVars: AUTH_REQUIRED_ENV_VARS,
   oauthEnvVars: AUTH_OAUTH_ENV_VARS,
+  emailLoginEnvVars: AUTH_EMAIL_LOGIN_ENV_VARS,
   allSecretNames: AUTH_ALL_SECRET_NAMES,
   configSchema: AUTH_CONFIG_SCHEMA,
   prismaModels: AUTH_PRISMA_MODELS_STANDARD,

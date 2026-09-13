@@ -77,6 +77,8 @@ model User {
   otps          OTP[]
   admin         Admin?
   magicLinks    MagicLink[]
+  // Optional — email sign-in (see EmailLoginAttempt below).
+  emailLoginAttempts EmailLoginAttempt[]
   // Optional — passkey + multi-provider features (see models at end of file).
   passkeys      Passkey[]
   oAuthAccounts OAuthAccount[]
@@ -151,6 +153,28 @@ model MagicLink {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// ==============================================================================
+// EmailLoginAttempt Model (optional — enable with features.emailLogin)
+// ==============================================================================
+// One email sign-in attempt. The link and the 6-digit code in that email share
+// this row, so whichever is used first spends both. Only hashes are stored.
+
+model EmailLoginAttempt {
+  id         String    @id @default(uuid())
+  email      String // normalized: trimmed, lowercase
+  userId     Int? // null → the account is created on verify
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  app        String // key into emailLogin.apps
+  tokenHash  String    @unique // sha256 of the link token
+  codeHash   String // HMAC-SHA256(pepper, "<id>:<code>")
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([email, createdAt])
 }
 
 // ==============================================================================

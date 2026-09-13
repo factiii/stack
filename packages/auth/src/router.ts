@@ -4,6 +4,7 @@ import type { DeviceAuthAdapter } from './adapters/deviceAuth';
 import { createAuthGuard } from './middleware/authGuard';
 import { BaseProcedureFactory } from './procedures/base';
 import { BiometricProcedureFactory } from './procedures/biometric';
+import { EmailLoginProcedureFactory } from './procedures/emailLogin';
 import { EmailVerificationProcedureFactory } from './procedures/emailVerification';
 import { MagicLinkProcedureFactory } from './procedures/magicLink';
 import { MultiAccountProcedureFactory } from './procedures/multiAccount';
@@ -77,6 +78,10 @@ class AuthScaffold<
       this.config,
       this.procedure
     ).createMagicLinkProcedures();
+    const emailLoginRoutes = new EmailLoginProcedureFactory(
+      this.config,
+      this.procedure
+    ).createEmailLoginProcedures();
     const multiAccountRoutes = new MultiAccountProcedureFactory(
       this.config,
       this.authProcedure
@@ -93,6 +98,9 @@ class AuthScaffold<
       biometric: biometricRoutes.createBiometricProcedures(),
       emailVerification: emailVerificationRoutes.createEmailVerificationProcedures(),
       magicLink: magicLinkRoutes,
+      // Nested sub-router → client.auth.emailLogin.*. Gated at runtime by
+      // features.emailLogin, so the shape is always present.
+      emailLogin: this.t.router(emailLoginRoutes),
       multiAccount: multiAccountRoutes,
       // Nested sub-router → client.auth.passkey.*. Gated at runtime by
       // features.passkey (like oauth), so the shape is always present.
@@ -151,6 +159,7 @@ function buildStandardAuthRouter<
     ...shared.magicLink,
     ...shared.multiAccount,
     passkey: shared.passkey,
+    emailLogin: shared.emailLogin,
   });
 
   const router = scaffold.t.router({ auth: authRouter });
@@ -191,6 +200,7 @@ function buildDeviceAuthRouter<
     ...shared.magicLink,
     ...shared.multiAccount,
     passkey: shared.passkey,
+    emailLogin: shared.emailLogin,
   });
 
   const router = scaffold.t.router({ auth: authRouter });

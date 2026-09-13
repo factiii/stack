@@ -3,9 +3,10 @@ import { z } from 'zod';
 
 import { type ClientCookiePayload } from '../types';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
+import { assertCanMintSession } from '../utilities/accountStatus';
 import { detectBrowser } from '../utilities/browser';
 import { sameIdentifier } from '../utilities/emailMatch';
-import { isTwoFaEnabled, verifyTwoFaChallenge } from './twoFa/verifyChallenge';
+import { runDeviceStep } from './twoFa/deviceStep';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
 import {
@@ -107,9 +108,11 @@ export class BaseProcedureFactory<
         }
       }
 
-      const emailCheck = await this.config.database.user.findByEmailInsensitive(email);
+      const emailMatch = await this.config.database.user.findByEmailInsensitive(email);
+      // Exact, so a look-alike address (`j_hn@…` for `john@…`) is not taken for this one.
+      const emailCheck = emailMatch && sameIdentifier(emailMatch.email, email) ? emailMatch : null;
 
-      if (emailCheck && sameIdentifier(emailCheck.email, email)) {
+      if (emailCheck) {
         throw new TRPCError({
           code: 'CONFLICT',
           message: 'An account already exists with that email.',
@@ -236,42 +239,45 @@ export class BaseProcedureFactory<
         });
       }
 
-      if (isTwoFaEnabled(this.config, user) && this.config.features?.twoFa) {
-        if (!code) {
-          // Push another device to approve instead of asking for a code. Falls
-          // back to the typed-code flow when the hook is absent.
-          if (this.config.hooks?.onLoginApprovalRequired) {
-            const pending = await this.config.hooks.onLoginApprovalRequired(user.id, {
-              ip: ctx.ip,
-              browserName: detectBrowser(userAgent),
-              input: typedInput,
-            });
-            if (pending) {
-              return {
-                success: false,
-                pendingLogin: true,
-                pendingLoginId: pending.pendingLoginId,
-                // So a client holding this user's vault locally can answer the
-                // challenge itself instead of waiting on another device.
-                userId: user.id,
-                requires2FA: true,
-              };
-            }
-          }
-          return {
-            success: false,
-            requires2FA: true,
-            userId: user.id,
-          };
-        }
+      // Status rules beyond the two above — e.g. a consumer's DELETED grace window —
+      // after the password, so they tell nothing to someone without it.
+      await assertCanMintSession(this.config, user, { firstFactor: 'PASSWORD', ip: ctx.ip });
 
-        const valid = await verifyTwoFaChallenge(this.config, user, code);
-        if (!valid) {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'Invalid 2FA code.',
-          });
-        }
+      // A password is an INBOX factor (email can reset it), so an account with 2FA
+      // on owes a DEVICE step. The same gate runs at every mint site
+      // (twoFa/deviceStep.ts); `code` answers it, and a wrong one throws there.
+      const step = await runDeviceStep(this.config, {
+        user,
+        firstFactor: 'PASSWORD',
+        code,
+        // Push another device to approve instead of asking for a code. Falls
+        // back to the typed-code flow when the hook is absent.
+        askApproval: async () =>
+          this.config.hooks?.onLoginApprovalRequired
+            ? this.config.hooks.onLoginApprovalRequired(user.id, {
+                ip: ctx.ip,
+                browserName: detectBrowser(userAgent),
+                input: typedInput,
+              })
+            : null,
+      });
+      if (step?.kind === 'pending') {
+        return {
+          success: false,
+          pendingLogin: true,
+          pendingLoginId: step.pendingLoginId,
+          // So a client holding this user's vault locally can answer the
+          // challenge itself instead of waiting on another device.
+          userId: user.id,
+          requires2FA: true,
+        };
+      }
+      if (step?.kind === 'code') {
+        return {
+          success: false,
+          requires2FA: true,
+          userId: user.id,
+        };
       }
 
       // Credentials and 2FA have both passed by here, so a session this device
@@ -563,7 +569,17 @@ export class BaseProcedureFactory<
 
   private sendPasswordResetEmail() {
     return this.procedure.input(requestPasswordResetSchema).mutation(async ({ input }) => {
-      const { email } = input;
+      const { email, app } = input;
+
+      // Checked before the account lookup, so an unknown key answers the same
+      // whether or not the address has an account.
+      // Own keys only, so `constructor` or `__proto__` is not an app.
+      const apps = this.config.emailLogin?.apps;
+      const appSettings =
+        app && apps && Object.prototype.hasOwnProperty.call(apps, app) ? apps[app] : undefined;
+      if (app && !appSettings) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Unknown app.' });
+      }
 
       const found = await this.config.database.user.findByEmailInsensitive(email);
       // A reset link for a look-alike address must never go to another account.
@@ -594,7 +610,15 @@ export class BaseProcedureFactory<
       const passwordReset = await this.config.database.passwordReset.create(user.id);
 
       if (this.config.emailService) {
-        await this.config.emailService.sendPasswordResetEmail(user.email, String(passwordReset.id));
+        const token = String(passwordReset.id);
+        if (app && appSettings) {
+          await this.config.emailService.sendPasswordResetEmail(user.email, token, {
+            app,
+            resetUrl: `${appSettings.siteUrl}${appSettings.resetPath}/${encodeURIComponent(token)}`,
+          });
+        } else {
+          await this.config.emailService.sendPasswordResetEmail(user.email, token);
+        }
       }
 
       return { message: 'Password reset email sent.' };

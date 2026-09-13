@@ -72,6 +72,8 @@ export const oAuthLoginSchema = z.object({
     })
     .optional(),
   provider: z.enum(['GOOGLE', 'APPLE']),
+  // Second step for an account with 2FA on: a TOTP or backup code.
+  twoFaCode: z.string().max(64).optional(),
 });
 
 /**
@@ -79,6 +81,8 @@ export const oAuthLoginSchema = z.object({
  */
 export const requestPasswordResetSchema = z.object({
   email: z.string().email({ message: 'Invalid email address' }),
+  // An `emailLogin.apps` key: the reset link then opens on that app's site.
+  app: z.string().min(1).max(64).optional(),
 });
 
 /**
