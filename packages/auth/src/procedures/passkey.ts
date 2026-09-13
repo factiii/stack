@@ -15,6 +15,7 @@ import type { SchemaExtensions } from '../types/hooks';
 import type { AnyZodObject } from '../types/zod';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities';
+import { assertCanMintSession } from '../utilities/accountStatus';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { issueAuthCookies, isUserInBundle } from '../utilities/issueCookies';
 import { assertKeepsLoginMethod } from '../utilities/loginMethods';
@@ -408,6 +409,11 @@ export class PasskeyProcedureFactory<
         message: 'User not found after passkey ceremony.',
       });
     }
+
+    // A passkey needs no second step, but it is still a sign-in: a deactivated or
+    // banned account, or one the consumer refuses (`beforeSessionMint`), gets no
+    // session. This path used to check no status at all.
+    await assertCanMintSession(this.config, user, { firstFactor: 'PASSKEY', ip: ctx.ip });
 
     if (await isUserInBundle(this.config, ctx.headers.cookie, user.id)) {
       throw new TRPCError({

@@ -4,6 +4,9 @@ import { type loginSchema, type oAuthLoginSchema, type signupSchema } from '../v
 import type { PasskeyCredential } from './passkey';
 import type { AnyZodObject } from './zod';
 
+/** The client platform an email sign-in reports, for naming its session. */
+export type LoginPlatform = 'ios' | 'android' | 'web';
+
 /**
  * Schema extensions for adding custom fields to auth inputs
  */
@@ -94,6 +97,25 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
   ) => Promise<void>;
 
   /**
+   * Runs at EVERY place a session is minted — password login, email sign-in,
+   * magic link, OAuth (before a provider is linked to an existing account), and
+   * passkey — after the account is identified and before the 2FA step or any
+   * side effect. Throw to refuse the sign-in.
+   *
+   * The package itself already refuses DEACTIVATED and BANNED accounts. Put every
+   * other account-status rule here, e.g. refusing a DELETED account once its grace
+   * window has passed: `beforeLogin` runs only for password login, so a rule kept
+   * there leaves the other sign-in paths open.
+   */
+  beforeSessionMint?: (
+    userId: number,
+    context: {
+      firstFactor: 'PASSWORD' | 'EMAIL_LOGIN' | 'MAGIC_LINK' | 'OAUTH' | 'PASSKEY';
+      ip?: string;
+    }
+  ) => Promise<void>;
+
+  /**
    * Called after successful login
    * Use this to update activity status, send notifications, etc.
    */
@@ -168,6 +190,47 @@ export interface AuthHooks<TExtensions extends SchemaExtensions = {}> {
   onBeforeMagicLinkSession?: (
     userId: number
   ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+
+  /**
+   * An account with 2FA on signed in with a first factor that is not a DEVICE
+   * factor — an email link or code, a magic link, or OAuth — and sent no
+   * `twoFaCode`. Return a `pendingLoginId` to push another device for approval,
+   * or null to fall back to the typed-code step. Password login keeps
+   * `onLoginApprovalRequired`, whose input is the login form.
+   *
+   * `input` carries what the client sent for the second step (`approvalNonce`,
+   * `devicePushToken`, `platform`; for email sign-in also the `app` key, and for
+   * OAuth every field of the OAuth input except the provider token). Treat it as
+   * client-supplied.
+   */
+  onDeviceStepRequired?: (
+    userId: number,
+    context: {
+      ip?: string;
+      browserName: string;
+      firstFactor: 'EMAIL_LOGIN' | 'MAGIC_LINK' | 'OAUTH';
+      input: Record<string, unknown>;
+    }
+  ) => Promise<{ pendingLoginId: string } | null>;
+
+  /**
+   * Extra fields for the Session row an email sign-in creates — e.g. `instanceId`,
+   * or a `browserName` naming the app, which a native client's user agent cannot.
+   */
+  getEmailLoginSessionData?: (
+    userId: number,
+    context: { app: string; platform?: LoginPlatform }
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+
+  /**
+   * Called after an email sign-in creates an account. Provision it here: it is
+   * the email path's `onUserCreated`, which it does not call because there is no
+   * signup form input to hand it.
+   */
+  onEmailLoginUserCreated?: (
+    userId: number,
+    context: { email: string; app: string; platform?: LoginPlatform }
+  ) => Promise<void>;
 
   /**
    * Custom validation for biometric verification

@@ -67,6 +67,13 @@ export interface AuthFeatures {
   otpLogin?: boolean;
   /** Enable magic link authentication */
   magicLink?: boolean;
+  /**
+   * Enable email sign-in: `auth.emailLogin.*`, one email with a link and a
+   * 6-digit code. Requires `emailLogin` config, `emailService.sendLoginEmail`,
+   * and the `EmailLoginAttempt` model; `createAuthConfig` refuses to start
+   * without them.
+   */
+  emailLogin?: boolean;
   /** Enable WebAuthn passkey registration + authentication */
   passkey?: boolean;
   /**
@@ -214,6 +221,11 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
     defaultExpiryMs?: number;
   };
 
+  /**
+   * Email sign-in configuration (required when features.emailLogin is enabled).
+   */
+  emailLogin?: EmailLoginConfig;
+
   /** Max sessions per device. Default 1 (single-account). >1 enables multi-account. */
   maxAccounts?: number;
 
@@ -221,4 +233,43 @@ export interface AuthConfig<TExtensions extends SchemaExtensions = {}> {
    * WebAuthn Relying Party configuration (required when features.passkey is enabled).
    */
   webauthn?: WebAuthnConfig;
+}
+
+/**
+ * One product that may send email sign-in links, keyed in `emailLogin.apps`. The
+ * client names the key; everything a URL is built from comes from here, never
+ * from the request.
+ */
+export interface EmailLoginAppConfig {
+  /** Origin the link and the reset page open on, e.g. "https://oakbox.me". No trailing slash. */
+  siteUrl: string;
+  /** Page that shows "Continue as …" and calls `emailLogin.verifyLink`, e.g. "/auth/email". */
+  verifyPath: string;
+  /** Password reset page; the token is appended as a path segment, e.g. "/reset-password". */
+  resetPath: string;
+  /** Handed to `emailService.sendLoginEmail` so it can pick the template. */
+  brand: string;
+}
+
+export interface EmailLoginConfig {
+  /** The allowlist. A request naming any other key is refused. */
+  apps: Record<string, EmailLoginAppConfig>;
+  /**
+   * HMAC key for sign-in codes, at least 32 characters. Pass
+   * `process.env.EMAIL_LOGIN_PEPPER`; startup fails when it is missing.
+   */
+  pepper: string | undefined;
+  /**
+   * Count one hit against `key`; resolve true while at most `max` hits fell in the
+   * last `windowSec` seconds. The package calls it for requests per email, requests
+   * per IP, and verifies per IP.
+   */
+  rateLimit: (key: string, max: number, windowSec: number) => Promise<boolean>;
+  /** How long an attempt lives. Default 15 minutes. */
+  ttlMs?: number;
+  /**
+   * Every `request` answer is padded to at least this long, so an address with an
+   * account cannot be told from one without by timing. Default 400 ms.
+   */
+  responseFloorMs?: number;
 }

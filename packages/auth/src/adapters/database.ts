@@ -65,6 +65,34 @@ export interface AuthMagicLink {
   userId: number;
 }
 
+/**
+ * One email sign-in attempt. The link and the code in that email share this
+ * row, so whichever is used first spends both. Only hashes are stored.
+ */
+export interface AuthEmailLoginAttempt {
+  id: string;
+  /** Normalized: trimmed, lowercase. */
+  email: string;
+  /** The account the address belonged to when the email was sent, or null. */
+  userId: number | null;
+  /** Key into `emailLogin.apps`. */
+  app: string;
+  /** sha256 of the link token. */
+  tokenHash: string;
+  /** HMAC-SHA256 of `${id}:${code}` under `emailLogin.pepper`. */
+  codeHash: string;
+  /** Codes tried so far. */
+  attempts: number;
+  expiresAt: Date;
+  consumedAt: Date | null;
+  createdAt: Date;
+}
+
+export type CreateEmailLoginAttemptData = Pick<
+  AuthEmailLoginAttempt,
+  'id' | 'email' | 'userId' | 'app' | 'tokenHash' | 'codeHash' | 'expiresAt'
+>;
+
 // ── Input types ──────────────────────────────────────────────────────────────
 
 export interface CreateUserData {
@@ -164,5 +192,26 @@ export interface DatabaseAdapter {
     findById(id: string): Promise<AuthMagicLink | null>;
     create(data: { userId: number; expiresAt: Date }): Promise<AuthMagicLink>;
     markUsed(id: string): Promise<AuthMagicLink>;
+    /**
+     * Mark the link used only if it is still unused and unexpired, in one
+     * conditional write. True for exactly one caller. Optional so an adapter
+     * written before it still compiles; without it `verifyMagicLink` falls back to
+     * the non-atomic read-then-`markUsed`.
+     */
+    consume?(id: string): Promise<boolean>;
+  };
+
+  /** Optional — required only when features.emailLogin is enabled. */
+  emailLoginAttempt?: {
+    create(data: CreateEmailLoginAttemptData): Promise<AuthEmailLoginAttempt>;
+    findByTokenHash(tokenHash: string): Promise<AuthEmailLoginAttempt | null>;
+    /** The newest attempt for this email that is neither consumed nor expired. */
+    findLatestOpenByEmail(email: string): Promise<AuthEmailLoginAttempt | null>;
+    /** Consume only if still open, in one conditional write. True for exactly one caller. */
+    consume(id: string): Promise<boolean>;
+    /** Count one code try, atomically. Resolves to the new count. */
+    incrementAttempts(id: string): Promise<number>;
+    /** Consume every open attempt for this email — a newer request replaces them. */
+    consumeOpenByEmail(email: string): Promise<void>;
   };
 }

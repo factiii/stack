@@ -11,6 +11,11 @@
 /** The characters LIKE and ILIKE treat specially under the default escape. */
 const LIKE_SPECIAL = /[\\%_]/g;
 
+/** True when `value` holds a character a LIKE pattern would not take literally. */
+export function hasLikeWildcard(value: string): boolean {
+  return /[\\%_]/.test(value);
+}
+
 /** Escape `\`, `%` and `_` with a backslash, Postgres's default LIKE escape. */
 export function escapeLikePattern(value: string): string {
   return value.replace(LIKE_SPECIAL, (char) => `\\${char}`);

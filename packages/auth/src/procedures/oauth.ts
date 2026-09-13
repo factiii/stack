@@ -1,20 +1,24 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
+import type { AuthUser } from '../adapters/database';
 import type { UsernameMode } from '../types/config';
 import type { SchemaExtensions } from '../types/hooks';
 import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { detectBrowser } from '../utilities';
+import { assertCanMintSession } from '../utilities/accountStatus';
 import type { ResolvedAuthConfig } from '../utilities/config';
+import { createUserWithFreshUsername } from '../utilities/createUser';
+import { sameIdentifier } from '../utilities/emailMatch';
 import {
   carryDeviceTwoFaSecret,
   issueAuthCookies,
   revokeDeviceSessionsForUser,
 } from '../utilities/issueCookies';
-import { sameIdentifier } from '../utilities/emailMatch';
 import { assertKeepsLoginMethod } from '../utilities/loginMethods';
 import { createOAuthVerifier, type OAuthProvider, type OAuthResult } from '../utilities/oauth';
 import { type CreatedSchemas, type OAuthSchemaInput } from '../validators';
+import { runDeviceStep } from './twoFa/deviceStep';
 
 const providerEnum = z.enum(['GOOGLE', 'APPLE']);
 
@@ -61,6 +65,38 @@ export class OAuthLoginProcedureFactory<
     return this.verifyOAuthToken;
   }
 
+  /** The factor-class gate for an OAuth sign-in into `user`. */
+  private deviceStep(
+    ip: string | undefined,
+    user: AuthUser,
+    input: OAuthSchemaInput<TExtensions>,
+    userAgent: string,
+    oauthId: string
+  ) {
+    return runDeviceStep(this.config, {
+      user,
+      firstFactor: 'OAUTH',
+      code: input.twoFaCode,
+      askApproval: async () => {
+        if (!this.config.hooks?.onDeviceStepRequired) return null;
+        // Everything the client sent except the provider token, which the hook
+        // has no use for and should never be handed.
+        const approvalInput: Record<string, unknown> = { ...input };
+        delete approvalInput.idToken;
+        return this.config.hooks.onDeviceStepRequired(user.id, {
+          ip,
+          browserName: detectBrowser(userAgent),
+          firstFactor: 'OAUTH',
+          input: approvalInput,
+        });
+      },
+      // A provider token cannot be revoked from here, so nothing is spent; the
+      // account-wide cap on second-step codes is what bounds guessing. No push
+      // lock: each OAuth sign-in is its own ceremony with a fresh token.
+      guard: { credentialKey: `oauth:${input.provider}:${oauthId}` },
+    });
+  }
+
   private oAuthLogin(schema: CreatedSchemas<TExtensions, TMode>['oauth']) {
     return this.procedure.input(schema).mutation(async ({ ctx, input }) => {
       this.checkConfig();
@@ -90,6 +126,12 @@ export class OAuthLoginProcedureFactory<
       if (linked && !user) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'This account is not available.' });
       }
+
+      // Set once the factor-class gate has run for this sign-in, so the attach
+      // branch and the final check below never ask twice.
+      let deviceStepDone = false;
+      // Set once the account-status rule has run, for the same reason.
+      let statusChecked = false;
 
       // 2. New identity: attach it to an existing passwordless account with the
       //    same email, else create one — then record the link.
@@ -127,18 +169,48 @@ export class OAuthLoginProcedureFactory<
 
         let created = false;
         if (existing) {
+          // Status before anything is attached: a refused account must not gain a
+          // provider link on the way to being refused.
+          await assertCanMintSession(this.config, existing, { firstFactor: 'OAUTH', ip: ctx.ip });
+          statusChecked = true;
+
+          // An account with 2FA on owes its DEVICE step before a new provider is
+          // attached to it. Otherwise whoever holds the Google or Apple account
+          // gains a standing way in that never passed the second factor.
+          const step = await this.deviceStep(ctx.ip, existing, typedInput, userAgent, oauthId);
+          if (step?.kind === 'pending') {
+            return {
+              success: false,
+              pendingLogin: true,
+              pendingLoginId: step.pendingLoginId,
+              userId: existing.id,
+              requires2FA: true,
+            };
+          }
+          if (step?.kind === 'code') {
+            return {
+              success: false,
+              requires2FA: true,
+              userId: existing.id,
+            };
+          }
+          deviceStepDone = true;
           user = existing;
         } else {
-          const generateUsername = this.config.generateUsername ?? (() => `user_${Date.now()}`);
-          user = await this.config.database.user.create({
-            username: generateUsername(),
-            email,
-            password: null,
-            emailVerificationStatus: 'VERIFIED',
-            status: 'ACTIVE',
-            tag: this.config.features.biometric ? 'BOT' : 'HUMAN',
-            verifiedHumanAt: null,
-          });
+          // A taken generated username gets a fresh one; any other unique
+          // violation is not recoverable here and propagates.
+          user = await createUserWithFreshUsername(
+            this.config,
+            {
+              email,
+              password: null,
+              emailVerificationStatus: 'VERIFIED',
+              status: 'ACTIVE',
+              tag: this.config.features.biometric ? 'BOT' : 'HUMAN',
+              verifiedHumanAt: null,
+            },
+            { ip: ctx.ip }
+          );
           created = true;
         }
 
@@ -156,12 +228,33 @@ export class OAuthLoginProcedureFactory<
         }
       }
 
-      if (user.status === 'DEACTIVATED') {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Your account has been deactivated.' });
+      // A linked identity, or a brand-new account, reaches here unchecked:
+      // deactivated, banned, and the consumer's own rules (`beforeSessionMint`).
+      if (!statusChecked) {
+        await assertCanMintSession(this.config, user, { firstFactor: 'OAUTH', ip: ctx.ip });
       }
 
-      if (user.status === 'BANNED') {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Your account has been banned.' });
+      // A linked identity reaches here without having been asked. Google or Apple
+      // is an INBOX or FEDERATED factor, never DEVICE, so an account with 2FA on
+      // still owes the step. A brand-new account has no 2FA, so this is a no-op.
+      if (!deviceStepDone) {
+        const step = await this.deviceStep(ctx.ip, user, typedInput, userAgent, oauthId);
+        if (step?.kind === 'pending') {
+          return {
+            success: false,
+            pendingLogin: true,
+            pendingLoginId: step.pendingLoginId,
+            userId: user.id,
+            requires2FA: true,
+          };
+        }
+        if (step?.kind === 'code') {
+          return {
+            success: false,
+            requires2FA: true,
+            userId: user.id,
+          };
+        }
       }
 
       // The provider has vouched for this identity, so a session this device

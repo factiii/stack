@@ -1,16 +1,18 @@
 import type {
+  AuthEmailLoginAttempt,
   AuthMagicLink,
   AuthOTP,
   AuthPasswordReset,
   AuthSession,
   AuthUser,
+  CreateEmailLoginAttemptData,
   CreateSessionData,
   CreateUserData,
   DatabaseAdapter,
   SessionWithUser,
 } from './database';
 import type { DeviceAuthAdapter, SessionWithDevice } from './deviceAuth';
-import { escapeLikePattern, sameIdentifier } from '../utilities/emailMatch';
+import { escapeLikePattern, hasLikeWildcard, sameIdentifier } from '../utilities/emailMatch';
 
 /** Internal accessor for Prisma model delegates (avoids repeating casts). */
 type PrismaDelegate = Record<string, (...args: unknown[]) => Promise<unknown>>;
@@ -22,7 +24,39 @@ interface PrismaModelAccess {
   device: PrismaDelegate;
   admin: PrismaDelegate;
   magicLink?: PrismaDelegate;
+  emailLoginAttempt?: PrismaDelegate;
   $transaction?: <T>(fn: (tx: unknown) => Promise<T>) => Promise<T>;
+}
+
+/**
+ * Case-insensitive EXACT lookup on one or more user columns.
+ *
+ * Prisma's `mode: 'insensitive'` `equals` is ILIKE on Postgres, where `_` and `%`
+ * are wildcards: unescaped, `j_hn@outlook.com` finds `john@outlook.com`. So the
+ * value is escaped first, which is exact under ILIKE. An engine that compiles the
+ * same filter to `LOWER(col) = LOWER($1)` would never match the escaped form of a
+ * value that really contains `_` or `%`, so only then is the raw value tried once.
+ * Every row is compared in code before it is returned, so neither query can hand
+ * back a different account: under ILIKE the escaped query already found any exact
+ * row, and under LOWER the raw query is the exact one.
+ */
+async function findUserInsensitive(
+  db: PrismaModelAccess,
+  fields: ReadonlyArray<'email' | 'username'>,
+  value: string
+): Promise<AuthUser | null> {
+  const query = (equals: string) => {
+    const clauses = fields.map((field) => ({ [field]: { equals, mode: 'insensitive' } }));
+    return db.user.findFirst({
+      where: clauses.length === 1 ? clauses[0] : { OR: clauses },
+    }) as Promise<AuthUser | null>;
+  };
+  const exact = (row: AuthUser | null) =>
+    row && fields.some((field) => sameIdentifier(row[field], value)) ? row : null;
+
+  const escaped = exact(await query(escapeLikePattern(value)));
+  if (escaped || !hasLikeWildcard(value)) return escaped;
+  return exact(await query(value));
 }
 
 /**
@@ -45,33 +79,17 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
       // `mode: 'insensitive'` equals is ILIKE on Postgres, so the value is escaped
       // (utilities/emailMatch.ts) and the row is re-checked before it is returned.
       async findByEmailInsensitive(email: string): Promise<AuthUser | null> {
-        const user = (await db.user.findFirst({
-          where: { email: { equals: escapeLikePattern(email), mode: 'insensitive' } },
-        })) as AuthUser | null;
-        return user && sameIdentifier(user.email, email) ? user : null;
+        return findUserInsensitive(db, ['email'], email);
       },
 
       async findByUsernameInsensitive(username: string): Promise<AuthUser | null> {
-        const user = (await db.user.findFirst({
-          where: { username: { equals: escapeLikePattern(username), mode: 'insensitive' } },
-        })) as AuthUser | null;
-        return user && sameIdentifier(user.username, username) ? user : null;
+        return findUserInsensitive(db, ['username'], username);
       },
 
+      // One OR over both columns, escaped and re-checked like the single-column
+      // lookups, so a row matches only when its email or its username is exact.
       async findByEmailOrUsernameInsensitive(identifier: string): Promise<AuthUser | null> {
-        const pattern = escapeLikePattern(identifier);
-        const user = (await db.user.findFirst({
-          where: {
-            OR: [
-              { email: { equals: pattern, mode: 'insensitive' } },
-              { username: { equals: pattern, mode: 'insensitive' } },
-            ],
-          },
-        })) as AuthUser | null;
-        return user &&
-          (sameIdentifier(user.email, identifier) || sameIdentifier(user.username, identifier))
-          ? user
-          : null;
+        return findUserInsensitive(db, ['email', 'username'], identifier);
       },
 
       async findById(id: number): Promise<AuthUser | null> {
@@ -336,6 +354,68 @@ export function createPrismaAdapter(prisma: unknown): DatabaseAdapter {
                 where: { id },
                 data: { usedAt: new Date() },
               }) as Promise<AuthMagicLink>;
+            },
+
+            async consume(id: string): Promise<boolean> {
+              const now = new Date();
+              // Conditional on still being unused, so of two racers only one
+              // update touches a row.
+              const { count } = (await db.magicLink!.updateMany({
+                where: { id, usedAt: null, expiresAt: { gt: now } },
+                data: { usedAt: now },
+              })) as { count: number };
+              return count === 1;
+            },
+          },
+        }
+      : {}),
+
+    // Only populated when the consumer's Prisma schema includes EmailLoginAttempt
+    ...(db.emailLoginAttempt
+      ? {
+          emailLoginAttempt: {
+            async create(data: CreateEmailLoginAttemptData): Promise<AuthEmailLoginAttempt> {
+              return db.emailLoginAttempt!.create({ data }) as Promise<AuthEmailLoginAttempt>;
+            },
+
+            async findByTokenHash(tokenHash: string): Promise<AuthEmailLoginAttempt | null> {
+              return db.emailLoginAttempt!.findUnique({
+                where: { tokenHash },
+              }) as Promise<AuthEmailLoginAttempt | null>;
+            },
+
+            async findLatestOpenByEmail(email: string): Promise<AuthEmailLoginAttempt | null> {
+              return db.emailLoginAttempt!.findFirst({
+                where: { email, consumedAt: null, expiresAt: { gt: new Date() } },
+                orderBy: { createdAt: 'desc' },
+              }) as Promise<AuthEmailLoginAttempt | null>;
+            },
+
+            async consume(id: string): Promise<boolean> {
+              const now = new Date();
+              // Conditional on still being open, so of two racers only one update
+              // touches a row.
+              const { count } = (await db.emailLoginAttempt!.updateMany({
+                where: { id, consumedAt: null, expiresAt: { gt: now } },
+                data: { consumedAt: now },
+              })) as { count: number };
+              return count === 1;
+            },
+
+            async incrementAttempts(id: string): Promise<number> {
+              const row = (await db.emailLoginAttempt!.update({
+                where: { id },
+                data: { attempts: { increment: 1 } },
+                select: { attempts: true },
+              })) as { attempts: number };
+              return row.attempts;
+            },
+
+            async consumeOpenByEmail(email: string): Promise<void> {
+              await db.emailLoginAttempt!.updateMany({
+                where: { email, consumedAt: null },
+                data: { consumedAt: new Date() },
+              });
             },
           },
         }
