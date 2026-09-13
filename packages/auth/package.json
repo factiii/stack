@@ -1,6 +1,6 @@
 {
   "name": "@factiii/auth",
-  "version": "0.20.5",
+  "version": "0.20.6",
   "publishConfig": {
     "access": "public"
   },
