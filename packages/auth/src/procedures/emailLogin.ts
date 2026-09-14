@@ -56,7 +56,8 @@ const LINK_EXPIRED = 'That link has expired. Ask for a new one.';
 const EMAIL_NOT_CONFIRMED = 'Sign in another way, then confirm this email in your account.';
 const TOO_MANY_TRIES = 'Too many tries. Wait a few minutes and try again.';
 
-type AttemptStore = NonNullable<DatabaseAdapter['emailLoginAttempt']>;
+export type EmailLoginAttemptStore = NonNullable<DatabaseAdapter['emailLoginAttempt']>;
+type AttemptStore = EmailLoginAttemptStore;
 
 /** Trim and lowercase, so one inbox is one rate-limit key and one attempt chain. */
 export function normalizeLoginEmail(email: string): string {
@@ -141,6 +142,132 @@ const PEEKS_PER_IP = 30;
 
 type PeekLinkResult = { valid: true; maskedEmail: string } | { valid: false };
 
+/** Pad an outcome to `floorMs` after `startedAt`, so the timing does not show which outcome it was. */
+export async function padToResponseFloor(startedAt: number, floorMs: number): Promise<void> {
+  const elapsed = Date.now() - startedAt;
+  if (elapsed < floorMs) {
+    await sleep(floorMs - elapsed);
+  }
+}
+
+/**
+ * Log an email that could not be sent. Never throws: its callers fire their
+ * sends without awaiting them, and a send failure must not reach any response.
+ */
+export function logEmailSendFailure(
+  config: ResolvedAuthConfig,
+  err: unknown,
+  ip: string | undefined,
+  source: string,
+  what: string
+): void {
+  const error = err instanceof Error ? err : new Error(String(err));
+  if (config.hooks?.logError) {
+    void config.hooks
+      .logError({
+        type: 'OTHER',
+        description: `${source}: ${what} could not be sent: ${error.message}`,
+        stack: error.stack ?? '',
+        ip,
+      })
+      .catch(() => undefined);
+    return;
+  }
+  console.error(`@factiii/auth: ${what} could not be sent`, error);
+}
+
+export interface IssueEmailLoginAttemptInput {
+  /** The address to sign in; normalized here. */
+  email: string;
+  /** An `emailLogin.apps` key. Checked again here (own keys only). */
+  appKey: string;
+  ip: string | undefined;
+}
+
+/**
+ * Issue one email sign-in attempt and send its email. This is the one path behind
+ * `auth.emailLogin.request` and behind a password reset asked for by an account
+ * that has no password, so both get the same rate limits, the same single open
+ * attempt per address, and nothing stored in plaintext.
+ *
+ * Returns false, having sent nothing, when a rate limit refused the request or
+ * `appKey` is not a configured app. The send is never awaited and never throws.
+ */
+export async function issueEmailLoginAttempt(
+  config: ResolvedAuthConfig,
+  emailLogin: ResolvedEmailLoginConfig,
+  attempts: EmailLoginAttemptStore,
+  input: IssueEmailLoginAttemptInput
+): Promise<boolean> {
+  // Own keys only, so `constructor` or `__proto__` is not an app.
+  const app = Object.prototype.hasOwnProperty.call(emailLogin.apps, input.appKey)
+    ? emailLogin.apps[input.appKey]
+    : undefined;
+  if (!app) return false;
+
+  const email = normalizeLoginEmail(input.email);
+  const ip = input.ip ?? 'unknown';
+  // Each limit is asked only when the one before it passed, so a refused
+  // request does not also spend the wider budgets.
+  const allowed =
+    (await emailLogin.rateLimit(
+      `emailLogin:request:emailip:${email}:${ip}`,
+      REQUESTS_PER_EMAIL_AND_IP,
+      LIMIT_WINDOW_SEC
+    )) &&
+    (await emailLogin.rateLimit(`emailLogin:request:ip:${ip}`, REQUESTS_PER_IP, LIMIT_WINDOW_SEC)) &&
+    (await emailLogin.rateLimit(
+      `emailLogin:request:email:${email}`,
+      REQUESTS_PER_EMAIL,
+      LIMIT_WINDOW_SEC
+    ));
+
+  // Rate-limited: send nothing, and say nothing different about it.
+  if (!allowed) return false;
+
+  const found = await config.database.user.findByEmailInsensitive(email);
+  // A lookup is only as exact as its adapter. The address the inbox proves is
+  // the one that has to be on the account.
+  const user = found && sameIdentifier(found.email, email) ? found : null;
+
+  // A newer request replaces every open one, so an email the user did
+  // not act on stops working the moment they ask again.
+  await attempts.consumeOpenByEmail(email);
+
+  const id = randomUUID();
+  const token = randomBytes(TOKEN_BYTES).toString('base64url');
+  const code = String(randomInt(0, CODE_SPACE)).padStart(CODE_DIGITS, '0');
+  const expiresAt = new Date(Date.now() + emailLogin.ttlMs);
+
+  await attempts.create({
+    id,
+    email,
+    userId: user?.id ?? null,
+    app: input.appKey,
+    tokenHash: hashLoginToken(token),
+    codeHash: hashLoginCode(emailLogin.pepper, id, code),
+    expiresAt,
+  });
+
+  // Not awaited. The mail provider's latency would make an allowed request
+  // slower than a rate-limited one, and its errors differ by address (a
+  // suppressed or bouncing inbox fails where a good one does not) — neither
+  // may reach the response.
+  void emailLogin
+    .sendLoginEmail({
+      to: email,
+      app: input.appKey,
+      brand: app.brand,
+      link: `${app.siteUrl}${app.verifyPath}?token=${encodeURIComponent(token)}`,
+      code,
+      expiresAt,
+    })
+    .catch((err: unknown) =>
+      logEmailSendFailure(config, err, input.ip, 'emailLogin', 'the sign-in email')
+    );
+  return true;
+}
+
 /** Factory for `auth.emailLogin.*`. */
 export class EmailLoginProcedureFactory {
   constructor(
@@ -224,92 +351,21 @@ export class EmailLoginProcedureFactory {
 
       const startedAt = Date.now();
       try {
-        const email = normalizeLoginEmail(input.email);
-        const ip = ctx.ip ?? 'unknown';
-        // Each limit is asked only when the one before it passed, so a refused
-        // request does not also spend the wider budgets.
-        const allowed =
-          (await emailLogin.rateLimit(
-            `emailLogin:request:emailip:${email}:${ip}`,
-            REQUESTS_PER_EMAIL_AND_IP,
-            LIMIT_WINDOW_SEC
-          )) &&
-          (await emailLogin.rateLimit(
-            `emailLogin:request:ip:${ip}`,
-            REQUESTS_PER_IP,
-            LIMIT_WINDOW_SEC
-          )) &&
-          (await emailLogin.rateLimit(
-            `emailLogin:request:email:${email}`,
-            REQUESTS_PER_EMAIL,
-            LIMIT_WINDOW_SEC
-          ));
-
-        // Rate-limited: send nothing, and say nothing different about it.
-        if (allowed) {
-          const user = await this.accountFor(email);
-
-          // A newer request replaces every open one, so an email the user did
-          // not act on stops working the moment they ask again.
-          await attempts.consumeOpenByEmail(email);
-
-          const id = randomUUID();
-          const token = randomBytes(TOKEN_BYTES).toString('base64url');
-          const code = String(randomInt(0, CODE_SPACE)).padStart(CODE_DIGITS, '0');
-          const expiresAt = new Date(Date.now() + emailLogin.ttlMs);
-
-          await attempts.create({
-            id,
-            email,
-            userId: user?.id ?? null,
-            app: input.app,
-            tokenHash: hashLoginToken(token),
-            codeHash: hashLoginCode(emailLogin.pepper, id, code),
-            expiresAt,
-          });
-
-          // Not awaited. The mail provider's latency would make an allowed request
-          // slower than a rate-limited one, and its errors differ by address (a
-          // suppressed or bouncing inbox fails where a good one does not) — neither
-          // may reach the response.
-          void emailLogin
-            .sendLoginEmail({
-              to: email,
-              app: input.app,
-              brand: app.brand,
-              link: `${app.siteUrl}${app.verifyPath}?token=${encodeURIComponent(token)}`,
-              code,
-              expiresAt,
-            })
-            .catch((err: unknown) => this.logSendFailure(err, ctx));
-        }
+        // The rate limits, the attempt and the send live in the shared path, which
+        // a password reset for an account with no password also takes.
+        await issueEmailLoginAttempt(this.config, emailLogin, attempts, {
+          email: input.email,
+          appKey: input.app,
+          ip: ctx.ip,
+        });
       } finally {
         // Pad every outcome to one floor, so an address with an account does not
         // answer faster or slower than one without.
-        const elapsed = Date.now() - startedAt;
-        if (elapsed < emailLogin.responseFloorMs) {
-          await sleep(emailLogin.responseFloorMs - elapsed);
-        }
+        await padToResponseFloor(startedAt, emailLogin.responseFloorMs);
       }
 
       return { sent: true as const };
     });
-  }
-
-  private logSendFailure(err: unknown, ctx: TrpcContext) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    if (this.config.hooks?.logError) {
-      void this.config.hooks
-        .logError({
-          type: 'OTHER',
-          description: `emailLogin: the sign-in email could not be sent: ${error.message}`,
-          stack: error.stack ?? '',
-          ip: ctx.ip,
-        })
-        .catch(() => undefined);
-      return;
-    }
-    console.error('@factiii/auth: the sign-in email could not be sent', error);
   }
 
   private verifyLink() {

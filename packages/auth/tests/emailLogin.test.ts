@@ -774,6 +774,90 @@ describe('password reset per app', () => {
   });
 });
 
+describe('password reset for an account without a password', () => {
+  const RESET_ANSWER = { message: 'If an account exists with that email, we sent a link.' };
+
+  it('sends an email sign-in instead, and its code signs in', async () => {
+    const h = harness({ users: [account()] });
+
+    const result = await h.caller.sendPasswordResetEmail({ email: 'Ada@Example.com', app: 'oakbox' });
+
+    expect(result).toEqual(RESET_ANSWER);
+    expect(h.database.passwordReset.create).not.toHaveBeenCalled();
+    expect(h.emailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+    expect(h.attempts).toHaveLength(1);
+    const email = h.lastEmail();
+    expect(email.to).toBe('ada@example.com');
+    expect(email.link.startsWith('https://oakbox.me/auth/email?token=')).toBe(true);
+    expect(email.code).toMatch(/^\d{6}$/);
+
+    const signIn = await h.caller.emailLogin.verifyCode({ email: 'ada@example.com', code: email.code });
+    expect(signIn).toMatchObject({ success: true, created: false });
+  });
+
+  it('still sends a reset link to an account with a password, with the same answer', async () => {
+    const h = harness({ users: [account({ password: 'hashed' })] });
+
+    const result = await h.caller.sendPasswordResetEmail({ email: 'ada@example.com', app: 'oakbox' });
+
+    expect(result).toEqual(RESET_ANSWER);
+    expect(h.emailService.sendPasswordResetEmail).toHaveBeenCalledOnce();
+    expect(h.sent).toHaveLength(0);
+  });
+
+  it('answers the same and sends nothing when there is nothing to send', async () => {
+    const h = harness({
+      users: [
+        account(),
+        account({ id: 8, email: 'inactive@example.com', username: 'inactive', status: 'DEACTIVATED' }),
+      ],
+    });
+
+    const answers = [
+      // No account (an account with no email is found by no address either).
+      await h.caller.sendPasswordResetEmail({ email: 'nobody@example.com', app: 'oakbox' }),
+      await h.caller.sendPasswordResetEmail({ email: 'inactive@example.com', app: 'oakbox' }),
+      // No password, and no app to send an email sign-in for.
+      await h.caller.sendPasswordResetEmail({ email: 'ada@example.com' }),
+    ];
+
+    expect(answers).toEqual([RESET_ANSWER, RESET_ANSWER, RESET_ANSWER]);
+    expect(h.sent).toHaveLength(0);
+    expect(h.attempts).toHaveLength(0);
+    expect(h.emailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+  });
+
+  it('shares its rate limit with emailLogin.request', async () => {
+    const h = harness({ users: [account()] });
+    for (let i = 0; i < 3; i += 1) {
+      await h.caller.emailLogin.request({ email: 'ada@example.com', app: 'oakbox' });
+    }
+    expect(h.sent).toHaveLength(3);
+
+    const result = await h.caller.sendPasswordResetEmail({ email: 'ada@example.com', app: 'oakbox' });
+
+    expect(result).toEqual(RESET_ANSWER);
+    expect(h.sent).toHaveLength(3);
+  });
+
+  it('a reset email the provider rejects still gets the same answer', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const h = harness({ users: [account({ password: 'hashed' })] });
+      h.emailService.sendPasswordResetEmail.mockRejectedValueOnce(new Error('suppressed'));
+
+      await expect(
+        h.caller.sendPasswordResetEmail({ email: 'ada@example.com', app: 'oakbox' })
+      ).resolves.toEqual(RESET_ANSWER);
+      // Let the fired send settle and log before the spy is restored.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(quiet).toHaveBeenCalled();
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+});
+
 describe('createAuthConfig with features.emailLogin', () => {
   const valid = () => ({
     database: { emailLoginAttempt: {} },
