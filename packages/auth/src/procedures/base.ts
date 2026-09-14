@@ -6,6 +6,7 @@ import { type AuthProcedure, type BaseProcedure } from '../types/trpc';
 import { assertCanMintSession } from '../utilities/accountStatus';
 import { detectBrowser } from '../utilities/browser';
 import { sameIdentifier } from '../utilities/emailMatch';
+import { issueEmailLoginAttempt, logEmailSendFailure, padToResponseFloor } from './emailLogin';
 import { runDeviceStep } from './twoFa/deviceStep';
 import type { ResolvedAuthConfig } from '../utilities/config';
 import { clearAuthCookies, setAuthCookies } from '../utilities/cookies';
@@ -16,7 +17,7 @@ import {
 } from '../utilities/issueCookies';
 import { createAuthToken } from '../utilities/jwt';
 import { comparePassword, hashPassword } from '../utilities/password';
-import type { UsernameMode } from '../types/config';
+import type { EmailLoginAppConfig, UsernameMode } from '../types/config';
 import type { ExtendedSignupHookInput, SchemaExtensions } from '../types/hooks';
 import {
   changePasswordSchema,
@@ -29,6 +30,13 @@ import {
   type SignupSchemaInput,
   type LoginSchemaInput,
 } from '../validators';
+
+/**
+ * The one answer a password reset request gets, whatever happened. A different
+ * answer for "no account", "no password" or "no email" would tell anyone who asks
+ * whether an address has an account.
+ */
+const RESET_REQUEST_ANSWER = 'If an account exists with that email, we sent a link.';
 
 /**
  * Factory for core authentication procedures: register, login, logout,
@@ -568,7 +576,7 @@ export class BaseProcedureFactory<
   }
 
   private sendPasswordResetEmail() {
-    return this.procedure.input(requestPasswordResetSchema).mutation(async ({ input }) => {
+    return this.procedure.input(requestPasswordResetSchema).mutation(async ({ ctx, input }) => {
       const { email, app } = input;
 
       // Checked before the account lookup, so an unknown key answers the same
@@ -581,48 +589,69 @@ export class BaseProcedureFactory<
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Unknown app.' });
       }
 
-      const found = await this.config.database.user.findByEmailInsensitive(email);
-      // A reset link for a look-alike address must never go to another account.
-      const user = found && sameIdentifier(found.email, email) ? found : null;
-
-      if (!user || user.status !== 'ACTIVE') {
-        return { message: 'If an account exists with that email, a reset link has been sent.' };
+      // Every outcome — no account, an inactive one, one with no email, one with
+      // no password, one with a password, a refused rate limit — gets the same
+      // answer padded to the same floor as an email sign-in request.
+      const startedAt = Date.now();
+      try {
+        await this.issueReset(email, app, appSettings, ctx.ip);
+      } finally {
+        await padToResponseFloor(startedAt, this.config.emailLogin?.responseFloorMs ?? 0);
       }
 
-      if (!user.password) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'This account uses social login. Please use that method.',
-        });
-      }
-
-      // Username-first consumers allow accounts with no email, which have no
-      // way to receive the link.
-      if (!user.email) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'This account has no email address to send a reset link to.',
-        });
-      }
-
-      await this.config.database.passwordReset.deleteAllByUserId(user.id);
-
-      const passwordReset = await this.config.database.passwordReset.create(user.id);
-
-      if (this.config.emailService) {
-        const token = String(passwordReset.id);
-        if (app && appSettings) {
-          await this.config.emailService.sendPasswordResetEmail(user.email, token, {
-            app,
-            resetUrl: `${appSettings.siteUrl}${appSettings.resetPath}/${encodeURIComponent(token)}`,
-          });
-        } else {
-          await this.config.emailService.sendPasswordResetEmail(user.email, token);
-        }
-      }
-
-      return { message: 'Password reset email sent.' };
+      return { message: RESET_REQUEST_ANSWER };
     });
+  }
+
+  /** Sends whatever a reset request should send, or nothing; never says which. */
+  private async issueReset(
+    email: string,
+    app: string | undefined,
+    appSettings: EmailLoginAppConfig | undefined,
+    ip: string | undefined
+  ): Promise<void> {
+    const found = await this.config.database.user.findByEmailInsensitive(email);
+    // A reset link for a look-alike address must never go to another account.
+    const user = found && sameIdentifier(found.email, email) ? found : null;
+
+    // Username-first consumers allow accounts with no email, which have no
+    // way to receive the link.
+    if (!user || user.status !== 'ACTIVE' || !user.email) return;
+
+    if (!user.password) {
+      // Nothing to reset. An app with email sign-in sends that instead, so the
+      // person still gets in; without one there is nothing to send.
+      const { emailLogin } = this.config;
+      const attempts = this.config.database.emailLoginAttempt;
+      if (this.config.features.emailLogin && emailLogin && attempts && app && appSettings) {
+        await issueEmailLoginAttempt(this.config, emailLogin, attempts, {
+          email: user.email,
+          appKey: app,
+          ip,
+        });
+      }
+      return;
+    }
+
+    await this.config.database.passwordReset.deleteAllByUserId(user.id);
+
+    const passwordReset = await this.config.database.passwordReset.create(user.id);
+
+    if (this.config.emailService) {
+      const token = String(passwordReset.id);
+      const send =
+        app && appSettings
+          ? this.config.emailService.sendPasswordResetEmail(user.email, token, {
+              app,
+              resetUrl: `${appSettings.siteUrl}${appSettings.resetPath}/${encodeURIComponent(token)}`,
+            })
+          : this.config.emailService.sendPasswordResetEmail(user.email, token);
+      // Not awaited, for the reason the sign-in email is not (emailLogin.ts): the
+      // provider's latency and its per-address errors must not reach the answer.
+      void send.catch((err: unknown) =>
+        logEmailSendFailure(this.config, err, ip, 'passwordReset', 'the password reset email')
+      );
+    }
   }
 
   private checkPasswordReset() {

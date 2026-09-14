@@ -219,7 +219,7 @@ describe('callers re-check the lookup result', () => {
       .sendPasswordResetEmail({ email: 'j_hn@outlook.com' });
 
     expect(result).toEqual({
-      message: 'If an account exists with that email, a reset link has been sent.',
+      message: 'If an account exists with that email, we sent a link.',
     });
     expect(passwordReset.create).not.toHaveBeenCalled();
     expect(sendPasswordResetEmail).not.toHaveBeenCalled();
