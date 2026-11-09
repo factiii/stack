@@ -94,14 +94,50 @@ export function readClientSession(options: ClientSessionOptions = {}): ClientCoo
   const json = decodeBase64Url(value.slice(0, dotIndex));
   if (!json) return null;
 
+  let payload: ClientCookiePayload;
   try {
-    const payload: unknown = JSON.parse(json);
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-    if (typeof (payload as ClientCookiePayload).userId !== 'number') return null;
-    return payload as ClientCookiePayload;
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    if (typeof (parsed as ClientCookiePayload).userId !== 'number') return null;
+    payload = parsed as ClientCookiePayload;
   } catch {
     return null;
   }
+
+  const signedOutAt = readSignedOutAt(
+    cookieString,
+    options.clientToken ?? DEFAULT_CLIENT_STORAGE_KEY
+  );
+  return isIssuedAfterSignOut(payload, signedOutAt) ? payload : null;
+}
+
+/**
+ * Name of the signed-out marker beside the client cookie. Mirrors
+ * `signedOutCookieName` in utilities/cookies.ts, which this browser-safe entry
+ * can't import (it pulls in Node's `crypto`).
+ */
+export function signedOutCookieName(clientToken: string): string {
+  return `${clientToken}-out`;
+}
+
+/** The time (ms) sign-out last wrote its marker, or null when there is none. */
+export function readSignedOutAt(cookieString: string, clientToken: string): number | null {
+  const raw = readCookie(cookieString, signedOutCookieName(clientToken));
+  const at = raw ? Number(raw) : NaN;
+  return Number.isFinite(at) ? at : null;
+}
+
+/**
+ * False when the user signed out after this cookie was written: a signed-in
+ * response that was still in flight at sign-out put it back. A cookie without
+ * `issuedAt` predates the stamp, so a marker beside it means it is stale too.
+ */
+export function isIssuedAfterSignOut(
+  payload: ClientCookiePayload,
+  signedOutAt: number | null
+): boolean {
+  if (signedOutAt === null) return true;
+  return typeof payload.issuedAt === 'number' && payload.issuedAt > signedOutAt;
 }
 
 /**

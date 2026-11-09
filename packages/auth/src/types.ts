@@ -53,5 +53,12 @@ export interface CookieSettings {
 export interface ClientCookiePayload {
   userId: number;
   updatedAt: string; // ISO timestamp
+  /**
+   * When this cookie was written (ms since epoch). Stamped by the setters, not
+   * by `getClientCookiePayload`. A reader compares it with the signed-out
+   * marker (`signedOutCookieName`) to ignore a cookie a late response wrote
+   * after sign-out. Absent on cookies written by older versions.
+   */
+  issuedAt?: number;
   [key: string]: unknown;
 }
