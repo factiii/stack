@@ -91,6 +91,7 @@ export {
   setAuthCookies,
   setClientCookie,
   signClientCookie,
+  signedOutCookieName,
 } from './utilities/cookies';
 export {
   createAuthToken,

@@ -126,6 +126,25 @@ function clientCookieDomain(settings: Partial<CookieSettings>): string | undefin
   return settings.clientDomain ?? settings.domain;
 }
 
+/**
+ * Name of the signed-out marker that sits beside the client cookie.
+ *
+ * Why it exists: a signed-in request still in flight when the user signs out
+ * can answer after the sign-out did, and its `Set-Cookie` writes the client
+ * cookie back (the auth guard re-issues it when missing or stale, and a slide
+ * re-issues both). The browser then reads a signed-in visitor until the next
+ * call 401s. Sign-out can't stop that response, so it leaves a marker with the
+ * time instead, and readers ignore any client cookie issued before it.
+ */
+export function signedOutCookieName(clientToken: string): string {
+  return `${clientToken}-out`;
+}
+
+/** The payload as written: stamped with when it was issued. */
+function stampIssuedAt(payload: ClientCookiePayload): ClientCookiePayload {
+  return { ...payload, issuedAt: Date.now() };
+}
+
 // ── Single-cookie functions (backward compat) ───────────────────────────────
 
 /**
@@ -212,7 +231,7 @@ export function setAuthCookies(
   // clientDomain so it can reach a sibling host without widening the auth
   // cookie above (see CookieSettings.clientDomain).
   const clientSettings = { ...settings, httpOnly: false };
-  const clientValue = signClientCookie(clientPayload, secret);
+  const clientValue = signClientCookie(stampIssuedAt(clientPayload), secret);
   const clientCookie = buildCookieString(
     storageKeys.clientToken,
     clientValue,
@@ -255,7 +274,7 @@ export function setClientCookie(
     : undefined;
 
   const clientSettings = { ...settings, httpOnly: false };
-  const clientValue = signClientCookie(clientPayload, secret);
+  const clientValue = signClientCookie(stampIssuedAt(clientPayload), secret);
   const clientCookie = buildCookieString(
     storageKeys.clientToken,
     clientValue,
@@ -303,5 +322,19 @@ export function clearAuthCookies(
     expiredDate
   );
 
-  res.setHeader('Set-Cookie', [authCookie, clientCookie]);
+  // The signed-out marker (see signedOutCookieName). It lives as long as a
+  // client cookie can, so it outlasts any late response's copy; a later
+  // sign-in needs no clear, since its cookie is issued after the marker.
+  const markerExpires = settings.maxAge
+    ? new Date(Date.now() + settings.maxAge * 1000).toUTCString()
+    : undefined;
+  const signedOutCookie = buildCookieString(
+    signedOutCookieName(storageKeys.clientToken),
+    String(Date.now()),
+    clientSettings,
+    clientCookieDomain(settings),
+    markerExpires
+  );
+
+  res.setHeader('Set-Cookie', [authCookie, clientCookie, signedOutCookie]);
 }

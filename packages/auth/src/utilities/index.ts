@@ -10,6 +10,7 @@ export {
   setAuthCookies,
   setClientCookie,
   signClientCookie,
+  signedOutCookieName,
 } from './cookies';
 export {
   createAuthToken,
